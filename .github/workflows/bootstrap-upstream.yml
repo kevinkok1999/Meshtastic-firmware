@@ -1,9 +1,8 @@
 name: Bootstrap Meshtastic upstream
 
 on:
-  push:
-    paths:
-      - '.github/workflows/bootstrap-upstream.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -11,6 +10,7 @@ permissions:
 
 jobs:
   sync-upstream:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Checkout bootstrap repository
@@ -20,6 +20,7 @@ jobs:
 
       - name: Fetch official Meshtastic firmware develop branch
         run: |
+          set -euo pipefail
           git config user.name "MeshOffGrid XR Bot"
           git config user.email "actions@users.noreply.github.com"
           git remote add upstream https://github.com/meshtastic/firmware.git || true
@@ -27,4 +28,6 @@ jobs:
           git checkout -B upstream-develop upstream/develop
           git push origin upstream-develop --force
 
-# Re-save marker: trigger bootstrap after initial repository creation.
+      - name: Verify imported upstream branch
+        run: |
+          git ls-remote --exit-code --heads origin upstream-develop
