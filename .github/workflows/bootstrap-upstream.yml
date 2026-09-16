@@ -1,0 +1,28 @@
+name: Bootstrap Meshtastic upstream
+
+on:
+  push:
+    paths:
+      - '.github/workflows/bootstrap-upstream.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout bootstrap repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch official Meshtastic firmware develop branch
+        run: |
+          git config user.name "MeshOffGrid XR Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git remote add upstream https://github.com/meshtastic/firmware.git || true
+          git fetch --depth=1 upstream develop
+          git checkout -B upstream-develop upstream/develop
+          git push origin upstream-develop --force
