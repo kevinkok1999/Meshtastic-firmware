@@ -1,0 +1,4 @@
+[submodule "upstream/meshtastic-firmware"]
+	path = upstream/meshtastic-firmware
+	url = https://github.com/meshtastic/firmware.git
+	branch = develop
