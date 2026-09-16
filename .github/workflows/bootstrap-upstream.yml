@@ -26,3 +26,5 @@ jobs:
           git fetch --depth=1 upstream develop
           git checkout -B upstream-develop upstream/develop
           git push origin upstream-develop --force
+
+# Re-save marker: trigger bootstrap after initial repository creation.
