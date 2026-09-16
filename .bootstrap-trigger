@@ -1,2 +1,2 @@
 Trigger Meshtastic upstream import via same-repository pull_request workflow.
-Retry after switching bootstrap to full upstream history fetch.
+Retry using squashed upstream snapshot with workflow directory restored afterwards via Git tree API.
