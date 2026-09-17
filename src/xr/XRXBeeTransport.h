@@ -4,6 +4,7 @@
     defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
 
 #include "XRAdaptiveCoordinator.h"
+#include "XRDeferredPacketQueue.h"
 #include "XRRfCoexistence.h"
 #include "concurrency/OSThread.h"
 #include "mesh/RadioTxHook.h"
@@ -33,6 +34,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     uint8_t peerCount() const;
     uint8_t linkScoreFor(uint32_t nodeNum) const;
     uint64_t localXBeeAddress() const { return link_.moduleAddress64(); }
+    size_t deferredCount() const { return deferred_.size(); }
 
   protected:
     int32_t runOnce() override;
@@ -137,6 +139,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     ActiveTx activeTx_{};
+    XRDeferredPacketQueue deferred_{};
 
     XRRfCoexistence coexistence_{};
     XRAdaptiveCoordinator coordinator_{};
@@ -145,7 +148,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     void shutdown();
     void sendHello(uint32_t nowMs);
     void serviceOutgoing(uint32_t nowMs);
-    bool prepareActiveTx(const TxPacket &queued, uint32_t nowMs);
+    bool prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs);
     void sendNextFragment(uint32_t nowMs);
     void finishActiveTx(bool success, uint32_t nowMs);
 
