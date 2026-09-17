@@ -7,6 +7,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <esp_idf_version.h>
+#include <esp_now.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 
@@ -79,9 +81,9 @@ class EspNowEsp32Backend final : public EspNowBackend
     void pushReceived(const uint8_t srcMac[6], const uint8_t *data, int length, int16_t rssiDbm);
     static uint32_t monotonicMs();
 
-    static void onSend(const uint8_t *mac, int status);
-#if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
-    static void onReceive(const struct esp_now_recv_info *info, const uint8_t *data, int length);
+    static void onSend(const uint8_t *mac, esp_now_send_status_t status);
+#if ESP_IDF_VERSION_MAJOR >= 5
+    static void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length);
 #else
     static void onReceive(const uint8_t *mac, const uint8_t *data, int length);
 #endif
