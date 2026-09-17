@@ -127,15 +127,21 @@ jobs:
           set -euo pipefail
           BUILD_DIR=.pio/build/t-deck-ultra
           preferred="$BUILD_DIR/firmware.bin"
+          full="$BUILD_DIR/xr-full-flash.bin"
+          flash_map="$BUILD_DIR/xr-flash-map.json"
 
-          if [ ! -s "$preferred" ]; then
-            echo "Expected non-empty $preferred was not produced" >&2
-            find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
-            exit 1
-          fi
+          for required in "$preferred" "$full" "$flash_map"; do
+            if [ ! -s "$required" ]; then
+              echo "Expected non-empty $required was not produced" >&2
+              find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+              exit 1
+            fi
+          done
 
           echo "firmware=$preferred" >> "$GITHUB_OUTPUT"
-          ls -lh "$preferred"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "flash_map=$flash_map" >> "$GITHUB_OUTPUT"
+          ls -lh "$preferred" "$full" "$flash_map"
 
       - name: Package MeshOffGrid XR Ultra flash bundle
         shell: bash
@@ -145,7 +151,12 @@ jobs:
           RELEASE_DIR=xr-ultra-release
           mkdir -p "$RELEASE_DIR"
 
-          cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/MeshOffGrid-XR-Ultra-TDeck-Plus-firmware.bin"
+          APP_NAME=MeshOffGrid-XR-Ultra-TDeck-Plus-firmware.bin
+          FULL_NAME=MeshOffGrid-XR-Ultra-TDeck-Plus-full.bin
+
+          cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/$APP_NAME"
+          cp "${{ steps.firmware.outputs.full }}" "$RELEASE_DIR/$FULL_NAME"
+          cp "${{ steps.firmware.outputs.flash_map }}" "$RELEASE_DIR/xr-flash-map.json"
 
           for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
             if [ -s "$BUILD_DIR/$file" ]; then
@@ -153,19 +164,68 @@ jobs:
             fi
           done
 
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          python - "$RELEASE_DIR" "$FULL_NAME" "$SHORT_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          release = pathlib.Path(sys.argv[1])
+          full_name = sys.argv[2]
+          version = sys.argv[3]
+
+          manifest = {
+              "name": "MeshOffGrid XR Ultra - LILYGO T-Deck Plus",
+              "version": version,
+              "new_install_prompt_erase": True,
+              "builds": [
+                  {
+                      "chipFamily": "ESP32-S3",
+                      "parts": [{"path": full_name, "offset": 0}],
+                  }
+              ],
+          }
+          (release / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+
           {
             echo "MeshOffGrid XR Ultra"
-            echo "Target: LILYGO T-Deck Plus"
+            echo "Target: LILYGO T-Deck Plus / ESP32-S3"
             echo "Profile: t-deck-ultra"
             echo "Commit: $(git rev-parse HEAD)"
-            echo "XBee XR 868: software compiled separately in t-deck-xbee-ci; physical UART pins intentionally not enabled in this flashable bundle"
+            echo
+            echo "Files:"
+            echo "  $FULL_NAME  = complete first-install image at offset 0x0"
+            echo "  $APP_NAME   = application-only image for compatible update flows"
+            echo "  manifest.json = ESP Web Tools-compatible single-image manifest"
+            echo "  xr-flash-map.json = exact PlatformIO-resolved source flash map"
+            echo
+            echo "XBee XR 868:"
+            echo "  Driver is compile-tested separately in t-deck-xbee-ci."
+            echo "  Physical UART pins are intentionally NOT enabled in this flashable bundle until real hardware wiring is validated."
+            echo
             echo "LoRa/Meshtastic: preserved"
             echo "XR ESP-NOW sidecar: enabled"
+            echo "Encrypted recovery/store-carry-forward: enabled"
             echo "Adaptive delivery intelligence: enabled"
           } > "$RELEASE_DIR/BUILD_INFO.txt"
 
+          {
+            echo "FIRST INSTALL / FULL RECOVERY"
+            echo "Flash $FULL_NAME at offset 0x0 using a compatible ESP32-S3 flasher."
+            echo
+            echo "BROWSER FLASHER"
+            echo "Host this directory over HTTPS and point ESP Web Tools at manifest.json."
+            echo
+            echo "APP-ONLY UPDATE"
+            echo "Use $APP_NAME only with an update method that expects the application partition image."
+            echo
+            echo "Do not flash the app-only image at offset 0x0."
+          } > "$RELEASE_DIR/FLASHING.txt"
+
           sha256sum "$RELEASE_DIR"/*.bin > "$RELEASE_DIR/SHA256SUMS.txt"
           cat "$RELEASE_DIR/BUILD_INFO.txt"
+          cat "$RELEASE_DIR/FLASHING.txt"
           cat "$RELEASE_DIR/SHA256SUMS.txt"
 
       - name: Upload compiler diagnostics
