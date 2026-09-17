@@ -15,6 +15,7 @@ bool EspNowLink::begin()
 {
     started_ = backend_.begin(config_);
     metrics_.available = started_ && backend_.available();
+    metrics_.peerReachable = metrics_.available;
     return started_;
 }
 
@@ -22,8 +23,13 @@ LinkMetrics EspNowLink::metrics() const
 {
     LinkMetrics current = metrics_;
     current.available = started_ && backend_.available();
-    current.peerReachable = current.available && lastPeer_ != 0 && backend_.hasPeer(lastPeer_);
-    current.rssiDbm = current.peerReachable ? backend_.peerRssiDbm(lastPeer_) : -127;
+
+    // Per-destination reachability belongs in supports(frame). The global
+    // metric must remain selectable before the first packet has been sent.
+    current.peerReachable = current.available;
+    current.rssiDbm = (current.available && lastPeer_ != 0 && backend_.hasPeer(lastPeer_))
+                          ? backend_.peerRssiDbm(lastPeer_)
+                          : -90;
     current.mtu = config_.mtu;
     current.encrypted = config_.upperLayerEncrypted;
     return current;
@@ -46,7 +52,6 @@ SendResult EspNowLink::send(const FrameView &frame)
         return SendResult::Unavailable;
 
     lastPeer_ = frame.to;
-    metrics_.peerReachable = backend_.hasPeer(frame.to);
     return backend_.send(frame.to, frame.data, frame.size) ? SendResult::Accepted : SendResult::Busy;
 }
 
@@ -63,6 +68,7 @@ void EspNowLink::poll(uint32_t nowMs)
 
     backend_.poll(nowMs);
     metrics_.available = backend_.available();
+    metrics_.peerReachable = metrics_.available;
     metrics_.lastUpdateMs = nowMs;
 
     EspNowDeliveryReport report;
@@ -91,11 +97,8 @@ void EspNowLink::poll(uint32_t nowMs)
         }
     }
 
-    if (lastPeer_ != 0) {
-        metrics_.peerReachable = backend_.hasPeer(lastPeer_);
-        if (metrics_.peerReachable)
-            metrics_.rssiDbm = backend_.peerRssiDbm(lastPeer_);
-    }
+    if (lastPeer_ != 0 && backend_.hasPeer(lastPeer_))
+        metrics_.rssiDbm = backend_.peerRssiDbm(lastPeer_);
 }
 
 } // namespace meshtastic::multilink
