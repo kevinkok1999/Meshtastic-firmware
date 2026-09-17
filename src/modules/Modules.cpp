@@ -1,4 +1,7 @@
 #include "configuration.h"
+#if defined(ARCH_ESP32) && defined(T_DECK)
+#include "xr/XREspNowTransport.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "buzz/BuzzerFeedbackThread.h"
 #include "modules/SystemCommandsModule.h"
@@ -293,6 +296,11 @@ void setupModules()
     // actually present.
 #ifdef OPTIONAL_MODULES_SETUP
     OPTIONAL_MODULES_SETUP();
+#endif
+#if defined(ARCH_ESP32) && defined(T_DECK)
+    // Construct late enough that Meshtastic preferences/filesystem are ready. The OSThread
+    // runs after setup(), so ESP-NOW initialization cannot race the remaining board/radio setup.
+    meshoffgrid::xr::xrEspNowTransport = new meshoffgrid::xr::XREspNowTransport();
 #endif
     // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
     // acks
