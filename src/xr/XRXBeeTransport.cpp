@@ -103,7 +103,8 @@ int32_t XRXBeeTransport::runOnce()
     deferred_.expire(nowMs);
     expireOutboundCache(nowMs);
 
-    if (nowMs - lastInfoQueryMs_ >= 5u * 60u * 1000u) {
+    const uint32_t queryInterval = moduleConfigVerified() ? INFO_QUERY_INTERVAL_MS : CONFIG_QUERY_RETRY_MS;
+    if (nowMs - lastInfoQueryMs_ >= queryInterval) {
         link_.queryModuleInfo();
         lastInfoQueryMs_ = nowMs;
     }
