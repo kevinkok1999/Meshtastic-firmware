@@ -18,6 +18,9 @@ XRAdaptivePlan XRAdaptiveCoordinator::plan(const XRAdaptiveContext &context,
     case XRAdaptiveAction::WIFI_MQTT_PREFERRED:
         out.preferWifiMqtt = true;
         break;
+    case XRAdaptiveAction::ESP_NOW_PREFERRED:
+        out.preferEspNow = true;
+        break;
     case XRAdaptiveAction::LORA_RX_FOCUS:
         out.preferLoRa = true;
         out.requestRxFocus = true;
