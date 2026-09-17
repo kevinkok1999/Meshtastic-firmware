@@ -9,6 +9,7 @@
 #include "XRDeliveryEvents.h"
 #include "XRDeliveryEvents.h"
 #include "XRRfCoexistence.h"
+#include "XRTDeckPinSafety.h"
 #include "concurrency/OSThread.h"
 #include "mesh/RadioTxHook.h"
 #include "mesh/generated/meshtastic/mesh.pb.h"
