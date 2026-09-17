@@ -11,6 +11,7 @@ struct XRAdaptivePlan {
     bool preferLoRa = false;
     bool preferWifiMqtt = false;
     bool preferEspNow = false;
+    bool preferXBee = false;
     bool requestRxFocus = false;
     bool suppressOptionalBackground = false;
     bool requestRecoveryWindow = false;
