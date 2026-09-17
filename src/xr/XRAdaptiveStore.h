@@ -12,10 +12,12 @@ class XRAdaptiveStore {
     // Loads only aggregate learning state. No messages, SSIDs, peer names, or
     // precise locations are stored in this model.
     static bool load(XRAdaptiveIntelligence &engine);
+    static bool loadAt(XRAdaptiveIntelligence &engine, const char *path);
 
     // Persists a validated fixed-size snapshot. When protected storage is
     // active, the existing Meshtastic encrypted-storage path is used.
     static bool save(XRAdaptiveIntelligence &engine, uint32_t nowMs);
+    static bool saveAt(XRAdaptiveIntelligence &engine, uint32_t nowMs, const char *path, const char *tempPath);
 };
 
 } // namespace meshoffgrid::xr
