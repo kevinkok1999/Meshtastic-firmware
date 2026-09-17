@@ -40,6 +40,26 @@ struct FrameView {
     bool requireEncryption = true;
 };
 
+struct ReceivedFrameView {
+    const uint8_t *data = nullptr;
+    size_t size = 0;
+    LinkType link = LinkType::LoRa;
+    uint32_t from = 0;
+    int16_t rssiDbm = -127;
+    int8_t snrDb = -30;
+    bool transportAuthenticated = false;
+};
+
+class LinkReceiveSink
+{
+  public:
+    virtual ~LinkReceiveSink() = default;
+
+    // Called from the transport's normal poll/task context, never directly
+    // from a radio/Wi-Fi ISR or high-priority vendor callback.
+    virtual void onLinkFrame(const ReceivedFrameView &frame) = 0;
+};
+
 struct LinkMetrics {
     bool available = false;
     bool peerReachable = false;
@@ -65,6 +85,9 @@ class LinkTransport
     virtual bool supports(const FrameView &frame) const = 0;
     virtual SendResult send(const FrameView &frame) = 0;
     virtual void poll(uint32_t nowMs) = 0;
+
+    // RX is optional because some experimental transports can start TX-only.
+    virtual void setReceiveSink(LinkReceiveSink *sink) { (void)sink; }
 };
 
 } // namespace meshtastic::multilink
