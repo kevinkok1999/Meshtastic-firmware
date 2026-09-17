@@ -77,6 +77,7 @@ void XRXBeeTransport::shutdown()
     }
     activeTx_ = {};
     mirrorCandidate_ = {};
+    deferred_.clear();
 }
 
 int32_t XRXBeeTransport::runOnce()
@@ -91,6 +92,14 @@ int32_t XRXBeeTransport::runOnce()
 
     const uint32_t nowMs = Time::getMillis();
     link_.poll();
+
+    // RadioTxHook hands packets across threads through the FreeRTOS queue.
+    // Once inside this thread they enter a bounded store/carry/forward spool.
+    TxPacket newlyReleased{};
+    while (txQueue_ && xQueueReceive(txQueue_, &newlyReleased, 0) == pdTRUE) {
+        (void)deferred_.enqueue(newlyReleased.packet, nowMs);
+    }
+    deferred_.expire(nowMs);
 
     if (nowMs - lastInfoQueryMs_ >= 5u * 60u * 1000u) {
         link_.queryModuleInfo();
@@ -217,17 +226,35 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
         return;
     }
 
-    if (!coexistence_.canUseSecondary(nowMs) || !txQueue_)
+    if (!coexistence_.canUseSecondary(nowMs))
         return;
 
-    TxPacket queued{};
-    if (xQueueReceive(txQueue_, &queued, 0) == pdTRUE && prepareActiveTx(queued, nowMs))
-        sendNextFragment(nowMs);
+    // Opportunistic store/carry/forward: packets remain queued when the
+    // destination is out of XBee range. A later HELLO from that node makes the
+    // exact same encrypted MeshPacket eligible for delivery again.
+    for (size_t i = 0; i < XRDeferredPacketQueue::MAX_ENTRIES; ++i) {
+        auto *queued = deferred_.entry(i);
+        if (!queued || !queued->used)
+            continue;
+        if (static_cast<int32_t>(nowMs - queued->nextAttemptMs) < 0)
+            continue;
+
+        Peer *peer = findPeer(queued->packet.to);
+        if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+            continue;
+
+        if (prepareActiveTx(queued->packet, nowMs)) {
+            sendNextFragment(nowMs);
+            return;
+        }
+
+        deferred_.markFailure(queued->packet.id, queued->packet.to, nowMs);
+    }
 }
 
-bool XRXBeeTransport::prepareActiveTx(const TxPacket &queued, uint32_t nowMs)
+bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs)
 {
-    Peer *peer = findPeer(queued.packet.to);
+    Peer *peer = findPeer(packet.to);
     if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
         return false;
 
@@ -237,7 +264,7 @@ bool XRXBeeTransport::prepareActiveTx(const TxPacket &queued, uint32_t nowMs)
 
     std::array<uint8_t, meshtastic_MeshPacket_size> encoded{};
     pb_ostream_t stream = pb_ostream_from_buffer(encoded.data(), encoded.size());
-    if (!pb_encode(&stream, meshtastic_MeshPacket_fields, &queued.packet) || stream.bytes_written == 0)
+    if (!pb_encode(&stream, meshtastic_MeshPacket_fields, &packet) || stream.bytes_written == 0)
         return false;
 
     const size_t count = (stream.bytes_written + budget - 1u) / budget;
@@ -248,7 +275,7 @@ bool XRXBeeTransport::prepareActiveTx(const TxPacket &queued, uint32_t nowMs)
     activeTx_.used = true;
     activeTx_.nodeNum = peer->nodeNum;
     activeTx_.destination64 = peer->address64;
-    activeTx_.packetId = queued.packet.id;
+    activeTx_.packetId = packet.id;
     activeTx_.totalLength = static_cast<uint16_t>(stream.bytes_written);
     activeTx_.checksum = checksum32(encoded.data(), stream.bytes_written);
     activeTx_.fragmentCount = static_cast<uint8_t>(count);
@@ -308,6 +335,12 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
 {
     const uint32_t nodeNum = activeTx_.nodeNum;
     const uint32_t packetId = activeTx_.packetId;
+
+    if (success)
+        deferred_.markSuccess(packetId, nodeNum);
+    else
+        deferred_.markFailure(packetId, nodeNum, nowMs);
+
     activeTx_ = {};
 
     XRAdaptiveContext context{};
