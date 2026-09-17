@@ -26,10 +26,12 @@ constexpr uint8_t XBEE_DELIVERY_SUCCESS = 0x00;
 XRXBeeTransport::XRXBeeTransport() : concurrency::OSThread("xr-xbee", SERVICE_INTERVAL_MS)
 {
     instance_ = this;
+    (void)XRDeliveryEvents::addSink(this);
 }
 
 XRXBeeTransport::~XRXBeeTransport()
 {
+    XRDeliveryEvents::removeSink(this);
     shutdown();
     if (instance_ == this)
         instance_ = nullptr;
@@ -98,13 +100,8 @@ int32_t XRXBeeTransport::runOnce()
     const uint32_t nowMs = Time::getMillis();
     link_.poll();
 
-    // RadioTxHook hands packets across threads through the FreeRTOS queue.
-    // Once inside this thread they enter a bounded store/carry/forward spool.
-    TxPacket newlyReleased{};
-    while (txQueue_ && xQueueReceive(txQueue_, &newlyReleased, 0) == pdTRUE) {
-        (void)deferred_.enqueue(newlyReleased.packet, nowMs);
-    }
     deferred_.expire(nowMs);
+    expireOutboundCache(nowMs);
 
     if (nowMs - lastInfoQueryMs_ >= 5u * 60u * 1000u) {
         link_.queryModuleInfo();
@@ -137,6 +134,11 @@ RadioTxHook::PreTxAction XRXBeeTransport::beforeTransmit(RadioInterface *, mesht
 
     mirrorCandidate_ = {};
     if (initialized_ && packet && eligibleForMirror(*packet)) {
+        // Cache only the already-encrypted wire packet. If normal LoRa reliable
+        // delivery later exhausts its retries, this exact ciphertext can enter
+        // store/carry/forward without ever persisting a decoded/plaintext copy.
+        rememberOutbound(*packet, nowMs);
+
         mirrorCandidate_.valid = true;
         mirrorCandidate_.packet = *packet;
         mirrorCandidate_.ackExpected = packet->want_ack;
@@ -160,6 +162,82 @@ void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPack
     queued.ackExpected = mirrorCandidate_.ackExpected;
     (void)xQueueSend(txQueue_, &queued, 0);
     mirrorCandidate_ = {};
+}
+
+
+void XRXBeeTransport::rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs)
+{
+    CachedOutbound *slot = findCachedOutbound(packet.to, packet.id);
+    if (!slot) {
+        for (auto &candidate : outboundCache_) {
+            if (!candidate.used) {
+                slot = &candidate;
+                break;
+            }
+        }
+    }
+
+    if (!slot) {
+        slot = &outboundCache_[0];
+        for (auto &candidate : outboundCache_) {
+            if ((nowMs - candidate.cachedAtMs) > (nowMs - slot->cachedAtMs))
+                slot = &candidate;
+        }
+    }
+
+    *slot = {};
+    slot->used = true;
+    slot->packet = packet;
+    slot->cachedAtMs = nowMs;
+}
+
+XRXBeeTransport::CachedOutbound *XRXBeeTransport::findCachedOutbound(uint32_t destination, uint32_t packetId)
+{
+    for (auto &entry : outboundCache_) {
+        if (entry.used && entry.packet.to == destination && entry.packet.id == packetId)
+            return &entry;
+    }
+    return nullptr;
+}
+
+void XRXBeeTransport::clearCachedOutbound(uint32_t destination, uint32_t packetId)
+{
+    if (CachedOutbound *entry = findCachedOutbound(destination, packetId))
+        *entry = {};
+}
+
+void XRXBeeTransport::expireOutboundCache(uint32_t nowMs)
+{
+    for (auto &entry : outboundCache_) {
+        if (entry.used && (nowMs - entry.cachedAtMs) > OUTBOUND_CACHE_TTL_MS)
+            entry = {};
+    }
+}
+
+void XRXBeeTransport::onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs)
+{
+    CachedOutbound *cached = findCachedOutbound(destination, packetId);
+    if (!cached)
+        return;
+
+    if (deferred_.enqueue(cached->packet, nowMs)) {
+        LOG_INFO("XR XBee recovery queued encrypted packet id=0x%08x to=0x%08x", packetId, destination);
+        (void)deferredStore_.service(deferred_, nowMs, true);
+    }
+}
+
+void XRXBeeTransport::onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
+{
+    deferred_.markDelivered(packetId, peer);
+    clearCachedOutbound(peer, packetId);
+    (void)deferredStore_.service(deferred_, nowMs, true);
+}
+
+void XRXBeeTransport::onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
+{
+    deferred_.markDelivered(packetId, peer);
+    clearCachedOutbound(peer, packetId);
+    (void)deferredStore_.service(deferred_, nowMs, true);
 }
 
 uint8_t XRXBeeTransport::peerCount() const
@@ -235,9 +313,28 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
     if (!coexistence_.canUseSecondary(nowMs))
         return;
 
-    // Opportunistic store/carry/forward: packets remain queued when the
-    // destination is out of XBee range. A later HELLO from that node makes the
-    // exact same encrypted MeshPacket eligible for delivery again.
+    // First, try a one-shot mirror of the packet that just went over LoRa.
+    // If the XBee peer is not currently reachable, discard this immediate
+    // mirror request. It is NOT persisted yet; only a later reliable-LoRa
+    // failure event is allowed to promote the cached ciphertext into the
+    // store/carry/forward queue. This prevents delayed duplicate messages after
+    // a normal LoRa delivery succeeded.
+    TxPacket immediate{};
+    while (txQueue_ && xQueueReceive(txQueue_, &immediate, 0) == pdTRUE) {
+        Peer *peer = findPeer(immediate.packet.to);
+        if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+            continue;
+
+        if (prepareActiveTx(immediate.packet, nowMs, false)) {
+            sendNextFragment(nowMs);
+            return;
+        }
+    }
+
+    // Recovery path: only packets whose normal reliable LoRa delivery actually
+    // exhausted its retries enter this persistent queue. A later XBee HELLO can
+    // therefore carry them opportunistically without creating background
+    // duplicates for packets that were already ACKed normally.
     for (size_t i = 0; i < XRDeferredPacketQueue::MAX_ENTRIES; ++i) {
         auto *queued = deferred_.entry(i);
         if (!queued || !queued->used)
@@ -249,7 +346,7 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
         if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
             continue;
 
-        if (prepareActiveTx(queued->packet, nowMs)) {
+        if (prepareActiveTx(queued->packet, nowMs, true)) {
             sendNextFragment(nowMs);
             return;
         }
@@ -258,7 +355,7 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
     }
 }
 
-bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs)
+bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue)
 {
     Peer *peer = findPeer(packet.to);
     if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
@@ -286,6 +383,7 @@ bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint3
     activeTx_.checksum = checksum32(encoded.data(), stream.bytes_written);
     activeTx_.fragmentCount = static_cast<uint8_t>(count);
     activeTx_.fragmentPayloadBytes = budget;
+    activeTx_.fromDeferredQueue = fromDeferredQueue;
     std::memcpy(activeTx_.encoded.data(), encoded.data(), stream.bytes_written);
 
     if (peer->packetsStarted != UINT16_MAX)
@@ -342,10 +440,12 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
     const uint32_t nodeNum = activeTx_.nodeNum;
     const uint32_t packetId = activeTx_.packetId;
 
-    if (success)
-        deferred_.markSuccess(packetId, nodeNum);
-    else
-        deferred_.markFailure(packetId, nodeNum, nowMs);
+    if (activeTx_.fromDeferredQueue) {
+        if (success)
+            deferred_.markTransportAccepted(packetId, nodeNum, nowMs);
+        else
+            deferred_.markFailure(packetId, nodeNum, nowMs);
+    }
 
     activeTx_ = {};
 
