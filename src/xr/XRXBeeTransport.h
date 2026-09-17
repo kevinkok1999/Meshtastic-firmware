@@ -63,8 +63,10 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 20u * 1000u;
     static constexpr uint32_t TX_STATUS_TIMEOUT_MS = 4000u;
     static constexpr uint32_t SERVICE_INTERVAL_MS = 20u;
+    static constexpr UBaseType_t DELIVERY_EVENT_QUEUE_DEPTH = 8;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
+    enum class DeliveryEventType : uint8_t { Failed = 1, Acked = 2, Naked = 3 };
 
 #pragma pack(push, 1)
     struct FrameHeader {
@@ -94,6 +96,13 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
         bool valid = false;
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
         bool ackExpected = false;
+    };
+
+    struct DeliveryEvent {
+        DeliveryEventType type = DeliveryEventType::Failed;
+        uint32_t peer = 0;
+        uint32_t packetId = 0;
+        uint32_t whenMs = 0;
     };
 
     struct CachedOutbound {
@@ -144,6 +153,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     HardwareSerial serial_{2};
     meshoffgrid::xbee::XBeeXr868Link link_{};
     QueueHandle_t txQueue_ = nullptr;
+    QueueHandle_t deliveryEventQueue_ = nullptr;
     bool initialized_ = false;
     bool initAttempted_ = false;
     uint32_t lastHelloMs_ = 0;
@@ -164,6 +174,9 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
 
     bool initialize();
     void shutdown();
+    void drainDeliveryEvents(uint32_t nowMs);
+    void handleDeliveryEvent(const DeliveryEvent &event, uint32_t nowMs);
+    bool enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId, uint32_t whenMs);
     void sendHello(uint32_t nowMs);
     void serviceOutgoing(uint32_t nowMs);
     bool prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue = false);
