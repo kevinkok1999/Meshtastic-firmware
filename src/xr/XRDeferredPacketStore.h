@@ -7,14 +7,20 @@
 
 namespace meshoffgrid::xr {
 
-// Flash persistence for the bounded deferred queue. Only already-encrypted
-// Meshtastic MeshPackets are persisted. Writes are rate-limited to protect flash.
+// Flash persistence for a bounded deferred queue. Only already-encrypted
+// Meshtastic MeshPackets are persisted. Each transport can use its own file,
+// preventing two sidecars from overwriting each other's recovery state.
 class XRDeferredPacketStore
 {
   public:
-    static constexpr const char *PATH = "/prefs/xr_deferred.bin";
-    static constexpr const char *TEMP_PATH = "/prefs/xr_deferred.tmp";
+    static constexpr const char *DEFAULT_PATH = "/prefs/xr_deferred.bin";
+    static constexpr const char *DEFAULT_TEMP_PATH = "/prefs/xr_deferred.tmp";
     static constexpr uint32_t MIN_PERSIST_INTERVAL_MS = 60u * 1000u;
+
+    explicit XRDeferredPacketStore(const char *path = DEFAULT_PATH, const char *tempPath = DEFAULT_TEMP_PATH)
+        : path_(path), tempPath_(tempPath)
+    {
+    }
 
     bool load(XRDeferredPacketQueue &queue, uint32_t nowMs);
     bool service(XRDeferredPacketQueue &queue, uint32_t nowMs, bool force = false);
@@ -33,6 +39,8 @@ class XRDeferredPacketStore
         uint32_t checksum = 0;
     };
 
+    const char *path_;
+    const char *tempPath_;
     uint32_t lastPersistMs_ = 0;
 
     static uint32_t checksumSnapshot(const Snapshot &snapshot);
