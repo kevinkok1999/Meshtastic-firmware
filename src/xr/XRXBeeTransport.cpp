@@ -166,40 +166,6 @@ void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPack
     mirrorCandidate_ = {};
 }
 
-void XRXBeeTransport::onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs)
-{
-    // LoRa has exhausted its reliable-delivery budget. If the encrypted packet
-    // is in our bounded sidecar spool, make it eligible immediately instead of
-    // waiting for the normal grace/backoff window.
-    deferred_.makeDue(packetId, destination, nowMs);
-}
-
-void XRXBeeTransport::onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
-{
-    // A real Meshtastic ACK is stronger evidence than any sidecar transmit
-    // status. Cancel stale fallback work so the same chat message is not
-    // needlessly replayed when the peer reappears later.
-    deferred_.markSuccess(packetId, peer);
-
-    if (activeTx_.used && activeTx_.packetId == packetId && activeTx_.nodeNum == peer)
-        activeTx_ = {};
-
-    (void)deferredStore_.service(deferred_, nowMs, true);
-}
-
-void XRXBeeTransport::onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
-{
-    // A remote NAK is an explicit application/routing rejection, not a weak RF
-    // failure. Drop alternative retries for that same packet.
-    deferred_.markSuccess(packetId, peer);
-
-    if (activeTx_.used && activeTx_.packetId == packetId && activeTx_.nodeNum == peer)
-        activeTx_ = {};
-
-    (void)deferredStore_.service(deferred_, nowMs);
-}
-
-
 void XRXBeeTransport::rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs)
 {
     CachedOutbound *slot = findCachedOutbound(packet.to, packet.id);
