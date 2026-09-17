@@ -1,53 +1,60 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 namespace meshoffgrid::xr {
 
-// Simple local RF coexistence guard for two 868 MHz radios in the same handheld.
-// It does not alter either radio's regulatory settings; it only prevents the
-// secondary radio from transmitting while LoRa is active or inside a guard window.
+// Thread-safe local RF coexistence guard for two 868 MHz radios in the same handheld.
+// LoRa TX hooks and the secondary-radio task run on different execution contexts,
+// so all shared state is atomic. This guard does not change RF parameters; it only
+// schedules local activity to reduce self-interference/desense.
 class XRRfCoexistence
 {
   public:
     void onLoRaTxStart(uint32_t nowMs)
     {
-        loraTxActive_ = true;
-        lastLoRaActivityMs_ = nowMs;
+        lastLoRaActivityMs_.store(nowMs, std::memory_order_relaxed);
+        loraTxActive_.store(true, std::memory_order_release);
     }
 
     void onLoRaTxEnd(uint32_t nowMs, bool ackExpected)
     {
-        loraTxActive_ = false;
-        lastLoRaActivityMs_ = nowMs;
+        lastLoRaActivityMs_.store(nowMs, std::memory_order_relaxed);
         const uint32_t guard = ackExpected ? ACK_GUARD_MS : NORMAL_GUARD_MS;
-        secondaryBlockedUntilMs_ = nowMs + guard;
+        secondaryBlockedUntilMs_.store(nowMs + guard, std::memory_order_relaxed);
+        loraTxActive_.store(false, std::memory_order_release);
     }
 
     bool canUseSecondary(uint32_t nowMs) const
     {
-        return !loraTxActive_ && static_cast<int32_t>(nowMs - secondaryBlockedUntilMs_) >= 0;
+        if (loraTxActive_.load(std::memory_order_acquire))
+            return false;
+        const uint32_t blockedUntil = secondaryBlockedUntilMs_.load(std::memory_order_relaxed);
+        return static_cast<int32_t>(nowMs - blockedUntil) >= 0;
     }
 
     uint32_t remainingBlockMs(uint32_t nowMs) const
     {
-        if (canUseSecondary(nowMs))
-            return 0;
-        if (loraTxActive_)
+        if (loraTxActive_.load(std::memory_order_acquire))
             return NORMAL_GUARD_MS;
-        return secondaryBlockedUntilMs_ - nowMs;
+
+        const uint32_t blockedUntil = secondaryBlockedUntilMs_.load(std::memory_order_relaxed);
+        if (static_cast<int32_t>(nowMs - blockedUntil) >= 0)
+            return 0;
+        return blockedUntil - nowMs;
     }
 
-    bool loraTxActive() const { return loraTxActive_; }
-    uint32_t lastLoRaActivityMs() const { return lastLoRaActivityMs_; }
+    bool loraTxActive() const { return loraTxActive_.load(std::memory_order_acquire); }
+    uint32_t lastLoRaActivityMs() const { return lastLoRaActivityMs_.load(std::memory_order_relaxed); }
 
   private:
     static constexpr uint32_t NORMAL_GUARD_MS = 350;
     static constexpr uint32_t ACK_GUARD_MS = 1400;
 
-    bool loraTxActive_ = false;
-    uint32_t lastLoRaActivityMs_ = 0;
-    uint32_t secondaryBlockedUntilMs_ = 0;
+    std::atomic<bool> loraTxActive_{false};
+    std::atomic<uint32_t> lastLoRaActivityMs_{0};
+    std::atomic<uint32_t> secondaryBlockedUntilMs_{0};
 };
 
 } // namespace meshoffgrid::xr
