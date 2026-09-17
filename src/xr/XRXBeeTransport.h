@@ -170,7 +170,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     XRDeferredPacketStore deferredStore_{};
 
     XRRfCoexistence coexistence_{};
-    XRAdaptiveCoordinator coordinator_{};
+    XRAdaptiveCoordinator coordinator_{XRAdaptivePolicy{}, "/prefs/xr_ai_xbee.bin", "/prefs/xr_ai_xbee.tmp"};
 
     bool initialize();
     void shutdown();
