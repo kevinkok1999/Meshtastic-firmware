@@ -20,10 +20,20 @@ struct XRAdaptivePlan {
 
 class XRAdaptiveCoordinator {
   public:
-    explicit XRAdaptiveCoordinator(const XRAdaptivePolicy &policy = XRAdaptivePolicy{}) : intelligence_(policy) {}
+    explicit XRAdaptiveCoordinator(const XRAdaptivePolicy &policy = XRAdaptivePolicy{}, const char *modelPath = nullptr,
+                                   const char *tempPath = nullptr)
+        : intelligence_(policy), modelPath_(modelPath), tempPath_(tempPath)
+    {
+    }
 
     // Call after the normal Meshtastic filesystem has been initialized.
-    void begin() { XRAdaptiveStore::load(intelligence_); }
+    void begin()
+    {
+        if (modelPath_ != nullptr)
+            XRAdaptiveStore::loadAt(intelligence_, modelPath_);
+        else
+            XRAdaptiveStore::load(intelligence_);
+    }
 
     // Produces an invisible optimization plan. The caller remains responsible
     // for applying only the hints supported by the current transport/radio state.
@@ -36,13 +46,20 @@ class XRAdaptiveCoordinator {
 
     // Cheap background maintenance; safe to call periodically from an existing
     // scheduler/thread. No UI interaction is required.
-    bool service(uint32_t nowMs) { return XRAdaptiveStore::save(intelligence_, nowMs); }
+    bool service(uint32_t nowMs)
+    {
+        if (modelPath_ != nullptr && tempPath_ != nullptr)
+            return XRAdaptiveStore::saveAt(intelligence_, nowMs, modelPath_, tempPath_);
+        return XRAdaptiveStore::save(intelligence_, nowMs);
+    }
 
     XRAdaptiveIntelligence &intelligence() { return intelligence_; }
     const XRAdaptiveIntelligence &intelligence() const { return intelligence_; }
 
   private:
     XRAdaptiveIntelligence intelligence_;
+    const char *modelPath_ = nullptr;
+    const char *tempPath_ = nullptr;
 };
 
 } // namespace meshoffgrid::xr
