@@ -60,6 +60,10 @@ bool XRXBeeTransport::initialize()
     link_.queryModuleInfo();
     lastInfoQueryMs_ = Time::getMillis();
     coordinator_.begin();
+
+    if (!deferredStore_.load(deferred_, lastInfoQueryMs_))
+        LOG_WARN("XR XBee deferred queue could not be restored; starting with current RAM state");
+
     initialized_ = true;
     LOG_INFO("XR XBee sidecar initialized; LoRa remains available");
     return true;
@@ -68,6 +72,7 @@ bool XRXBeeTransport::initialize()
 void XRXBeeTransport::shutdown()
 {
     if (initialized_) {
+        (void)deferredStore_.service(deferred_, Time::getMillis(), true);
         link_.end();
         initialized_ = false;
     }
@@ -114,6 +119,7 @@ int32_t XRXBeeTransport::runOnce()
     }
 
     expireState(nowMs);
+    (void)deferredStore_.service(deferred_, nowMs);
     coordinator_.service(nowMs);
     return SERVICE_INTERVAL_MS;
 }
