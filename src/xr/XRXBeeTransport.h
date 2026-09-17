@@ -67,6 +67,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 20u * 1000u;
     static constexpr uint32_t TX_STATUS_TIMEOUT_MS = 4000u;
     static constexpr uint32_t SERVICE_INTERVAL_MS = 20u;
+    static constexpr uint32_t CONFIG_QUERY_RETRY_MS = 5000u;
+    static constexpr uint32_t INFO_QUERY_INTERVAL_MS = 5u * 60u * 1000u;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
 
