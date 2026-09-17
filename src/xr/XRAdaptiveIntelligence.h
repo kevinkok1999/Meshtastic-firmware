@@ -8,12 +8,13 @@ namespace meshoffgrid::xr {
 
 // XR Adaptive Intelligence never receives raw hardware-control authority.
 // A lower layer exposes only approved capabilities, so the learner can improve
-// behavior continuously without needing to understand or modify protected
-// platform constraints, cryptography, Meshtastic wire compatibility, or code.
+// behavior continuously without modifying protected platform constraints,
+// cryptography, Meshtastic wire compatibility, or code.
 enum class XRAdaptiveAction : uint8_t {
     BASELINE = 0,
     LORA_PREFERRED,
     WIFI_MQTT_PREFERRED,
+    ESP_NOW_PREFERRED,
     LORA_RX_FOCUS,
     QUIET_BACKGROUND,
     RECOVERY_WINDOW,
@@ -23,10 +24,12 @@ enum class XRAdaptiveAction : uint8_t {
 
 struct XRAdaptiveCapabilities {
     // These are already-vetted capabilities. The learner sees only whether an
-    // action is available, never the lower-level protected controls behind it.
+    // action is available, never the low-level controls behind it.
     bool loraAvailable = true;
     bool wifiMqttAvailable = false;
     bool wifiMqttPrivacyApproved = false;
+    bool espNowAvailable = false;
+    bool espNowPrivacyApproved = false;
     bool rxFocusAvailable = false;
     bool recoveryWindowAvailable = false;
     bool courierAvailable = false;
@@ -37,6 +40,7 @@ struct XRAdaptiveContext {
     uint8_t rfLinkScore = 0;
     uint8_t channelHealthScore = 50;
     uint8_t networkAutopilotScore = 0;
+    uint8_t espNowLinkScore = 0;
     uint8_t batteryPercent = 100;
 
     uint8_t recentAckFailures = 0;
@@ -71,8 +75,8 @@ struct XRAdaptivePolicy {
     bool autoApplyPromotedStrategies = true;
     bool exposeRoutineDecisionsToUi = false;
 
-    // Conservative exploration: a small fraction of decisions may try an
-    // eligible non-baseline strategy. Production default is intentionally low.
+    // Conservative exploration keeps learning alive while the baseline remains
+    // the default until another strategy has enough fresh evidence.
     uint8_t explorationPercent = 5;
     uint8_t minimumSamplesForPromotion = 8;
     int16_t minimumRewardImprovement = 8;
@@ -81,6 +85,7 @@ struct XRAdaptivePolicy {
     uint32_t quarantineMs = 10u * 60u * 1000u;
 
     uint8_t minimumBatteryForWifi = 18;
+    uint8_t minimumBatteryForEspNow = 10;
     uint8_t minimumBatteryForRxFocus = 12;
     uint8_t minimumBatteryForCourier = 15;
 
@@ -140,7 +145,7 @@ class XRAdaptiveIntelligence {
     // The checksum detects torn/corrupt model records; it is not cryptographic.
     struct Snapshot {
         uint32_t magic = 0x58524149; // "XRAI"
-        uint16_t version = 2;
+        uint16_t version = 3;
         uint16_t reserved = 0;
         uint32_t modelEpoch = 0;
         std::array<std::array<XRAdaptiveArmState, ACTION_COUNT>, CONTEXT_BUCKETS> arms{};
@@ -150,7 +155,11 @@ class XRAdaptiveIntelligence {
     Snapshot snapshot() const;
     bool restore(const Snapshot &snapshot);
     bool shouldPersist(uint32_t nowMs) const;
-    void markPersisted(uint32_t nowMs) { lastPersistMs_ = nowMs; dirty_ = false; }
+    void markPersisted(uint32_t nowMs)
+    {
+        lastPersistMs_ = nowMs;
+        dirty_ = false;
+    }
     bool dirty() const { return dirty_; }
     uint32_t modelEpoch() const { return modelEpoch_; }
 
