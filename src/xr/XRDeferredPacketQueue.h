@@ -43,6 +43,10 @@ class XRDeferredPacketQueue
     // Local transport attempt failed before the full carrier was accepted.
     void markFailure(uint32_t packetId, uint32_t destination, uint32_t nowMs);
 
+    // Make an existing deferred packet immediately eligible after the normal
+    // reliable LoRa path has exhausted its retry budget.
+    void makeDue(uint32_t packetId, uint32_t destination, uint32_t nowMs);
+
     // Compatibility alias for older callers: success means end-to-end success.
     void markSuccess(uint32_t packetId, uint32_t destination) { markDelivered(packetId, destination); }
 
