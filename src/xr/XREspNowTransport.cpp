@@ -152,6 +152,7 @@ void XREspNowTransport::shutdown()
         vQueueDelete(deliveryEventQueue_);
         deliveryEventQueue_ = nullptr;
     }
+    mirrorCandidate_ = {};
 }
 
 int32_t XREspNowTransport::runOnce()
@@ -165,17 +166,27 @@ int32_t XREspNowTransport::runOnce()
         return 5000;
 
     const uint32_t nowMs = Time::getMillis();
-    drainDeliveryEvents(nowMs);
 
     RxFrame received{};
     while (xQueueReceive(rxQueue_, &received, 0) == pdTRUE)
         processRx(received, nowMs);
 
+    // Process one released packet before consuming a possible reliable-LoRa
+    // failure event for the same packet. This ensures the ciphertext reaches
+    // the cache before it can be promoted into persistent recovery storage.
+    bool processedImmediate = false;
     TxPacket outgoing{};
-    while (xQueueReceive(txQueue_, &outgoing, 0) == pdTRUE)
+    if (xQueueReceive(txQueue_, &outgoing, 0) == pdTRUE) {
         processTx(outgoing, nowMs);
+        processedImmediate = true;
+    }
 
-    serviceDeferred(nowMs);
+    drainDeliveryEvents(nowMs);
+
+    // Each ESP-NOW send waits for its callback, so bound recovery work to one
+    // packet per service pass rather than blocking this task on a backlog.
+    if (!processedImmediate)
+        serviceDeferred(nowMs);
 
     if (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)
         sendHello(nowMs);
