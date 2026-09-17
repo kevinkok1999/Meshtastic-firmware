@@ -107,7 +107,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     QueueHandle_t txQueue_ = nullptr;
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
-    XRAdaptiveCoordinator coordinator_{};
+    XRAdaptiveCoordinator coordinator_{XRAdaptivePolicy{}, "/prefs/xr_ai_espnow.bin", "/prefs/xr_ai_espnow.tmp"};
 
     bool initialize();
     void shutdown();
