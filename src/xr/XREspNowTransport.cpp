@@ -159,21 +159,16 @@ int32_t XREspNowTransport::runOnce()
 
 RadioTxHook::PreTxAction XREspNowTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
-    // This hook runs immediately before the LoRa driver's startSend(). At this point
-    // Meshtastic requires the packet to already be encoded/encrypted. Never mirror a
-    // decoded packet: LoRa simply continues as normal instead.
-    if (!initialized_ || !packet || !txQueue_ ||
+    // Keep the radio hook lock-free with respect to peer state. Peer discovery,
+    // freshness and policy are owned by the ESP-NOW OSThread and are rechecked
+    // in processTx(). The hook only hands over already-encrypted unicast packets.
+    if (!initialized_.load() || !packet || !txQueue_ ||
         packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag || !isFromUs(packet) || isBroadcast(packet->to))
-        return PRETX_SEND;
-
-    const Peer *peer = findPeer(packet->to);
-    const uint32_t nowMs = Time::getMillis();
-    if (!peer || !shouldMirror(*packet, *peer, nowMs))
         return PRETX_SEND;
 
     TxPacket queued{};
     queued.packet = *packet;
-    (void)xQueueSend(txQueue_, &queued, 0); // Bounded best-effort sidecar; LoRa is never delayed or dropped.
+    (void)xQueueSend(txQueue_, &queued, 0); // bounded best effort; primary LoRa is never blocked
     return PRETX_SEND;
 }
 

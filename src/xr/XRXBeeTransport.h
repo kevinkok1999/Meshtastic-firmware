@@ -15,6 +15,7 @@
 
 #include <HardwareSerial.h>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -154,7 +155,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     meshoffgrid::xbee::XBeeXr868Link link_{};
     QueueHandle_t txQueue_ = nullptr;
     QueueHandle_t deliveryEventQueue_ = nullptr;
-    bool initialized_ = false;
+    std::atomic<bool> initialized_{false};
     bool initAttempted_ = false;
     uint32_t lastHelloMs_ = 0;
     uint32_t lastInfoQueryMs_ = 0;

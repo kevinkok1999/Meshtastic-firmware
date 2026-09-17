@@ -8,6 +8,7 @@
 #include "mesh/generated/meshtastic/mesh.pb.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -100,7 +101,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         std::array<uint8_t, MAX_PACKET_BYTES> data{};
     };
 
-    bool initialized_ = false;
+    std::atomic<bool> initialized_{false};
     bool initAttempted_ = false;
     uint32_t lastHelloMs_ = 0;
     QueueHandle_t rxQueue_ = nullptr;
