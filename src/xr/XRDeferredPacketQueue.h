@@ -39,8 +39,14 @@ class XRDeferredPacketQueue
     bool empty() const { return size() == 0; }
     void clear();
 
+    uint32_t generation() const { return generation_; }
+    void markPersisted() { persistedGeneration_ = generation_; }
+    bool dirty() const { return generation_ != persistedGeneration_; }
+
   private:
     std::array<Entry, MAX_ENTRIES> entries_{};
+    uint32_t generation_ = 0;
+    uint32_t persistedGeneration_ = 0;
 
     Entry *find(uint32_t packetId, uint32_t destination);
     Entry *allocate(uint32_t nowMs);
