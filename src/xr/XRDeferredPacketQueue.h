@@ -32,8 +32,18 @@ class XRDeferredPacketQueue
     Entry *entry(size_t index);
     const Entry *entry(size_t index) const;
 
-    void markSuccess(uint32_t packetId, uint32_t destination);
+    // Remove only after an end-to-end ACK (or explicit cancellation).
+    void markDelivered(uint32_t packetId, uint32_t destination);
+
+    // The sidecar accepted the full carrier packet. This is not end-to-end
+    // delivery, so keep it queued while giving the remote ACK time to return.
+    void markTransportAccepted(uint32_t packetId, uint32_t destination, uint32_t nowMs);
+
+    // Local transport attempt failed before the full carrier was accepted.
     void markFailure(uint32_t packetId, uint32_t destination, uint32_t nowMs);
+
+    // Compatibility alias for older callers: success means end-to-end success.
+    void markSuccess(uint32_t packetId, uint32_t destination) { markDelivered(packetId, destination); }
 
     size_t size() const;
     bool empty() const { return size() == 0; }
