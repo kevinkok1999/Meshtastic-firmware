@@ -108,9 +108,10 @@ int32_t XRXBeeTransport::runOnce()
         lastInfoQueryMs_ = nowMs;
     }
 
-    serviceOutgoing(nowMs);
+    if (moduleConfigVerified())
+        serviceOutgoing(nowMs);
 
-    if (!activeTx_.used && coexistence_.canUseSecondary(nowMs) &&
+    if (moduleConfigVerified() && !activeTx_.used && coexistence_.canUseSecondary(nowMs) &&
         (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)) {
         sendHello(nowMs);
     }
@@ -123,7 +124,7 @@ int32_t XRXBeeTransport::runOnce()
 
 bool XRXBeeTransport::eligibleForMirror(const meshtastic_MeshPacket &packet) const
 {
-    return packet.which_payload_variant == meshtastic_MeshPacket_encrypted_tag && isFromUs(&packet) &&
+    return moduleConfigVerified() && packet.which_payload_variant == meshtastic_MeshPacket_encrypted_tag && isFromUs(&packet) &&
            !isBroadcast(packet.to) && packet.to != 0;
 }
 
@@ -746,10 +747,20 @@ void XRXBeeTransport::onAtResponse(uint8_t, char command0, char command1, uint8_
         return;
     }
 
-    if (command0 == 'A' && command1 == 'P' && valueLength && value[0] != 1)
-        LOG_WARN("XR XBee requires AP=1; module reports AP=%u", static_cast<unsigned>(value[0]));
-    if (command0 == 'A' && command1 == 'O' && valueLength && value[0] != 0)
-        LOG_WARN("XR XBee integration expects AO=0; module reports AO=%u", static_cast<unsigned>(value[0]));
+    if (command0 == 'A' && command1 == 'P' && valueLength) {
+        apVerified_ = value[0] == 1;
+        if (!apVerified_)
+            LOG_WARN("XR XBee requires AP=1; module reports AP=%u", static_cast<unsigned>(value[0]));
+    }
+
+    if (command0 == 'A' && command1 == 'O' && valueLength) {
+        aoVerified_ = value[0] == 0;
+        if (!aoVerified_)
+            LOG_WARN("XR XBee integration expects AO=0; module reports AO=%u", static_cast<unsigned>(value[0]));
+    }
+
+    if (moduleConfigVerified())
+        LOG_DEBUG("XR XBee API configuration verified (AP=1, AO=0)");
 }
 
 } // namespace meshoffgrid::xr
