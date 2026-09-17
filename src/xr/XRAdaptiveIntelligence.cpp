@@ -74,6 +74,9 @@ bool XRAdaptiveIntelligence::actionAllowed(XRAdaptiveAction action, const XRAdap
     case XRAdaptiveAction::ESP_NOW_PREFERRED:
         return capabilities.espNowAvailable && capabilities.espNowPrivacyApproved && context.espNowLinkScore >= 35 &&
                context.batteryPercent >= policy_.minimumBatteryForEspNow;
+    case XRAdaptiveAction::XBEE_PREFERRED:
+        return capabilities.xbeeAvailable && capabilities.xbeePrivacyApproved && context.xbeeLinkScore >= 30 &&
+               context.batteryPercent >= policy_.minimumBatteryForXBee;
     case XRAdaptiveAction::LORA_RX_FOCUS:
         return capabilities.loraAvailable && capabilities.rxFocusAvailable &&
                context.batteryPercent >= policy_.minimumBatteryForRxFocus;
@@ -307,7 +310,7 @@ XRAdaptiveIntelligence::Snapshot XRAdaptiveIntelligence::snapshot() const
 
 bool XRAdaptiveIntelligence::restore(const Snapshot &input)
 {
-    if (input.magic != 0x58524149 || input.version != 3 || input.checksum != checksumSnapshot(input))
+    if (input.magic != 0x58524149 || input.version != 4 || input.checksum != checksumSnapshot(input))
         return false;
 
     arms_ = input.arms;
