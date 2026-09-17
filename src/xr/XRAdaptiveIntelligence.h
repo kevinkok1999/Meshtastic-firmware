@@ -6,9 +6,10 @@
 
 namespace meshoffgrid::xr {
 
-// XR Adaptive Intelligence is deliberately bounded. It can choose only among
-// pre-approved strategies; it cannot alter regulatory limits, cryptography,
-// Meshtastic wire compatibility, or executable code.
+// XR Adaptive Intelligence never receives raw hardware-control authority.
+// A lower layer exposes only approved capabilities, so the learner can improve
+// behavior continuously without needing to understand or modify protected
+// platform constraints, cryptography, Meshtastic wire compatibility, or code.
 enum class XRAdaptiveAction : uint8_t {
     BASELINE = 0,
     LORA_PREFERRED,
@@ -21,6 +22,8 @@ enum class XRAdaptiveAction : uint8_t {
 };
 
 struct XRAdaptiveCapabilities {
+    // These are already-vetted capabilities. The learner sees only whether an
+    // action is available, never the lower-level protected controls behind it.
     bool loraAvailable = true;
     bool wifiMqttAvailable = false;
     bool wifiMqttPrivacyApproved = false;
