@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <esp_now.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
@@ -125,8 +126,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     bool shouldMirror(const meshtastic_MeshPacket &packet, const Peer &peer, uint32_t nowMs);
 
     static uint32_t checksum32(const uint8_t *data, size_t length);
-    static void onReceive(const struct esp_now_recv_info *info, const uint8_t *data, int length);
-    static void onSent(const uint8_t *mac, int status);
+    static void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length);
     static XREspNowTransport *instance_;
 };
 
