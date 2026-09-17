@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(ARCH_ESP32) && defined(T_DECK)
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 
 #include "XRAdaptiveCoordinator.h"
 #include "concurrency/OSThread.h"
