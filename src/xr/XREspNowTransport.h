@@ -144,6 +144,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     QueueHandle_t txQueue_ = nullptr;
     QueueHandle_t txStatusQueue_ = nullptr;
     QueueHandle_t deliveryEventQueue_ = nullptr;
+    PendingMirror mirrorCandidate_{};
     std::array<CachedOutbound, OUTBOUND_CACHE_SIZE> outboundCache_{};
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
