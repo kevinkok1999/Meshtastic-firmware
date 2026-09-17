@@ -28,7 +28,7 @@ struct SendPlan {
 class AdaptiveLinkManager
 {
   public:
-    static constexpr size_t MaxLinks = 5;
+    static constexpr size_t MaxLinks = 6;
     static constexpr size_t DedupeSlots = 64;
 
     explicit AdaptiveLinkManager(SelectionPolicy policy = {});
