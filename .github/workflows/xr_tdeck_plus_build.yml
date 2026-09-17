@@ -51,7 +51,24 @@ jobs:
           PY
 
       - name: Build T-Deck Plus device UI target
-        run: pio run -e t-deck-tft
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-tft 2>&1 | tee /tmp/xr-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xr-build.log | tail -n 80 || true
+            echo "::endgroup::"
+            first=$(grep -E -m1 'fatal error:|error:|undefined reference|collect2: error' /tmp/xr-build.log || true)
+            if [ -n "$first" ]; then
+              first=${first//'%'/'%25'}
+              first=${first//$'\r'/'%0D'}
+              first=${first//$'\n'/'%0A'}
+              echo "::error title=XR T-Deck compile failed::$first"
+            fi
+            exit "$status"
+          fi
 
       - name: Locate and validate flashable firmware
         id: firmware
