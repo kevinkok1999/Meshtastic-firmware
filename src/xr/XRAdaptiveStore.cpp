@@ -12,6 +12,14 @@ namespace meshoffgrid::xr {
 
 bool XRAdaptiveStore::load(XRAdaptiveIntelligence &engine)
 {
+    return loadAt(engine, MODEL_PATH);
+}
+
+bool XRAdaptiveStore::loadAt(XRAdaptiveIntelligence &engine, const char *path)
+{
+    if (path == nullptr || path[0] == '\0')
+        return false;
+
     XRAdaptiveIntelligence::Snapshot snapshot{};
 
 #ifdef MESHTASTIC_ENCRYPTED_STORAGE
@@ -20,7 +28,7 @@ bool XRAdaptiveStore::load(XRAdaptiveIntelligence &engine)
             return false;
 
         size_t outLen = 0;
-        if (!EncryptedStorage::readAndDecrypt(MODEL_PATH, reinterpret_cast<uint8_t *>(&snapshot), sizeof(snapshot), outLen))
+        if (!EncryptedStorage::readAndDecrypt(path, reinterpret_cast<uint8_t *>(&snapshot), sizeof(snapshot), outLen))
             return false;
         if (outLen != sizeof(snapshot))
             return false;
@@ -33,7 +41,7 @@ bool XRAdaptiveStore::load(XRAdaptiveIntelligence &engine)
         return false;
 
     concurrency::LockGuard guard(spiLock);
-    File file = FSCom.open(MODEL_PATH, FILE_O_READ);
+    File file = FSCom.open(path, FILE_O_READ);
     if (!file)
         return false;
 
@@ -56,6 +64,14 @@ bool XRAdaptiveStore::load(XRAdaptiveIntelligence &engine)
 
 bool XRAdaptiveStore::save(XRAdaptiveIntelligence &engine, uint32_t nowMs)
 {
+    return saveAt(engine, nowMs, MODEL_PATH, MODEL_TEMP_PATH);
+}
+
+bool XRAdaptiveStore::saveAt(XRAdaptiveIntelligence &engine, uint32_t nowMs, const char *path, const char *tempPath)
+{
+    if (path == nullptr || path[0] == '\0' || tempPath == nullptr || tempPath[0] == '\0')
+        return false;
+
     if (!engine.shouldPersist(nowMs))
         return true;
 
@@ -66,7 +82,7 @@ bool XRAdaptiveStore::save(XRAdaptiveIntelligence &engine, uint32_t nowMs)
         if (!EncryptedStorage::isUnlocked())
             return false;
 
-        if (!EncryptedStorage::encryptAndWrite(MODEL_PATH, reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot), true))
+        if (!EncryptedStorage::encryptAndWrite(path, reinterpret_cast<const uint8_t *>(&snapshot), sizeof(snapshot), true))
             return false;
         engine.markPersisted(nowMs);
         return true;
@@ -79,7 +95,7 @@ bool XRAdaptiveStore::save(XRAdaptiveIntelligence &engine, uint32_t nowMs)
 
     concurrency::LockGuard guard(spiLock);
 
-    File file = FSCom.open(MODEL_TEMP_PATH, FILE_O_WRITE);
+    File file = FSCom.open(tempPath, FILE_O_WRITE);
     if (!file)
         return false;
 
@@ -87,16 +103,16 @@ bool XRAdaptiveStore::save(XRAdaptiveIntelligence &engine, uint32_t nowMs)
     file.flush();
     file.close();
     if (written != sizeof(snapshot)) {
-        FSCom.remove(MODEL_TEMP_PATH);
+        FSCom.remove(tempPath);
         return false;
     }
 
-    if (FSCom.exists(MODEL_PATH) && !FSCom.remove(MODEL_PATH)) {
-        FSCom.remove(MODEL_TEMP_PATH);
+    if (FSCom.exists(path) && !FSCom.remove(path)) {
+        FSCom.remove(tempPath);
         return false;
     }
-    if (!FSCom.rename(MODEL_TEMP_PATH, MODEL_PATH)) {
-        FSCom.remove(MODEL_TEMP_PATH);
+    if (!FSCom.rename(tempPath, path)) {
+        FSCom.remove(tempPath);
         return false;
     }
 
