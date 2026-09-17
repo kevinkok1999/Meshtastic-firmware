@@ -126,8 +126,27 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         uint16_t totalLength = 0;
         uint8_t fragmentCount = 0;
         uint8_t receivedMask = 0;
+        uint32_t checksum = 0;
         uint32_t updatedMs = 0;
         std::array<uint8_t, MAX_PACKET_BYTES> data{};
+    };
+
+    struct SendStatus {
+        uint8_t mac[6]{};
+        bool success = false;
+    };
+
+    struct ActiveTx {
+        bool used = false;
+        bool fromDeferred = false;
+        uint32_t nodeNum = 0;
+        uint32_t packetId = 0;
+        uint8_t mac[6]{};
+        uint16_t totalLength = 0;
+        uint8_t fragmentCount = 0;
+        uint8_t nextFragment = 0;
+        uint32_t checksum = 0;
+        std::array<uint8_t, MAX_PACKET_BYTES> encoded{};
     };
 
     bool initialized_ = false;
@@ -136,6 +155,11 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     QueueHandle_t rxQueue_ = nullptr;
     QueueHandle_t txQueue_ = nullptr;
     QueueHandle_t deliveryEventQueue_ = nullptr;
+    QueueHandle_t sendStatusQueue_ = nullptr;
+
+    bool sendInFlight_ = false;
+    uint32_t sendStartedMs_ = 0;
+    ActiveTx activeTx_{};
 
     std::array<CachedOutbound, OUTBOUND_CACHE_SIZE> outboundCache_{};
     std::array<Peer, MAX_PEERS> peers_{};
@@ -149,13 +173,15 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     void shutdown();
     void drainTxQueue(uint32_t nowMs, bool allowRadio);
     void processDeliveryEvents(uint32_t nowMs);
+    void processSendStatus(uint32_t nowMs);
     void processDeferred(uint32_t nowMs);
+    bool startActiveTx(const meshtastic_MeshPacket &packet, bool fromDeferred, uint32_t nowMs);
+    void serviceActiveTx(uint32_t nowMs);
+    void finishActiveTx(bool success, uint32_t nowMs);
     void sendHello(uint32_t nowMs);
     void processRx(const RxFrame &frame, uint32_t nowMs);
     void processHello(const FrameHeader &header, const RxFrame &frame, uint32_t nowMs);
     void processData(const FrameHeader &header, const RxFrame &frame, uint32_t nowMs);
-    void processTx(const TxPacket &queued, uint32_t nowMs, bool fromDeferred);
-    bool sendPacketToPeer(const Peer &peer, const meshtastic_MeshPacket &packet, uint32_t nowMs);
     bool sendFrame(const uint8_t *mac, FrameHeader header, const uint8_t *payload, size_t payloadLength);
 
     void rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs);
@@ -172,6 +198,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
 
     static uint32_t checksum32(const uint8_t *data, size_t length);
     static void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length);
+    static void onSend(const uint8_t *mac, esp_now_send_status_t status);
     static XREspNowTransport *instance_;
 };
 
