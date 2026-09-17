@@ -105,7 +105,7 @@ bool XRDeferredPacketStore::load(XRDeferredPacketQueue &queue, uint32_t nowMs)
             return false;
 
         size_t outLen = 0;
-        if (!EncryptedStorage::readAndDecrypt(PATH, reinterpret_cast<uint8_t *>(snapshot.get()), sizeof(Snapshot), outLen))
+        if (!EncryptedStorage::readAndDecrypt(path_, reinterpret_cast<uint8_t *>(snapshot.get()), sizeof(Snapshot), outLen))
             return false;
         if (outLen != sizeof(Snapshot))
             return false;
@@ -122,13 +122,13 @@ bool XRDeferredPacketStore::load(XRDeferredPacketQueue &queue, uint32_t nowMs)
         return false;
 
     concurrency::LockGuard guard(spiLock);
-    if (!FSCom.exists(PATH)) {
+    if (!FSCom.exists(path_)) {
         queue.markPersisted();
         lastPersistMs_ = nowMs;
         return true;
     }
 
-    File file = FSCom.open(PATH, FILE_O_READ);
+    File file = FSCom.open(path_, FILE_O_READ);
     if (!file)
         return false;
 
@@ -173,7 +173,7 @@ bool XRDeferredPacketStore::service(XRDeferredPacketQueue &queue, uint32_t nowMs
         if (!EncryptedStorage::isUnlocked())
             return false;
 
-        if (!EncryptedStorage::encryptAndWrite(PATH, reinterpret_cast<const uint8_t *>(snapshot.get()), sizeof(Snapshot), true))
+        if (!EncryptedStorage::encryptAndWrite(path_, reinterpret_cast<const uint8_t *>(snapshot.get()), sizeof(Snapshot), true))
             return false;
 
         queue.markPersisted();
@@ -189,7 +189,7 @@ bool XRDeferredPacketStore::service(XRDeferredPacketQueue &queue, uint32_t nowMs
     concurrency::LockGuard guard(spiLock);
     FSCom.mkdir("/prefs");
 
-    File file = FSCom.open(TEMP_PATH, FILE_O_WRITE);
+    File file = FSCom.open(tempPath_, FILE_O_WRITE);
     if (!file)
         return false;
 
@@ -198,17 +198,17 @@ bool XRDeferredPacketStore::service(XRDeferredPacketQueue &queue, uint32_t nowMs
     file.close();
 
     if (written != sizeof(Snapshot)) {
-        FSCom.remove(TEMP_PATH);
+        FSCom.remove(tempPath_);
         return false;
     }
 
-    if (FSCom.exists(PATH) && !FSCom.remove(PATH)) {
-        FSCom.remove(TEMP_PATH);
+    if (FSCom.exists(path_) && !FSCom.remove(path_)) {
+        FSCom.remove(tempPath_);
         return false;
     }
 
-    if (!FSCom.rename(TEMP_PATH, PATH)) {
-        FSCom.remove(TEMP_PATH);
+    if (!FSCom.rename(tempPath_, path_)) {
+        FSCom.remove(tempPath_);
         return false;
     }
 
