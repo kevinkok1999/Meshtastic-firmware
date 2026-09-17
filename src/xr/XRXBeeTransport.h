@@ -5,6 +5,7 @@
 
 #include "XRAdaptiveCoordinator.h"
 #include "XRDeferredPacketQueue.h"
+#include "XRDeferredPacketStore.h"
 #include "XRRfCoexistence.h"
 #include "concurrency/OSThread.h"
 #include "mesh/RadioTxHook.h"
@@ -140,6 +141,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     ActiveTx activeTx_{};
     XRDeferredPacketQueue deferred_{};
+    XRDeferredPacketStore deferredStore_{};
 
     XRRfCoexistence coexistence_{};
     XRAdaptiveCoordinator coordinator_{};
