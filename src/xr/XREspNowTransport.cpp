@@ -1,6 +1,6 @@
 #include "XREspNowTransport.h"
 
-#if defined(ARCH_ESP32) && defined(T_DECK)
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 
 #include "NodeDB.h"
 #include "Router.h"
