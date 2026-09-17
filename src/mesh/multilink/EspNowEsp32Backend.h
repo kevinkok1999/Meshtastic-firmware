@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <esp_idf_version.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 
@@ -67,6 +68,7 @@ class EspNowEsp32Backend final : public EspNowBackend
     size_t reportWrite_ = 0;
     size_t rxRead_ = 0;
     size_t rxWrite_ = 0;
+    wifi_interface_t interface_ = WIFI_IF_STA;
     bool initialized_ = false;
     bool pmkConfigured_ = false;
     volatile bool txInFlight_ = false;
