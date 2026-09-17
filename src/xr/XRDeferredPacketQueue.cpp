@@ -52,7 +52,7 @@ bool XRDeferredPacketQueue::enqueue(const meshtastic_MeshPacket &packet, uint32_
     slot->used = true;
     slot->packet = packet;
     slot->queuedAtMs = nowMs;
-    slot->nextAttemptMs = nowMs;
+    slot->nextAttemptMs = packet.want_ack ? nowMs + RELIABLE_INITIAL_GRACE_MS : nowMs;
     ++generation_;
     return true;
 }
@@ -134,6 +134,16 @@ void XRDeferredPacketQueue::markFailure(uint32_t packetId, uint32_t destination,
         ++item->failureStreak;
 
     item->nextAttemptMs = nowMs + retryDelayMs(item->failureStreak);
+    ++generation_;
+}
+
+void XRDeferredPacketQueue::makeDue(uint32_t packetId, uint32_t destination, uint32_t nowMs)
+{
+    Entry *item = find(packetId, destination);
+    if (!item)
+        return;
+
+    item->nextAttemptMs = nowMs;
     ++generation_;
 }
 
