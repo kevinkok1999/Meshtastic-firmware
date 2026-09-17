@@ -189,20 +189,31 @@ int32_t XREspNowTransport::runOnce()
 
 RadioTxHook::PreTxAction XREspNowTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
-    // Keep the radio hook lock-free with respect to peer state. Peer discovery,
-    // freshness and policy are owned by the ESP-NOW OSThread and are rechecked
-    // in processTx(). The hook only hands over already-encrypted unicast packets.
-    if (!initialized_.load() || !packet || !txQueue_ ||
-        packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag || !isFromUs(packet) || isBroadcast(packet->to))
-        return PRETX_SEND;
-
-    TxPacket queued{};
-    queued.packet = *packet;
-    (void)xQueueSend(txQueue_, &queued, 0); // bounded best effort; primary LoRa is never blocked
+    // Another hook may still hold/drop the LoRa TX. Keep only a bounded
+    // encrypted candidate here and hand it to the ESP-NOW task after
+    // packetReleased() confirms the radio path consumed the packet.
+    mirrorCandidate_ = {};
+    if (initialized_.load() && packet && txQueue_ &&
+        packet->which_payload_variant == meshtastic_MeshPacket_encrypted_tag && isFromUs(packet) &&
+        !isBroadcast(packet->to) && !packet->via_mqtt) {
+        mirrorCandidate_.valid = true;
+        mirrorCandidate_.packet = *packet;
+    }
     return PRETX_SEND;
 }
 
-void XREspNowTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *) {}
+void XREspNowTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *packet)
+{
+    if (!packet || !txQueue_ || !mirrorCandidate_.valid || mirrorCandidate_.packet.id != packet->id) {
+        mirrorCandidate_ = {};
+        return;
+    }
+
+    TxPacket queued{};
+    queued.packet = mirrorCandidate_.packet;
+    (void)xQueueSend(txQueue_, &queued, 0);
+    mirrorCandidate_ = {};
+}
 
 
 bool XREspNowTransport::enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId, uint32_t whenMs)

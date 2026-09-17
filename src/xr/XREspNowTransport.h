@@ -92,6 +92,11 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
     };
 
+    struct PendingMirror {
+        bool valid = false;
+        meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
+    };
+
     struct TxStatus {
         uint8_t mac[6]{};
         esp_now_send_status_t status = ESP_NOW_SEND_FAIL;
