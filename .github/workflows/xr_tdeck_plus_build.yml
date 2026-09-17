@@ -17,10 +17,10 @@ jobs:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
     steps:
       - name: Checkout XR branch
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
           cache: pip
@@ -97,7 +97,7 @@ jobs:
           cat xr-release/SHA256SUMS.txt
 
       - name: Upload XR T-Deck Plus artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: XR-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
           path: xr-release/
