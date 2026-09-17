@@ -11,7 +11,7 @@
 #include "modules/TrafficManagementModule.h"
 #endif
 #include "NodeDB.h"
-#if defined(ARCH_ESP32) && defined(T_DECK)
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 #include "xr/XRDeliveryEvents.h"
 #endif
 
@@ -466,7 +466,7 @@ int32_t NextHopRouter::doRetransmissions()
                 if (isFromUs(p.packet)) {
                     LOG_DEBUG("Reliable send failed, return nak fr=0x%08x,to=0x%08x,id=0x%08x", p.packet->from, p.packet->to,
                               p.packet->id);
-#if defined(ARCH_ESP32) && defined(T_DECK)
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
                     // Notify optional sidecar transports before the pending copy is released.
                     // Only identifiers are exposed here: transports must use their own cached
                     // encrypted wire packet and must never persist this decoded retry copy.
