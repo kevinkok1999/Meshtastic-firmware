@@ -7,7 +7,7 @@ BackscatterLink::BackscatterLink(BackscatterFrontEnd &frontEnd, BackscatterConfi
 {
     metrics_.mtu = config_.mtu;
     metrics_.encrypted = config_.upperLayerEncrypted;
-    metrics_.energyCost = 40;       // relative hint; tune from measurements per front-end
+    metrics_.energyCost = 40;        // relative hint; tune from measurements per front-end
     metrics_.deliveryPermille = 500; // neutral bootstrap value until measurements arrive
 }
 
@@ -19,17 +19,27 @@ bool BackscatterLink::begin()
     started_ = frontEnd_.begin(config_);
     metrics_.available = started_ && frontEnd_.available();
     metrics_.peerReachable = metrics_.available && frontEnd_.carrierPresent();
+    if (metrics_.available)
+        metrics_.rssiDbm = frontEnd_.estimatedRssiDbm();
     return started_;
 }
 
 LinkMetrics BackscatterLink::metrics() const
 {
     LinkMetrics current = metrics_;
-    current.available = started_ && frontEnd_.available();
-    current.peerReachable = current.available && frontEnd_.carrierPresent();
-    current.rssiDbm = frontEnd_.estimatedRssiDbm();
     current.mtu = config_.mtu;
     current.encrypted = config_.upperLayerEncrypted;
+
+    if (!started_) {
+        current.available = false;
+        current.peerReachable = false;
+        current.rssiDbm = -127;
+        return current;
+    }
+
+    current.available = frontEnd_.available();
+    current.peerReachable = current.available && frontEnd_.carrierPresent();
+    current.rssiDbm = current.available ? frontEnd_.estimatedRssiDbm() : -127;
     return current;
 }
 
@@ -47,8 +57,10 @@ bool BackscatterLink::supports(const FrameView &frame) const
 
 SendResult BackscatterLink::send(const FrameView &frame)
 {
+    if (frame.size > config_.mtu)
+        return SendResult::TooLarge;
     if (!supports(frame))
-        return frame.size > config_.mtu ? SendResult::TooLarge : SendResult::Unavailable;
+        return SendResult::Unavailable;
     if (!frontEnd_.available() || !frontEnd_.carrierPresent())
         return SendResult::Unavailable;
 
@@ -63,7 +75,7 @@ void BackscatterLink::poll(uint32_t nowMs)
     frontEnd_.poll(nowMs);
     metrics_.available = frontEnd_.available();
     metrics_.peerReachable = metrics_.available && frontEnd_.carrierPresent();
-    metrics_.rssiDbm = frontEnd_.estimatedRssiDbm();
+    metrics_.rssiDbm = metrics_.available ? frontEnd_.estimatedRssiDbm() : -127;
     metrics_.lastUpdateMs = nowMs;
 }
 
