@@ -89,7 +89,14 @@ bool XRAdaptiveIntelligence::actionAllowed(XRAdaptiveAction action, const XRAdap
     return false;
 }
 
-bool XRAdaptiveIntelligence::isPromoted(uint8_t bucket, XRAdaptiveAction action) const
+bool XRAdaptiveIntelligence::evidenceFresh(const XRAdaptiveArmState &state, uint32_t nowMs) const
+{
+    if (state.samples == 0 || state.lastUpdateMs == 0)
+        return false;
+    return nowMs - state.lastUpdateMs <= policy_.knowledgeFreshMs;
+}
+
+bool XRAdaptiveIntelligence::isPromoted(uint8_t bucket, XRAdaptiveAction action, uint32_t nowMs) const
 {
     if (action == XRAdaptiveAction::BASELINE)
         return true;
@@ -98,6 +105,8 @@ bool XRAdaptiveIntelligence::isPromoted(uint8_t bucket, XRAdaptiveAction action)
     const auto &baseline = arms_[bucket][actionIndex(XRAdaptiveAction::BASELINE)];
 
     if (candidate.samples < policy_.minimumSamplesForPromotion || baseline.samples < policy_.minimumSamplesForPromotion)
+        return false;
+    if (!evidenceFresh(candidate, nowMs) || !evidenceFresh(baseline, nowMs))
         return false;
 
     return candidate.rewardEwma >= baseline.rewardEwma + policy_.minimumRewardImprovement &&
@@ -129,13 +138,13 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
     }
 
     // Exploitation is conservative: only baseline or a statistically promoted
-    // action can become the normal choice.
+    // action with fresh evidence can become the normal choice.
     XRAdaptiveAction best = XRAdaptiveAction::BASELINE;
     int16_t bestReward = arms_[bucket][actionIndex(best)].rewardEwma;
 
     for (uint8_t i = 1; i < actionIndex(XRAdaptiveAction::COUNT); ++i) {
         const auto action = static_cast<XRAdaptiveAction>(i);
-        if (!actionAllowed(action, context, capabilities, nowMs, bucket) || !isPromoted(bucket, action))
+        if (!actionAllowed(action, context, capabilities, nowMs, bucket) || !isPromoted(bucket, action, nowMs))
             continue;
         const auto reward = arms_[bucket][i].rewardEwma;
         if (reward > bestReward) {
@@ -148,9 +157,9 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
     result.expectedReward = bestReward;
     result.promoted = best != XRAdaptiveAction::BASELINE;
 
-    // A small deterministic exploration budget lets the model continue learning
-    // without requiring a random subsystem or cloud service. A message id can be
-    // supplied as decisionNonce so repeated boots do not create the same pattern.
+    // A small deterministic exploration budget keeps learning alive. Stale
+    // strategies receive a modest re-test bonus so the model can discover that
+    // conditions have changed without forgetting everything at once.
     if (policy_.explorationPercent == 0)
         return result;
 
@@ -166,7 +175,10 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
             continue;
 
         const auto &arm = arms_[bucket][i];
-        const int16_t score = static_cast<int16_t>(arm.rewardEwma + explorationBonus(arm.samples));
+        int16_t score = static_cast<int16_t>(arm.rewardEwma + explorationBonus(arm.samples));
+        if (arm.samples > 0 && !evidenceFresh(arm, nowMs))
+            score = static_cast<int16_t>(std::min<int>(INT16_MAX, score + 6));
+
         if (explore == XRAdaptiveAction::BASELINE || score > exploreScore) {
             explore = action;
             exploreScore = score;
@@ -177,7 +189,7 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
         result.action = explore;
         result.expectedReward = arms_[bucket][actionIndex(explore)].rewardEwma;
         result.exploratory = true;
-        result.promoted = isPromoted(bucket, explore);
+        result.promoted = isPromoted(bucket, explore, nowMs);
     }
 
     return result;
@@ -235,6 +247,7 @@ void XRAdaptiveIntelligence::learn(const XRAdaptiveDecision &decision, const XRA
         arm.quarantineUntilMs = 0;
     }
 
+    arm.lastUpdateMs = nowMs;
     ++modelEpoch_;
     dirty_ = true;
 }
@@ -281,6 +294,7 @@ uint32_t XRAdaptiveIntelligence::checksumSnapshot(const Snapshot &snapshot)
             feed16(static_cast<uint16_t>(arm.rewardEwma));
             feed8(arm.failureStreak);
             feed32(arm.quarantineUntilMs);
+            feed32(arm.lastUpdateMs);
         }
     }
     return hash;
@@ -297,7 +311,7 @@ XRAdaptiveIntelligence::Snapshot XRAdaptiveIntelligence::snapshot() const
 
 bool XRAdaptiveIntelligence::restore(const Snapshot &input)
 {
-    if (input.magic != 0x58524149 || input.version != 1 || input.checksum != checksumSnapshot(input))
+    if (input.magic != 0x58524149 || input.version != 2 || input.checksum != checksumSnapshot(input))
         return false;
 
     arms_ = input.arms;
