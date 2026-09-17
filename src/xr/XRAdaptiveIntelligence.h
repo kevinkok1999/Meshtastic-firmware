@@ -84,6 +84,11 @@ struct XRAdaptivePolicy {
     uint8_t minimumBatteryForRxFocus = 12;
     uint8_t minimumBatteryForCourier = 15;
 
+    // Old evidence must stop dominating after conditions change. A promoted
+    // strategy must have fresh evidence inside this window or it returns to
+    // baseline/exploration until it proves itself again.
+    uint32_t knowledgeFreshMs = 24u * 60u * 60u * 1000u;
+
     // Persistence is rate-limited by the coordinator to avoid flash wear.
     uint32_t minimumPersistIntervalMs = 15u * 60u * 1000u;
 };
@@ -103,6 +108,7 @@ struct XRAdaptiveArmState {
     int16_t rewardEwma = 0;
     uint8_t failureStreak = 0;
     uint32_t quarantineUntilMs = 0;
+    uint32_t lastUpdateMs = 0;
 };
 
 class XRAdaptiveIntelligence {
@@ -134,7 +140,7 @@ class XRAdaptiveIntelligence {
     // The checksum detects torn/corrupt model records; it is not cryptographic.
     struct Snapshot {
         uint32_t magic = 0x58524149; // "XRAI"
-        uint16_t version = 1;
+        uint16_t version = 2;
         uint16_t reserved = 0;
         uint32_t modelEpoch = 0;
         std::array<std::array<XRAdaptiveArmState, ACTION_COUNT>, CONTEXT_BUCKETS> arms{};
@@ -158,7 +164,8 @@ class XRAdaptiveIntelligence {
     uint8_t bucketFor(const XRAdaptiveContext &context, const XRAdaptiveCapabilities &capabilities) const;
     bool actionAllowed(XRAdaptiveAction action, const XRAdaptiveContext &context,
                        const XRAdaptiveCapabilities &capabilities, uint32_t nowMs, uint8_t bucket) const;
-    bool isPromoted(uint8_t bucket, XRAdaptiveAction action) const;
+    bool isPromoted(uint8_t bucket, XRAdaptiveAction action, uint32_t nowMs) const;
+    bool evidenceFresh(const XRAdaptiveArmState &state, uint32_t nowMs) const;
     static uint8_t actionIndex(XRAdaptiveAction action) { return static_cast<uint8_t>(action); }
     static uint32_t checksumSnapshot(const Snapshot &snapshot);
     static uint32_t mix32(uint32_t x);
