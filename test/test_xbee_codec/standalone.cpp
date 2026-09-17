@@ -1,5 +1,6 @@
 #include "mesh/xbee/XBeeApiCodec.h"
 #include "xr/XRRfCoexistence.h"
+#include "xr/XRDeliveryEvents.h"
 
 #include <array>
 #include <cassert>
@@ -10,6 +11,8 @@ using meshoffgrid::xbee::FRAME_AT_COMMAND;
 using meshoffgrid::xbee::FRAME_TX_REQUEST;
 using meshoffgrid::xbee::XBeeApiCodec;
 using meshoffgrid::xr::XRRfCoexistence;
+using meshoffgrid::xr::XRDeliveryEventSink;
+using meshoffgrid::xr::XRDeliveryEvents;
 
 static void testTransmitFrame()
 {
@@ -48,6 +51,36 @@ static void testBufferRejection()
     assert(XBeeApiCodec::buildTransmitRequest(tiny.data(), tiny.size(), 1, 1, payload, sizeof(payload)) == 0);
 }
 
+class TestDeliverySink final : public XRDeliveryEventSink
+{
+  public:
+    uint32_t failed = 0;
+    uint32_t acked = 0;
+    uint32_t naked = 0;
+
+    void onReliableDeliveryFailed(uint32_t, uint32_t, uint32_t) override { ++failed; }
+    void onReliableDeliveryAcked(uint32_t, uint32_t, uint32_t) override { ++acked; }
+    void onReliableDeliveryNaked(uint32_t, uint32_t, uint32_t) override { ++naked; }
+};
+
+static void testDeliveryEvents()
+{
+    TestDeliverySink sink;
+    assert(XRDeliveryEvents::addSink(&sink));
+
+    XRDeliveryEvents::notifyFailed(1, 2, 3);
+    XRDeliveryEvents::notifyAcked(1, 2, 4);
+    XRDeliveryEvents::notifyNaked(1, 2, 5);
+
+    assert(sink.failed == 1);
+    assert(sink.acked == 1);
+    assert(sink.naked == 1);
+
+    XRDeliveryEvents::removeSink(&sink);
+    XRDeliveryEvents::notifyFailed(1, 2, 6);
+    assert(sink.failed == 1);
+}
+
 static void testRfCoexistenceGuard()
 {
     XRRfCoexistence guard;
@@ -71,6 +104,7 @@ int main()
     testTransmitFrame();
     testAtFrame();
     testBufferRejection();
+    testDeliveryEvents();
     testRfCoexistenceGuard();
     return 0;
 }
