@@ -174,7 +174,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     ActiveTx activeTx_{};
     XRDeferredPacketQueue deferred_{};
-    XRDeferredPacketStore deferredStore_{};
+    XRDeferredPacketStore deferredStore_{"/prefs/xr_xbee_deferred.bin", "/prefs/xr_xbee_deferred.tmp"};
 
     XRRfCoexistence coexistence_{};
     XRAdaptiveCoordinator coordinator_{};
