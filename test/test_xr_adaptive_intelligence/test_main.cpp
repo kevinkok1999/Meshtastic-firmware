@@ -127,6 +127,45 @@ void test_proven_better_strategy_is_promoted_over_baseline()
     TEST_ASSERT_TRUE(promoted.promoted);
 }
 
+void test_stale_promoted_strategy_returns_to_baseline_until_reproven()
+{
+    XRAdaptivePolicy p{};
+    p.explorationPercent = 0;
+    p.minimumSamplesForPromotion = 2;
+    p.minimumRewardImprovement = 5;
+    p.knowledgeFreshMs = 100;
+    XRAdaptiveIntelligence ai(p);
+
+    const auto ctx = goodWifiContext();
+    const auto caps = wifiOnlyCapabilities(true);
+    const auto initial = ai.choose(ctx, caps, 1000, 0);
+
+    XRAdaptiveOutcome poor{};
+    poor.delivered = false;
+    XRAdaptiveOutcome excellent{};
+    excellent.delivered = true;
+    excellent.acked = true;
+
+    for (uint8_t i = 0; i < 2; ++i) {
+        XRAdaptiveDecision baseline{};
+        baseline.action = XRAdaptiveAction::BASELINE;
+        baseline.contextBucket = initial.contextBucket;
+        ai.learn(baseline, poor, 1010 + i);
+
+        XRAdaptiveDecision wifi{};
+        wifi.action = XRAdaptiveAction::WIFI_MQTT_PREFERRED;
+        wifi.contextBucket = initial.contextBucket;
+        ai.learn(wifi, excellent, 1020 + i);
+    }
+
+    const auto fresh = ai.choose(ctx, caps, 1050, 0);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(XRAdaptiveAction::WIFI_MQTT_PREFERRED), static_cast<uint8_t>(fresh.action));
+
+    const auto stale = ai.choose(ctx, caps, 2000, 0);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(XRAdaptiveAction::BASELINE), static_cast<uint8_t>(stale.action));
+    TEST_ASSERT_FALSE(stale.promoted);
+}
+
 void test_snapshot_roundtrip_restores_learning()
 {
     XRAdaptiveIntelligence source;
@@ -180,6 +219,7 @@ void setup()
     RUN_TEST(test_privacy_rejection_is_absolute_negative_reward);
     RUN_TEST(test_three_failures_quarantine_nonbaseline_strategy);
     RUN_TEST(test_proven_better_strategy_is_promoted_over_baseline);
+    RUN_TEST(test_stale_promoted_strategy_returns_to_baseline_until_reproven);
     RUN_TEST(test_snapshot_roundtrip_restores_learning);
     RUN_TEST(test_corrupt_snapshot_is_rejected);
     RUN_TEST(test_low_battery_blocks_wifi_exploration);
