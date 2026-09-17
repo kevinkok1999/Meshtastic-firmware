@@ -12,12 +12,15 @@ permissions:
 jobs:
   build-tdeck-plus:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+
     steps:
-      - name: Checkout XR branch
+      - name: Checkout firmware branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -31,9 +34,14 @@ jobs:
           python -m pip install 'platformio==6.2.0'
           pio --version
 
-      - name: Install target packages and apply pioarduino SCons compatibility fix
+      - name: Install target packages
         run: |
           pio pkg install -e t-deck-tft
+          pio pkg install -e t-deck-ultra
+          pio pkg install -e t-deck-xbee-ci
+
+      - name: Apply pioarduino SCons compatibility fix
+        run: |
           python - <<'PY'
           from pathlib import Path
 
@@ -50,82 +58,119 @@ jobs:
           print(f"Patched {platform_py}: PlatformIO Core now owns tool-scons")
           PY
 
-      - name: Build T-Deck Plus device UI target
+      - name: Build stock T-Deck Plus regression target
         shell: bash
         run: |
           set -o pipefail
-          pio run -e t-deck-tft 2>&1 | tee /tmp/xr-build.log
+          pio run -e t-deck-tft 2>&1 | tee /tmp/stock-build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            echo "::group::Compiler diagnostics"
-            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xr-build.log | tail -n 80 || true
+            echo "::group::Stock compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/stock-build.log | tail -n 100 || true
             echo "::endgroup::"
-            first=$(grep -E -m1 'fatal error:|error:|undefined reference|collect2: error' /tmp/xr-build.log || true)
-            if [ -n "$first" ]; then
-              first=${first//'%'/'%25'}
-              first=${first//$'\r'/'%0D'}
-              first=${first//$'\n'/'%0A'}
-              echo "::error title=XR T-Deck compile failed::$first"
-            fi
             exit "$status"
           fi
+
+      - name: Build MeshOffGrid XR Ultra firmware
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-ultra 2>&1 | tee /tmp/ultra-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::XR Ultra compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/ultra-build.log | tail -n 120 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Compile standalone XBee codec tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xbee_codec/standalone.cpp \
+            src/mesh/xbee/XBeeApiCodec.cpp \
+            -o /tmp/xbee-codec-test
+          /tmp/xbee-codec-test
+
+      - name: Compile optional XBee XR 868 integration
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-xbee-ci 2>&1 | tee /tmp/xbee-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::XBee compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xbee-build.log | tail -n 120 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Validate Ultra firmware image
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-ultra
+          preferred="$BUILD_DIR/firmware.bin"
+
+          if [ ! -s "$preferred" ]; then
+            echo "Expected non-empty $preferred was not produced" >&2
+            find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+            exit 1
+          fi
+
+          echo "firmware=$preferred" >> "$GITHUB_OUTPUT"
+          ls -lh "$preferred"
+
+      - name: Package MeshOffGrid XR Ultra flash bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-ultra
+          RELEASE_DIR=xr-ultra-release
+          mkdir -p "$RELEASE_DIR"
+
+          cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/MeshOffGrid-XR-Ultra-TDeck-Plus-firmware.bin"
+
+          for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
+            if [ -s "$BUILD_DIR/$file" ]; then
+              cp "$BUILD_DIR/$file" "$RELEASE_DIR/$file"
+            fi
+          done
+
+          {
+            echo "MeshOffGrid XR Ultra"
+            echo "Target: LILYGO T-Deck Plus"
+            echo "Profile: t-deck-ultra"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo "XBee XR 868: software compiled separately in t-deck-xbee-ci; physical UART pins intentionally not enabled in this flashable bundle"
+            echo "LoRa/Meshtastic: preserved"
+            echo "XR ESP-NOW sidecar: enabled"
+            echo "Adaptive delivery intelligence: enabled"
+          } > "$RELEASE_DIR/BUILD_INFO.txt"
+
+          sha256sum "$RELEASE_DIR"/*.bin > "$RELEASE_DIR/SHA256SUMS.txt"
+          cat "$RELEASE_DIR/BUILD_INFO.txt"
+          cat "$RELEASE_DIR/SHA256SUMS.txt"
 
       - name: Upload compiler diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: XR-TDeck-Plus-compiler-log-${{ github.event.pull_request.head.sha || github.sha }}
-          path: /tmp/xr-build.log
-          if-no-files-found: error
+          name: MeshOffGrid-XR-compiler-logs-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/stock-build.log
+            /tmp/ultra-build.log
+            /tmp/xbee-build.log
+          if-no-files-found: ignore
           retention-days: 7
 
-      - name: Locate and validate flashable firmware
-        id: firmware
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_DIR=.pio/build/t-deck-tft
-          echo "Build directory contents:"
-          find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
-
-          mapfile -t candidates < <(find "$BUILD_DIR" -maxdepth 2 -type f \( -name 'firmware*.bin' -o -name '*firmware*.bin' -o -name 'program.bin' \) -size +0c | sort)
-          if [ "${#candidates[@]}" -eq 0 ]; then
-            echo "No non-empty firmware binary found under $BUILD_DIR" >&2
-            exit 1
-          fi
-
-          preferred="$BUILD_DIR/firmware.bin"
-          if [ -s "$preferred" ]; then
-            firmware="$preferred"
-          else
-            firmware="${candidates[0]}"
-          fi
-          echo "Using firmware binary: $firmware"
-          ls -lh "$firmware"
-          echo "firmware=$firmware" >> "$GITHUB_OUTPUT"
-
-      - name: Package flash files
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_DIR=.pio/build/t-deck-tft
-          mkdir -p xr-release
-          cp "${{ steps.firmware.outputs.firmware }}" xr-release/XR-TDeck-Plus-firmware.bin
-
-          for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
-            if [ -s "$BUILD_DIR/$file" ]; then
-              cp "$BUILD_DIR/$file" "xr-release/$file"
-            fi
-          done
-
-          find xr-release -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-          sha256sum xr-release/*.bin > xr-release/SHA256SUMS.txt
-          cat xr-release/SHA256SUMS.txt
-
-      - name: Upload XR T-Deck Plus artifact
+      - name: Upload MeshOffGrid XR Ultra artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: XR-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
-          path: xr-release/
+          name: MeshOffGrid-XR-Ultra-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
+          path: xr-ultra-release/
           if-no-files-found: error
           retention-days: 30
