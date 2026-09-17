@@ -91,6 +91,7 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             test/test_xbee_codec/standalone.cpp \
             src/mesh/xbee/XBeeApiCodec.cpp \
+            src/xr/XRDeliveryEvents.cpp \
             -o /tmp/xbee-codec-test
           /tmp/xbee-codec-test
 
