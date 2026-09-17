@@ -44,6 +44,10 @@ class XRDeferredPacketQueue
     // Local transport attempt failed before the full carrier was accepted.
     void markFailure(uint32_t packetId, uint32_t destination, uint32_t nowMs);
 
+    // A higher-level delivery failure can promote a queued packet for an
+    // immediate alternative-transport attempt.
+    void makeDue(uint32_t packetId, uint32_t destination, uint32_t nowMs);
+
     // Compatibility alias for older callers: success means end-to-end success.
     void markSuccess(uint32_t packetId, uint32_t destination) { markDelivered(packetId, destination); }
 
