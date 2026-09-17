@@ -414,6 +414,18 @@ void XREspNowTransport::processRx(const RxFrame &frame, uint32_t nowMs)
 
 void XREspNowTransport::processHello(const FrameHeader &header, const RxFrame &frame, uint32_t nowMs)
 {
+    // Sidecar discovery is supplementary to the Meshtastic identity layer.
+    // Do not let an arbitrary 2.4 GHz sender create a new node identity.
+    if (!nodeDB || nodeDB->getMeshNode(header.fromNode) == nullptr)
+        return;
+
+    // Keep a fresh node->MAC binding sticky. A different MAC may take over
+    // only after the old peer record has gone stale.
+    if (Peer *existing = findPeer(header.fromNode)) {
+        if (!macEqual(existing->mac, frame.mac) && nowMs - existing->lastSeenMs <= PEER_FRESH_MS)
+            return;
+    }
+
     rememberPeer(header.fromNode, frame.mac, frame.rssi, nowMs);
     (void)addEspNowPeerIfNeeded(frame.mac);
 }
@@ -425,8 +437,6 @@ void XREspNowTransport::processData(const FrameHeader &header, const RxFrame &fr
         static_cast<size_t>(header.fragmentOffset) + header.fragmentLength > header.totalLength ||
         frame.length != sizeof(FrameHeader) + header.fragmentLength)
         return;
-
-    rememberPeer(header.fromNode, frame.mac, frame.rssi, nowMs);
 
     Reassembly &assembly = getReassembly(header, frame.mac, nowMs);
     if (!assembly.used || assembly.totalLength != header.totalLength || assembly.fragmentCount != header.fragmentCount)
@@ -459,10 +469,22 @@ void XREspNowTransport::processData(const FrameHeader &header, const RxFrame &fr
     // Fail closed: XR ESP-NOW ingress accepts only a valid encrypted Meshtastic
     // packet whose immutable identity matches the carrier header.
     if (!decoded || packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag || packet->from != header.fromNode ||
-        packet->id != header.packetId || isBroadcast(packet->from)) {
+        packet->id != header.packetId || isBroadcast(packet->from) || !nodeDB ||
+        nodeDB->getMeshNode(packet->from) == nullptr) {
         packetPool.release(packet);
         return;
     }
+
+    // Bind the transport address only after a complete MeshPacket passed all
+    // carrier and Meshtastic identity checks.
+    if (Peer *existing = findPeer(packet->from)) {
+        if (!macEqual(existing->mac, frame.mac) && nowMs - existing->lastSeenMs <= PEER_FRESH_MS) {
+            packetPool.release(packet);
+            return;
+        }
+    }
+    rememberPeer(packet->from, frame.mac, frame.rssi, nowMs);
+    (void)addEspNowPeerIfNeeded(frame.mac);
 
     packet->via_mqtt = false;
     // Keep local ingress metadata distinct from both primary LoRa and XBee.
