@@ -27,6 +27,41 @@ bool XBeeApiCodec::checksumValid(const uint8_t *frameData, size_t frameDataLengt
     return sum == 0xFF;
 }
 
+
+size_t XBeeApiCodec::buildAtCommand(uint8_t *out, size_t outCapacity, uint8_t frameId, const char command[2],
+                                    const uint8_t *parameter, size_t parameterLength)
+{
+    if (out == nullptr || command == nullptr || (parameter == nullptr && parameterLength != 0)) {
+        return 0;
+    }
+
+    constexpr size_t fixedFrameDataLength = 4; // type + frame id + two command bytes
+    const size_t frameDataLength = fixedFrameDataLength + parameterLength;
+    const size_t totalLength = 1 + 2 + frameDataLength + 1;
+
+    if (frameDataLength > 0xFFFF || outCapacity < totalLength) {
+        return 0;
+    }
+
+    size_t cursor = 0;
+    out[cursor++] = API_START_DELIMITER;
+    out[cursor++] = static_cast<uint8_t>((frameDataLength >> 8) & 0xFF);
+    out[cursor++] = static_cast<uint8_t>(frameDataLength & 0xFF);
+
+    const size_t frameDataStart = cursor;
+    out[cursor++] = FRAME_AT_COMMAND;
+    out[cursor++] = frameId;
+    out[cursor++] = static_cast<uint8_t>(command[0]);
+    out[cursor++] = static_cast<uint8_t>(command[1]);
+
+    for (size_t i = 0; i < parameterLength; ++i) {
+        out[cursor++] = parameter[i];
+    }
+
+    out[cursor++] = checksum(&out[frameDataStart], frameDataLength);
+    return cursor;
+}
+
 size_t XBeeApiCodec::buildTransmitRequest(uint8_t *out, size_t outCapacity, uint8_t frameId, uint64_t destination64,
                                           const uint8_t *payload, size_t payloadLength, uint8_t broadcastRadius,
                                           uint8_t transmitOptions)
