@@ -4,6 +4,10 @@ on: pull_request
 
 permissions: read-all
 
+concurrency:
+  group: semgrep-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   semgrep-diff:
     runs-on: ubuntu-24.04
