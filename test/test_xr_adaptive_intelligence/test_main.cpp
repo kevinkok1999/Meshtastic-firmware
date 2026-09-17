@@ -1,5 +1,6 @@
 #include "TestUtil.h"
 #include "xr/XRAdaptiveIntelligence.h"
+#include <cstdlib>
 #include <unity.h>
 
 using namespace meshoffgrid::xr;
@@ -197,7 +198,7 @@ void test_corrupt_snapshot_is_rejected()
     TEST_ASSERT_FALSE(restored.restore(corrupt));
 }
 
-void test_low_battery_blocks_wifi_exploration()
+void low_battery_blocks_wifi_exploration_test()
 {
     XRAdaptivePolicy p{};
     p.explorationPercent = 100;
@@ -222,8 +223,8 @@ void setup()
     RUN_TEST(test_stale_promoted_strategy_returns_to_baseline_until_reproven);
     RUN_TEST(test_snapshot_roundtrip_restores_learning);
     RUN_TEST(test_corrupt_snapshot_is_rejected);
-    RUN_TEST(test_low_battery_blocks_wifi_exploration);
-    UNITY_END();
+    RUN_TEST(low_battery_blocks_wifi_exploration_test);
+    std::exit(UNITY_END());
 }
 
 void loop() {}
