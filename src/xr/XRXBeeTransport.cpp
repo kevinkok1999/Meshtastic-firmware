@@ -530,6 +530,16 @@ void XRXBeeTransport::processRx(uint64_t source64, const uint8_t *payload, size_
 
 void XRXBeeTransport::processHello(const FrameHeader &header, uint64_t source64, uint32_t nowMs)
 {
+    // XBee addresses are transport identifiers, not Meshtastic identities.
+    // Only bind a sidecar address to a node already known by the normal mesh.
+    if (!nodeDB || nodeDB->getMeshNode(header.fromNode) == nullptr)
+        return;
+
+    if (Peer *existing = findPeer(header.fromNode)) {
+        if (existing->address64 != source64 && nowMs - existing->lastSeenMs <= PEER_FRESH_MS)
+            return;
+    }
+
     rememberPeer(header.fromNode, source64, nowMs);
 }
 
@@ -542,7 +552,6 @@ void XRXBeeTransport::processData(const FrameHeader &header, uint64_t source64, 
         static_cast<size_t>(header.fragmentOffset) + payloadLength > header.totalLength)
         return;
 
-    rememberPeer(header.fromNode, source64, nowMs);
     Reassembly &assembly = getReassembly(header, source64, nowMs);
     if (!assembly.used || assembly.totalLength != header.totalLength || assembly.fragmentCount != header.fragmentCount ||
         assembly.checksum != header.checksum)
@@ -573,10 +582,19 @@ void XRXBeeTransport::processData(const FrameHeader &header, uint64_t source64, 
     assembly.used = false;
 
     if (!decoded || packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag ||
-        packet->from != header.fromNode || packet->id != header.packetId || isBroadcast(packet->from)) {
+        packet->from != header.fromNode || packet->id != header.packetId || isBroadcast(packet->from) || !nodeDB ||
+        nodeDB->getMeshNode(packet->from) == nullptr) {
         packetPool.release(packet);
         return;
     }
+
+    if (Peer *existing = findPeer(packet->from)) {
+        if (existing->address64 != source64 && nowMs - existing->lastSeenMs <= PEER_FRESH_MS) {
+            packetPool.release(packet);
+            return;
+        }
+    }
+    rememberPeer(packet->from, source64, nowMs);
 
     packet->via_mqtt = false;
     // Meshtastic currently has no generic sidecar transport enum. Mark this
