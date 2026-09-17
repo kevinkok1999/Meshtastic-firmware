@@ -15,6 +15,7 @@ enum class XRAdaptiveAction : uint8_t {
     LORA_PREFERRED,
     WIFI_MQTT_PREFERRED,
     ESP_NOW_PREFERRED,
+    XBEE_PREFERRED,
     LORA_RX_FOCUS,
     QUIET_BACKGROUND,
     RECOVERY_WINDOW,
@@ -30,6 +31,8 @@ struct XRAdaptiveCapabilities {
     bool wifiMqttPrivacyApproved = false;
     bool espNowAvailable = false;
     bool espNowPrivacyApproved = false;
+    bool xbeeAvailable = false;
+    bool xbeePrivacyApproved = false;
     bool rxFocusAvailable = false;
     bool recoveryWindowAvailable = false;
     bool courierAvailable = false;
@@ -41,6 +44,7 @@ struct XRAdaptiveContext {
     uint8_t channelHealthScore = 50;
     uint8_t networkAutopilotScore = 0;
     uint8_t espNowLinkScore = 0;
+    uint8_t xbeeLinkScore = 0;
     uint8_t batteryPercent = 100;
 
     uint8_t recentAckFailures = 0;
@@ -91,6 +95,7 @@ struct XRAdaptivePolicy {
 
     uint8_t minimumBatteryForWifi = 18;
     uint8_t minimumBatteryForEspNow = 10;
+    uint8_t minimumBatteryForXBee = 12;
     uint8_t minimumBatteryForRxFocus = 12;
     uint8_t minimumBatteryForCourier = 15;
 
@@ -150,7 +155,7 @@ class XRAdaptiveIntelligence {
     // The checksum detects torn/corrupt model records; it is not cryptographic.
     struct Snapshot {
         uint32_t magic = 0x58524149; // "XRAI"
-        uint16_t version = 3;
+        uint16_t version = 4;
         uint16_t reserved = 0;
         uint32_t modelEpoch = 0;
         std::array<std::array<XRAdaptiveArmState, ACTION_COUNT>, CONTEXT_BUCKETS> arms{};
