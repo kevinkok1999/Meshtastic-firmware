@@ -6,6 +6,7 @@
 #include "XRAdaptiveCoordinator.h"
 #include "XRDeferredPacketQueue.h"
 #include "XRDeferredPacketStore.h"
+#include "XRDeliveryEvents.h"
 #include "XRRfCoexistence.h"
 #include "concurrency/OSThread.h"
 #include "mesh/RadioTxHook.h"
@@ -22,7 +23,7 @@
 
 namespace meshoffgrid::xr {
 
-class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
+class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, public XRDeliveryEventSink
 {
   public:
     XRXBeeTransport();
@@ -30,6 +31,10 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
 
     RadioTxHook::PreTxAction beforeTransmit(RadioInterface *iface, meshtastic_MeshPacket *packet) override;
     void packetReleased(RadioInterface *iface, const meshtastic_MeshPacket *packet) override;
+
+    void onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs) override;
+    void onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
+    void onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
 
     bool ready() const { return initialized_; }
     uint8_t peerCount() const;
@@ -90,6 +95,12 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
         bool ackExpected = false;
     };
 
+    struct CachedOutbound {
+        bool used = false;
+        meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
+        uint32_t cachedAtMs = 0;
+    };
+
     struct Peer {
         bool used = false;
         uint32_t nodeNum = 0;
@@ -125,6 +136,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
         uint8_t waitingFrameId = 0;
         uint32_t waitingSinceMs = 0;
         uint16_t fragmentPayloadBytes = 0;
+        bool fromDeferredQueue = false;
         std::array<uint8_t, meshtastic_MeshPacket_size> encoded{};
     };
 
@@ -137,6 +149,9 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     uint32_t lastInfoQueryMs_ = 0;
 
     PendingMirror mirrorCandidate_{};
+    static constexpr size_t OUTBOUND_CACHE_SIZE = 16;
+    static constexpr uint32_t OUTBOUND_CACHE_TTL_MS = 30u * 60u * 1000u;
+    std::array<CachedOutbound, OUTBOUND_CACHE_SIZE> outboundCache_{};
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     ActiveTx activeTx_{};
@@ -150,7 +165,11 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     void shutdown();
     void sendHello(uint32_t nowMs);
     void serviceOutgoing(uint32_t nowMs);
-    bool prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs);
+    bool prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue = false);
+    void rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs);
+    CachedOutbound *findCachedOutbound(uint32_t destination, uint32_t packetId);
+    void clearCachedOutbound(uint32_t destination, uint32_t packetId);
+    void expireOutboundCache(uint32_t nowMs);
     void sendNextFragment(uint32_t nowMs);
     void finishActiveTx(bool success, uint32_t nowMs);
 
