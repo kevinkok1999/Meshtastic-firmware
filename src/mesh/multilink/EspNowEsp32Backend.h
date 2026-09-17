@@ -2,7 +2,7 @@
 
 #include "EspNowLink.h"
 
-#if defined(ESP32)
+#if defined(ESP32) && defined(MESHTASTIC_EXPERIMENTAL_MULTILINK)
 
 #include <array>
 #include <cstddef>
@@ -93,4 +93,4 @@ class EspNowEsp32Backend final : public EspNowBackend
 
 } // namespace meshtastic::multilink
 
-#endif // ESP32
+#endif // ESP32 && MESHTASTIC_EXPERIMENTAL_MULTILINK
