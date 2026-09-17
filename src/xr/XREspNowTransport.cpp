@@ -10,6 +10,7 @@
 #include <WiFi.h>
 #include <algorithm>
 #include <cstring>
+#include <esp_wifi.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
 
@@ -103,6 +104,19 @@ bool XREspNowTransport::initialize()
             return false;
         }
     }
+
+#ifdef WIFI_PROTOCOL_LR
+    // Keep normal 802.11 protocols enabled and add Espressif Long Range support.
+    // When both peers support LR the Wi-Fi driver may select LR rates; ordinary
+    // Wi-Fi compatibility remains available through the existing protocol bits.
+    uint8_t protocolBitmap = 0;
+    if (esp_wifi_get_protocol(WIFI_IF_STA, &protocolBitmap) == ESP_OK) {
+        const uint8_t desiredProtocols = static_cast<uint8_t>(protocolBitmap | WIFI_PROTOCOL_LR);
+        if (desiredProtocols != protocolBitmap &&
+            esp_wifi_set_protocol(WIFI_IF_STA, desiredProtocols) != ESP_OK)
+            LOG_WARN("XR ESP-NOW could not enable Wi-Fi LR protocol support");
+    }
+#endif
 
     const esp_err_t initResult = esp_now_init();
     if (initResult != ESP_OK) {
