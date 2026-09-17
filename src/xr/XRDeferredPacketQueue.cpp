@@ -98,7 +98,7 @@ void XRDeferredPacketQueue::markTransportAccepted(uint32_t packetId, uint32_t de
     // Meshtastic end-to-end ACK. Keep the encrypted packet available and wait
     // long enough for the normal ACK path before trying the sidecar again.
     item->failureStreak = 0;
-    item->nextAttemptMs = nowMs + 60u * 1000u;
+    item->nextAttemptMs = nowMs + ACK_WAIT_MS;
     ++generation_;
 }
 
