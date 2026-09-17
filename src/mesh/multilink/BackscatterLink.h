@@ -23,11 +23,13 @@ struct BackscatterConfig {
 /**
  * Hardware abstraction for a backscatter RF front-end.
  *
- * Stock T-Deck Plus hardware does not expose a controllable RF load switch on
- * the SX1262 antenna path. Concrete implementations therefore target an
- * external RF switch/tag/front-end. Keeping that dependency here prevents the
- * routing layer from pretending that backscatter can be enabled by software
- * alone.
+ * The public T-Deck Plus documentation reviewed so far does not establish a
+ * software-controlled RF load suitable for ambient backscatter on the stock
+ * SX1262 antenna path. Concrete implementations therefore default to an
+ * external RF switch/tag/front-end until schematic review and hardware
+ * measurements prove an onboard path. Keeping that dependency here prevents
+ * the routing layer from pretending that backscatter can be enabled by
+ * software alone.
  */
 class BackscatterFrontEnd
 {
