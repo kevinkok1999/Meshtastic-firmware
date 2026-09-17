@@ -40,6 +40,7 @@ bool XRDeferredPacketQueue::enqueue(const meshtastic_MeshPacket &packet, uint32_
         // Keep original age/backoff but refresh the exact packet bytes in case
         // Meshtastic updated hop/transport metadata before release.
         existing->packet = packet;
+        ++generation_;
         return true;
     }
 
@@ -52,14 +53,17 @@ bool XRDeferredPacketQueue::enqueue(const meshtastic_MeshPacket &packet, uint32_
     slot->packet = packet;
     slot->queuedAtMs = nowMs;
     slot->nextAttemptMs = nowMs;
+    ++generation_;
     return true;
 }
 
 void XRDeferredPacketQueue::expire(uint32_t nowMs, uint32_t ttlMs)
 {
     for (auto &item : entries_) {
-        if (item.used && (nowMs - item.queuedAtMs) > ttlMs)
+        if (item.used && (nowMs - item.queuedAtMs) > ttlMs) {
             item = {};
+            ++generation_;
+        }
     }
 }
 
@@ -75,8 +79,10 @@ const XRDeferredPacketQueue::Entry *XRDeferredPacketQueue::entry(size_t index) c
 
 void XRDeferredPacketQueue::markSuccess(uint32_t packetId, uint32_t destination)
 {
-    if (Entry *item = find(packetId, destination))
+    if (Entry *item = find(packetId, destination)) {
         *item = {};
+        ++generation_;
+    }
 }
 
 uint32_t XRDeferredPacketQueue::retryDelayMs(uint8_t failureStreak)
@@ -111,6 +117,7 @@ void XRDeferredPacketQueue::markFailure(uint32_t packetId, uint32_t destination,
         ++item->failureStreak;
 
     item->nextAttemptMs = nowMs + retryDelayMs(item->failureStreak);
+    ++generation_;
 }
 
 size_t XRDeferredPacketQueue::size() const
@@ -125,8 +132,13 @@ size_t XRDeferredPacketQueue::size() const
 
 void XRDeferredPacketQueue::clear()
 {
-    for (auto &item : entries_)
+    bool changed = false;
+    for (auto &item : entries_) {
+        changed = changed || item.used;
         item = {};
+    }
+    if (changed)
+        ++generation_;
 }
 
 } // namespace meshoffgrid::xr
