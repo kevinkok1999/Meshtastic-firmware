@@ -137,6 +137,16 @@ void XRDeferredPacketQueue::markFailure(uint32_t packetId, uint32_t destination,
     ++generation_;
 }
 
+void XRDeferredPacketQueue::makeDue(uint32_t packetId, uint32_t destination, uint32_t nowMs)
+{
+    Entry *item = find(packetId, destination);
+    if (!item)
+        return;
+
+    item->nextAttemptMs = nowMs;
+    ++generation_;
+}
+
 size_t XRDeferredPacketQueue::size() const
 {
     size_t count = 0;
