@@ -23,10 +23,14 @@ int32_t trafficBias(LinkType type, TrafficClass trafficClass)
             return 220;
         if (type == LinkType::EspNow || type == LinkType::WifiNan)
             return 180;
+        if (type == LinkType::XBee)
+            return 210;
         return 0;
     case TrafficClass::Interactive:
         if (type == LinkType::EspNow || type == LinkType::WifiNan)
             return 260;
+        if (type == LinkType::XBee)
+            return 190;
         if (type == LinkType::Ble)
             return 140;
         return 40;
@@ -35,12 +39,16 @@ int32_t trafficBias(LinkType type, TrafficClass trafficClass)
             return 320;
         if (type == LinkType::LoRa)
             return 180;
+        if (type == LinkType::XBee)
+            return 150;
         return 40;
     case TrafficClass::Bulk:
         if (type == LinkType::WifiNan)
             return 320;
         if (type == LinkType::EspNow)
             return 220;
+        if (type == LinkType::XBee)
+            return 80;
         return -80;
     }
     return 0;
