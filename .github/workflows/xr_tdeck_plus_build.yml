@@ -1,0 +1,51 @@
+name: XR T-Deck Plus Build
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-tdeck-plus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout XR branch
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.x'
+          cache: pip
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      - name: Build T-Deck Plus device UI target
+        run: pio run -e t-deck-tft
+
+      - name: Show firmware sizes
+        run: |
+          ls -lh .pio/build/t-deck-tft/
+          test -f .pio/build/t-deck-tft/firmware.bin
+
+      - name: Package flash files
+        run: |
+          mkdir -p xr-release
+          cp .pio/build/t-deck-tft/firmware.bin xr-release/XR-TDeck-Plus-firmware.bin
+          cp .pio/build/t-deck-tft/partitions.bin xr-release/partitions.bin || true
+          cp .pio/build/t-deck-tft/bootloader.bin xr-release/bootloader.bin || true
+          cp .pio/build/t-deck-tft/littlefs.bin xr-release/littlefs.bin || true
+          sha256sum xr-release/* > xr-release/SHA256SUMS.txt
+
+      - name: Upload XR T-Deck Plus artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: XR-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
+          path: xr-release/
+          retention-days: 30
