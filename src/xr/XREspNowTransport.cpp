@@ -49,10 +49,12 @@ bool addEspNowPeerIfNeeded(const uint8_t mac[6])
 XREspNowTransport::XREspNowTransport() : concurrency::OSThread("xr-espnow", SERVICE_INTERVAL_MS)
 {
     instance_ = this;
+    (void)XRDeliveryEvents::addSink(this);
 }
 
 XREspNowTransport::~XREspNowTransport()
 {
+    XRDeliveryEvents::removeSink(this);
     shutdown();
     if (instance_ == this)
         instance_ = nullptr;
@@ -69,7 +71,9 @@ bool XREspNowTransport::initialize()
         txQueue_ = xQueueCreate(TX_QUEUE_DEPTH, sizeof(TxPacket));
     if (!txStatusQueue_)
         txStatusQueue_ = xQueueCreate(TX_STATUS_QUEUE_DEPTH, sizeof(TxStatus));
-    if (!rxQueue_ || !txQueue_ || !txStatusQueue_) {
+    if (!deliveryEventQueue_)
+        deliveryEventQueue_ = xQueueCreate(DELIVERY_EVENT_QUEUE_DEPTH, sizeof(DeliveryEvent));
+    if (!rxQueue_ || !txQueue_ || !txStatusQueue_ || !deliveryEventQueue_) {
         LOG_ERROR("XR ESP-NOW queue allocation failed");
         return false;
     }
@@ -116,6 +120,8 @@ bool XREspNowTransport::initialize()
     }
 
     coordinator_.begin();
+    const uint32_t nowMs = Time::getMillis();
+    (void)deferredStore_.load(deferred_, nowMs);
     initialized_ = true;
     lastHelloMs_ = 0;
     LOG_INFO("XR ESP-NOW sidecar ready (LoRa remains primary/fallback)");
@@ -142,6 +148,10 @@ void XREspNowTransport::shutdown()
         vQueueDelete(txStatusQueue_);
         txStatusQueue_ = nullptr;
     }
+    if (deliveryEventQueue_) {
+        vQueueDelete(deliveryEventQueue_);
+        deliveryEventQueue_ = nullptr;
+    }
 }
 
 int32_t XREspNowTransport::runOnce()
@@ -155,6 +165,7 @@ int32_t XREspNowTransport::runOnce()
         return 5000;
 
     const uint32_t nowMs = Time::getMillis();
+    drainDeliveryEvents(nowMs);
 
     RxFrame received{};
     while (xQueueReceive(rxQueue_, &received, 0) == pdTRUE)
@@ -164,10 +175,14 @@ int32_t XREspNowTransport::runOnce()
     while (xQueueReceive(txQueue_, &outgoing, 0) == pdTRUE)
         processTx(outgoing, nowMs);
 
+    serviceDeferred(nowMs);
+
     if (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)
         sendHello(nowMs);
 
     expireState(nowMs);
+    expireOutboundCache(nowMs);
+    (void)deferredStore_.service(deferred_, nowMs, false);
     coordinator_.service(nowMs);
     return SERVICE_INTERVAL_MS;
 }
@@ -188,6 +203,135 @@ RadioTxHook::PreTxAction XREspNowTransport::beforeTransmit(RadioInterface *, mes
 }
 
 void XREspNowTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *) {}
+
+
+bool XREspNowTransport::enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId, uint32_t whenMs)
+{
+    if (!deliveryEventQueue_ || peer == 0 || packetId == 0)
+        return false;
+
+    DeliveryEvent event{};
+    event.type = type;
+    event.peer = peer;
+    event.packetId = packetId;
+    event.whenMs = whenMs;
+    return xQueueSend(deliveryEventQueue_, &event, 0) == pdTRUE;
+}
+
+void XREspNowTransport::onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs)
+{
+    (void)enqueueDeliveryEvent(DeliveryEventType::Failed, destination, packetId, nowMs);
+}
+
+void XREspNowTransport::onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
+{
+    (void)enqueueDeliveryEvent(DeliveryEventType::Acked, peer, packetId, nowMs);
+}
+
+void XREspNowTransport::onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
+{
+    (void)enqueueDeliveryEvent(DeliveryEventType::Naked, peer, packetId, nowMs);
+}
+
+void XREspNowTransport::drainDeliveryEvents(uint32_t nowMs)
+{
+    if (!deliveryEventQueue_)
+        return;
+
+    DeliveryEvent event{};
+    while (xQueueReceive(deliveryEventQueue_, &event, 0) == pdTRUE)
+        handleDeliveryEvent(event, nowMs);
+}
+
+void XREspNowTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t nowMs)
+{
+    switch (event.type) {
+    case DeliveryEventType::Failed: {
+        CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
+        if (!cached)
+            return;
+        if (deferred_.enqueue(cached->packet, nowMs)) {
+            deferred_.makeDue(event.packetId, event.peer, nowMs);
+            LOG_INFO("XR ESP-NOW recovery queued encrypted packet id=0x%08x to=0x%08x", event.packetId, event.peer);
+            (void)deferredStore_.service(deferred_, nowMs, true);
+        }
+        break;
+    }
+    case DeliveryEventType::Acked:
+    case DeliveryEventType::Naked:
+        deferred_.markDelivered(event.packetId, event.peer);
+        clearCachedOutbound(event.peer, event.packetId);
+        (void)deferredStore_.service(deferred_, nowMs, true);
+        break;
+    }
+}
+
+void XREspNowTransport::rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs)
+{
+    CachedOutbound *slot = findCachedOutbound(packet.to, packet.id);
+    if (!slot) {
+        for (auto &candidate : outboundCache_) {
+            if (!candidate.used) {
+                slot = &candidate;
+                break;
+            }
+        }
+    }
+
+    if (!slot) {
+        slot = &outboundCache_[0];
+        for (auto &candidate : outboundCache_) {
+            if ((nowMs - candidate.cachedAtMs) > (nowMs - slot->cachedAtMs))
+                slot = &candidate;
+        }
+    }
+
+    *slot = {};
+    slot->used = true;
+    slot->packet = packet;
+    slot->cachedAtMs = nowMs;
+}
+
+XREspNowTransport::CachedOutbound *XREspNowTransport::findCachedOutbound(uint32_t destination, uint32_t packetId)
+{
+    for (auto &entry : outboundCache_) {
+        if (entry.used && entry.packet.to == destination && entry.packet.id == packetId)
+            return &entry;
+    }
+    return nullptr;
+}
+
+void XREspNowTransport::clearCachedOutbound(uint32_t destination, uint32_t packetId)
+{
+    if (CachedOutbound *entry = findCachedOutbound(destination, packetId))
+        *entry = {};
+}
+
+void XREspNowTransport::expireOutboundCache(uint32_t nowMs)
+{
+    for (auto &entry : outboundCache_) {
+        if (entry.used && (nowMs - entry.cachedAtMs) > OUTBOUND_CACHE_TTL_MS)
+            entry = {};
+    }
+}
+
+void XREspNowTransport::serviceDeferred(uint32_t nowMs)
+{
+    for (size_t i = 0; i < XRDeferredPacketQueue::MAX_ENTRIES; ++i) {
+        auto *entry = deferred_.entry(i);
+        if (!entry || !entry->used)
+            continue;
+        if (static_cast<int32_t>(nowMs - entry->nextAttemptMs) < 0)
+            continue;
+
+        Peer *peer = findPeer(entry->packet.to);
+        if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+            continue;
+
+        (void)attemptPacket(entry->packet, nowMs, true);
+        return; // Bound work per service pass; retry/backoff handles the rest.
+    }
+}
 
 uint8_t XREspNowTransport::peerCount() const
 {
@@ -310,14 +454,30 @@ void XREspNowTransport::processData(const FrameHeader &header, const RxFrame &fr
 
 void XREspNowTransport::processTx(const TxPacket &queued, uint32_t nowMs)
 {
-    Peer *peer = findPeer(queued.packet.to);
-    if (!peer || !shouldMirror(queued.packet, *peer, nowMs))
-        return;
+    // Cache the already-encrypted wire packet inside the sidecar thread. If
+    // normal reliable LoRa later exhausts retries, the delivery-event path can
+    // promote this exact ciphertext into persistent store/carry/forward.
+    rememberOutbound(queued.packet, nowMs);
+    (void)attemptPacket(queued.packet, nowMs, false);
+}
+
+bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue)
+{
+    Peer *peer = findPeer(packet.to);
+    if (!peer || !shouldMirror(packet, *peer, nowMs))
+        return false;
 
     ++peer->sends;
-    const bool accepted = sendPacketToPeer(*peer, queued.packet, nowMs);
+    const bool accepted = sendPacketToPeer(*peer, packet, nowMs);
     if (!accepted)
         ++peer->sendFailures;
+
+    if (fromDeferredQueue) {
+        if (accepted)
+            deferred_.markTransportAccepted(packet.id, packet.to, nowMs);
+        else
+            deferred_.markFailure(packet.id, packet.to, nowMs);
+    }
 
     XRAdaptiveContext context{};
     context.espNowLinkScore = linkScoreFor(peer->nodeNum);
@@ -328,13 +488,14 @@ void XREspNowTransport::processTx(const TxPacket &queued, uint32_t nowMs)
     XRAdaptiveCapabilities capabilities{};
     capabilities.loraAvailable = true;
     capabilities.espNowAvailable = true;
-    capabilities.espNowPrivacyApproved = true; // Only Meshtastic ciphertext is eligible here.
+    capabilities.espNowPrivacyApproved = true;
 
-    const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, queued.packet.id);
+    const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, packet.id);
     XRAdaptiveOutcome outcome{};
     outcome.transportAccepted = accepted;
     outcome.transportFailed = !accepted;
     coordinator_.report(plan, outcome, nowMs);
+    return accepted;
 }
 
 bool XREspNowTransport::sendPacketToPeer(const Peer &peer, const meshtastic_MeshPacket &packet, uint32_t)

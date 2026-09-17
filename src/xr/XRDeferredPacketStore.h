@@ -16,6 +16,11 @@ class XRDeferredPacketStore
     static constexpr const char *TEMP_PATH = "/prefs/xr_deferred.tmp";
     static constexpr uint32_t MIN_PERSIST_INTERVAL_MS = 60u * 1000u;
 
+    explicit XRDeferredPacketStore(const char *path = PATH, const char *tempPath = TEMP_PATH)
+        : path_(path != nullptr ? path : PATH), tempPath_(tempPath != nullptr ? tempPath : TEMP_PATH)
+    {
+    }
+
     bool load(XRDeferredPacketQueue &queue, uint32_t nowMs);
     bool service(XRDeferredPacketQueue &queue, uint32_t nowMs, bool force = false);
 
@@ -33,6 +38,8 @@ class XRDeferredPacketStore
         uint32_t checksum = 0;
     };
 
+    const char *path_ = PATH;
+    const char *tempPath_ = TEMP_PATH;
     uint32_t lastPersistMs_ = 0;
 
     static uint32_t checksumSnapshot(const Snapshot &snapshot);

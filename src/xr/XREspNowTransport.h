@@ -3,6 +3,9 @@
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 
 #include "XRAdaptiveCoordinator.h"
+#include "XRDeferredPacketQueue.h"
+#include "XRDeferredPacketStore.h"
+#include "XRDeliveryEvents.h"
 #include "concurrency/OSThread.h"
 #include "mesh/RadioTxHook.h"
 #include "mesh/generated/meshtastic/mesh.pb.h"
@@ -23,13 +26,17 @@ namespace meshoffgrid::xr {
 // replaces the Meshtastic packet format: it carries the same encrypted
 // MeshPacket that is about to go over LoRa. The Router therefore keeps normal
 // duplicate suppression, ACK semantics, channels and chat identity.
-class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook {
+class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook, public XRDeliveryEventSink {
   public:
     XREspNowTransport();
     ~XREspNowTransport() override;
 
     RadioTxHook::PreTxAction beforeTransmit(RadioInterface *iface, meshtastic_MeshPacket *packet) override;
     void packetReleased(RadioInterface *iface, const meshtastic_MeshPacket *packet) override;
+
+    void onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs) override;
+    void onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
+    void onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
 
     bool ready() const { return initialized_; }
     uint8_t peerCount() const;
@@ -51,8 +58,12 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     static constexpr uint32_t HELLO_INTERVAL_MS = 30u * 1000u;
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 10u * 1000u;
     static constexpr uint32_t SEND_STATUS_TIMEOUT_MS = 250u;
+    static constexpr UBaseType_t DELIVERY_EVENT_QUEUE_DEPTH = 8;
+    static constexpr size_t OUTBOUND_CACHE_SIZE = 16;
+    static constexpr uint32_t OUTBOUND_CACHE_TTL_MS = 30u * 60u * 1000u;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
+    enum class DeliveryEventType : uint8_t { Failed = 1, Acked = 2, Naked = 3 };
 
 #pragma pack(push, 1)
     struct FrameHeader {
@@ -86,6 +97,19 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         esp_now_send_status_t status = ESP_NOW_SEND_FAIL;
     };
 
+    struct DeliveryEvent {
+        DeliveryEventType type = DeliveryEventType::Failed;
+        uint32_t peer = 0;
+        uint32_t packetId = 0;
+        uint32_t whenMs = 0;
+    };
+
+    struct CachedOutbound {
+        bool used = false;
+        meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
+        uint32_t cachedAtMs = 0;
+    };
+
     struct Peer {
         bool used = false;
         uint32_t nodeNum = 0;
@@ -114,17 +138,30 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     QueueHandle_t rxQueue_ = nullptr;
     QueueHandle_t txQueue_ = nullptr;
     QueueHandle_t txStatusQueue_ = nullptr;
+    QueueHandle_t deliveryEventQueue_ = nullptr;
+    std::array<CachedOutbound, OUTBOUND_CACHE_SIZE> outboundCache_{};
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
+    XRDeferredPacketQueue deferred_{};
+    XRDeferredPacketStore deferredStore_{"/prefs/xr_deferred_espnow.bin", "/prefs/xr_deferred_espnow.tmp"};
     XRAdaptiveCoordinator coordinator_{XRAdaptivePolicy{}, "/prefs/xr_ai_espnow.bin", "/prefs/xr_ai_espnow.tmp"};
 
     bool initialize();
     void shutdown();
+    bool enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId, uint32_t whenMs);
+    void drainDeliveryEvents(uint32_t nowMs);
+    void handleDeliveryEvent(const DeliveryEvent &event, uint32_t nowMs);
+    void rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs);
+    CachedOutbound *findCachedOutbound(uint32_t destination, uint32_t packetId);
+    void clearCachedOutbound(uint32_t destination, uint32_t packetId);
+    void expireOutboundCache(uint32_t nowMs);
+    void serviceDeferred(uint32_t nowMs);
     void sendHello(uint32_t nowMs);
     void processRx(const RxFrame &frame, uint32_t nowMs);
     void processHello(const FrameHeader &header, const RxFrame &frame, uint32_t nowMs);
     void processData(const FrameHeader &header, const RxFrame &frame, uint32_t nowMs);
     void processTx(const TxPacket &queued, uint32_t nowMs);
+    bool attemptPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue);
     bool sendPacketToPeer(const Peer &peer, const meshtastic_MeshPacket &packet, uint32_t nowMs);
     bool sendFrame(const uint8_t *mac, FrameHeader header, const uint8_t *payload, size_t payloadLength);
     Peer *findPeer(uint32_t nodeNum);
