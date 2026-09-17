@@ -1,6 +1,6 @@
 #include "EspNowEsp32Backend.h"
 
-#if defined(ESP32)
+#if defined(ESP32) && defined(MESHTASTIC_EXPERIMENTAL_MULTILINK)
 
 #include <WiFi.h>
 #include <algorithm>
@@ -362,4 +362,4 @@ void EspNowEsp32Backend::onReceive(const uint8_t *mac, const uint8_t *data, int 
 
 } // namespace meshtastic::multilink
 
-#endif // ESP32
+#endif // ESP32 && MESHTASTIC_EXPERIMENTAL_MULTILINK
