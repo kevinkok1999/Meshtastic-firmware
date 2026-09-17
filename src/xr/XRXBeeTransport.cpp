@@ -182,7 +182,7 @@ void XRXBeeTransport::onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, 
     if (activeTx_.used && activeTx_.packetId == packetId && activeTx_.nodeNum == peer)
         activeTx_ = {};
 
-    (void)deferredStore_.service(deferred_, nowMs);
+    (void)deferredStore_.service(deferred_, nowMs, true);
 }
 
 void XRXBeeTransport::onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
