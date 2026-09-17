@@ -53,23 +53,53 @@ jobs:
       - name: Build T-Deck Plus device UI target
         run: pio run -e t-deck-tft
 
-      - name: Show firmware sizes
+      - name: Locate and validate flashable firmware
+        id: firmware
+        shell: bash
         run: |
-          ls -lh .pio/build/t-deck-tft/
-          test -f .pio/build/t-deck-tft/firmware.bin
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-tft
+          echo "Build directory contents:"
+          find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
+
+          mapfile -t candidates < <(find "$BUILD_DIR" -maxdepth 2 -type f \( -name 'firmware*.bin' -o -name '*firmware*.bin' -o -name 'program.bin' \) -size +0c | sort)
+          if [ "${#candidates[@]}" -eq 0 ]; then
+            echo "No non-empty firmware binary found under $BUILD_DIR" >&2
+            exit 1
+          fi
+
+          preferred="$BUILD_DIR/firmware.bin"
+          if [ -s "$preferred" ]; then
+            firmware="$preferred"
+          else
+            firmware="${candidates[0]}"
+          fi
+          echo "Using firmware binary: $firmware"
+          ls -lh "$firmware"
+          echo "firmware=$firmware" >> "$GITHUB_OUTPUT"
 
       - name: Package flash files
+        shell: bash
         run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-tft
           mkdir -p xr-release
-          cp .pio/build/t-deck-tft/firmware.bin xr-release/XR-TDeck-Plus-firmware.bin
-          cp .pio/build/t-deck-tft/partitions.bin xr-release/partitions.bin || true
-          cp .pio/build/t-deck-tft/bootloader.bin xr-release/bootloader.bin || true
-          cp .pio/build/t-deck-tft/littlefs.bin xr-release/littlefs.bin || true
-          sha256sum xr-release/* > xr-release/SHA256SUMS.txt
+          cp "${{ steps.firmware.outputs.firmware }}" xr-release/XR-TDeck-Plus-firmware.bin
+
+          for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
+            if [ -s "$BUILD_DIR/$file" ]; then
+              cp "$BUILD_DIR/$file" "xr-release/$file"
+            fi
+          done
+
+          find xr-release -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          sha256sum xr-release/*.bin > xr-release/SHA256SUMS.txt
+          cat xr-release/SHA256SUMS.txt
 
       - name: Upload XR T-Deck Plus artifact
         uses: actions/upload-artifact@v7
         with:
           name: XR-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
           path: xr-release/
+          if-no-files-found: error
           retention-days: 30
