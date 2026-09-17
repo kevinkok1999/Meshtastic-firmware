@@ -1,7 +1,11 @@
-Import("env")
+#!/usr/bin/env python3
+# trunk-ignore-all(ruff/F821)
+# trunk-ignore-all(flake8/F821): PlatformIO/SCons injects Import and env
 
-from pathlib import Path
 import json
+from pathlib import Path
+
+Import("env")
 
 
 def _parse_offset(value):
