@@ -7,7 +7,6 @@
 #include "XRDeferredPacketQueue.h"
 #include "XRDeferredPacketStore.h"
 #include "XRDeliveryEvents.h"
-#include "XRDeliveryEvents.h"
 #include "XRRfCoexistence.h"
 #include "XRTDeckPinSafety.h"
 #include "concurrency/OSThread.h"
@@ -25,7 +24,7 @@
 
 namespace meshoffgrid::xr {
 
-class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, public XRDeliveryEventSink, public XRDeliveryEventSink
+class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, public XRDeliveryEventSink
 {
   public:
     XRXBeeTransport();
@@ -33,10 +32,6 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
 
     RadioTxHook::PreTxAction beforeTransmit(RadioInterface *iface, meshtastic_MeshPacket *packet) override;
     void packetReleased(RadioInterface *iface, const meshtastic_MeshPacket *packet) override;
-
-    void onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs) override;
-    void onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
-    void onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
 
     void onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs) override;
     void onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
