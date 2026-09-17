@@ -6,7 +6,9 @@
 namespace meshoffgrid::xbee {
 
 constexpr uint8_t API_START_DELIMITER = 0x7E;
+constexpr uint8_t FRAME_AT_COMMAND = 0x08;
 constexpr uint8_t FRAME_TX_REQUEST = 0x10;
+constexpr uint8_t FRAME_AT_RESPONSE = 0x88;
 constexpr uint8_t FRAME_MODEM_STATUS = 0x8A;
 constexpr uint8_t FRAME_TX_STATUS = 0x8B;
 constexpr uint8_t FRAME_RX_PACKET = 0x90;
@@ -28,6 +30,13 @@ class XBeeApiCodec
     static size_t buildTransmitRequest(uint8_t *out, size_t outCapacity, uint8_t frameId, uint64_t destination64,
                                        const uint8_t *payload, size_t payloadLength, uint8_t broadcastRadius = 0,
                                        uint8_t transmitOptions = 0);
+
+    /**
+     * Build a local AT Command API frame (0x08).
+     * parameterLength may be zero for read-only/query commands.
+     */
+    static size_t buildAtCommand(uint8_t *out, size_t outCapacity, uint8_t frameId, const char command[2],
+                                 const uint8_t *parameter = nullptr, size_t parameterLength = 0);
 
     /**
      * Validate the checksum for frame-data bytes plus the checksum byte.
