@@ -260,8 +260,12 @@ void XREspNowTransport::drainDeliveryEvents(uint32_t nowMs)
     if (!deliveryEventQueue_)
         return;
 
+    // Snapshot the current depth so a failure event re-queued while its
+    // ciphertext handoff is still crossing threads is retried on the next
+    // service pass instead of spinning in this one.
+    UBaseType_t remaining = uxQueueMessagesWaiting(deliveryEventQueue_);
     DeliveryEvent event{};
-    while (xQueueReceive(deliveryEventQueue_, &event, 0) == pdTRUE)
+    while (remaining-- > 0 && xQueueReceive(deliveryEventQueue_, &event, 0) == pdTRUE)
         handleDeliveryEvent(event, nowMs);
 }
 
@@ -270,8 +274,14 @@ void XREspNowTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t
     switch (event.type) {
     case DeliveryEventType::Failed: {
         CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
-        if (!cached)
+        if (!cached) {
+            // Reliable-LoRa failure can be published from a different task a
+            // few milliseconds before the sidecar has consumed packetReleased.
+            // Give that encrypted handoff a short bounded grace window.
+            if (nowMs - event.whenMs < 5000u)
+                (void)xQueueSend(deliveryEventQueue_, &event, 0);
             return;
+        }
         if (deferred_.enqueue(cached->packet, nowMs)) {
             deferred_.makeDue(event.packetId, event.peer, nowMs);
             LOG_INFO("XR ESP-NOW recovery queued encrypted packet id=0x%08x to=0x%08x", event.packetId, event.peer);
