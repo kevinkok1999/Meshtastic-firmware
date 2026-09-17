@@ -77,12 +77,29 @@ const XRDeferredPacketQueue::Entry *XRDeferredPacketQueue::entry(size_t index) c
     return index < entries_.size() ? &entries_[index] : nullptr;
 }
 
-void XRDeferredPacketQueue::markSuccess(uint32_t packetId, uint32_t destination)
+void XRDeferredPacketQueue::markDelivered(uint32_t packetId, uint32_t destination)
 {
     if (Entry *item = find(packetId, destination)) {
         *item = {};
         ++generation_;
     }
+}
+
+void XRDeferredPacketQueue::markTransportAccepted(uint32_t packetId, uint32_t destination, uint32_t nowMs)
+{
+    Entry *item = find(packetId, destination);
+    if (!item)
+        return;
+
+    if (item->attempts != UINT8_MAX)
+        ++item->attempts;
+
+    // A successful XBee carrier transfer is useful evidence but it is not the
+    // Meshtastic end-to-end ACK. Keep the encrypted packet available and wait
+    // long enough for the normal ACK path before trying the sidecar again.
+    item->failureStreak = 0;
+    item->nextAttemptMs = nowMs + 60u * 1000u;
+    ++generation_;
 }
 
 uint32_t XRDeferredPacketQueue::retryDelayMs(uint8_t failureStreak)
