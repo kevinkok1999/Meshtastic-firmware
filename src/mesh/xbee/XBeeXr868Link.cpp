@@ -19,6 +19,8 @@ bool XBeeXr868Link::begin(HardwareSerial &serial, uint32_t baud, int8_t rxPin, i
     validFrames_ = 0;
     checksumErrors_ = 0;
     oversizeFrames_ = 0;
+    parseTimeouts_ = 0;
+    lastParserByteMs_ = millis();
     nextFrameId_ = 1;
     maxTxPayload_ = MAX_TX_PAYLOAD_HARD;
     serialHigh_ = 0;
@@ -44,9 +46,16 @@ void XBeeXr868Link::poll()
         return;
     }
 
+    const uint32_t nowMs = millis();
+    if (parseState_ != ParseState::WaitStart && (nowMs - lastParserByteMs_) > PARSER_TIMEOUT_MS) {
+        ++parseTimeouts_;
+        resetParser();
+    }
+
     while (serial_->available() > 0) {
         const int value = serial_->read();
         if (value >= 0) {
+            lastParserByteMs_ = millis();
             consume(static_cast<uint8_t>(value));
         }
     }
@@ -127,6 +136,7 @@ void XBeeXr868Link::resetParser()
     parseState_ = ParseState::WaitStart;
     expectedLength_ = 0;
     receivedLength_ = 0;
+    lastParserByteMs_ = millis();
 }
 
 void XBeeXr868Link::consume(uint8_t byte)
