@@ -99,6 +99,14 @@ jobs:
             -o /tmp/xbee-codec-test
           /tmp/xbee-codec-test
 
+      - name: Run XR native unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pio test -e native -f test_xr_deferred_queue
+          pio test -e native -f test_xr_adaptive_intelligence
+
+
       - name: Compile optional XBee XR 868 integration
         shell: bash
         run: |
