@@ -52,6 +52,7 @@ class XBeeXr868Link
     uint32_t validFrames() const { return validFrames_; }
     uint32_t checksumErrors() const { return checksumErrors_; }
     uint32_t oversizeFrames() const { return oversizeFrames_; }
+    uint32_t parseTimeouts() const { return parseTimeouts_; }
 
   private:
     enum class ParseState : uint8_t {
@@ -71,6 +72,7 @@ class XBeeXr868Link
 
     uint8_t nextFrameId_ = 1;
     size_t maxTxPayload_ = MAX_TX_PAYLOAD_HARD;
+    uint32_t lastParserByteMs_ = 0;
     uint32_t serialHigh_ = 0;
     uint32_t serialLow_ = 0;
     uint64_t moduleAddress64_ = 0;
@@ -83,6 +85,9 @@ class XBeeXr868Link
     uint32_t validFrames_ = 0;
     uint32_t checksumErrors_ = 0;
     uint32_t oversizeFrames_ = 0;
+    uint32_t parseTimeouts_ = 0;
+
+    static constexpr uint32_t PARSER_TIMEOUT_MS = 250;
 
     void resetParser();
     void consume(uint8_t byte);
