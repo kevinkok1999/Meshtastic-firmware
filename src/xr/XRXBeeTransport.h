@@ -41,7 +41,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     void onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
     void onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
 
-    bool ready() const { return initialized_; }
+    bool ready() const { return initialized_ && moduleConfigVerified(); }
     uint8_t peerCount() const;
     uint8_t linkScoreFor(uint32_t nodeNum) const;
     uint64_t localXBeeAddress() const { return link_.moduleAddress64(); }
@@ -152,6 +152,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     bool initAttempted_ = false;
     uint32_t lastHelloMs_ = 0;
     uint32_t lastInfoQueryMs_ = 0;
+    bool apVerified_ = false;
+    bool aoVerified_ = false;
 
     PendingMirror mirrorCandidate_{};
     static constexpr size_t OUTBOUND_CACHE_SIZE = 16;
@@ -191,6 +193,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     void expireState(uint32_t nowMs);
 
     bool eligibleForMirror(const meshtastic_MeshPacket &packet) const;
+    bool moduleConfigVerified() const { return apVerified_ && aoVerified_; }
     uint16_t fragmentBudget() const;
 
     static uint32_t checksum32(const uint8_t *data, size_t length);
