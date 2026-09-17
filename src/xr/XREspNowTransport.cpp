@@ -289,6 +289,9 @@ void XREspNowTransport::processData(const FrameHeader &header, const RxFrame &fr
     }
 
     packet->via_mqtt = false;
+    // Keep local ingress metadata distinct from both primary LoRa and XBee.
+    // The encrypted Meshtastic payload and packet identity remain unchanged.
+    packet->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA_ALT2;
     if (router)
         router->enqueueReceivedMessage(packet);
     else

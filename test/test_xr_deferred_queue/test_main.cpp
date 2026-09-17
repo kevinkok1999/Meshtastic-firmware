@@ -50,6 +50,29 @@ void test_success_removes_packet()
     TEST_ASSERT_TRUE(q.empty());
 }
 
+void test_transport_acceptance_waits_for_real_ack()
+{
+    XRDeferredPacketQueue q;
+    auto packet = makeEncrypted(10, 20);
+    packet.want_ack = true;
+    TEST_ASSERT_TRUE(q.enqueue(packet, 1000));
+
+    q.makeDue(10, 20, 1500);
+    auto *entry = q.entry(0);
+    TEST_ASSERT_NOT_NULL(entry);
+    TEST_ASSERT_EQUAL_UINT32(1500, entry->nextAttemptMs);
+
+    q.markTransportAccepted(10, 20, 2000);
+    TEST_ASSERT_EQUAL_UINT32(1, q.size());
+    entry = q.entry(0);
+    TEST_ASSERT_TRUE(entry->used);
+    TEST_ASSERT_EQUAL_UINT8(1, entry->attempts);
+    TEST_ASSERT_TRUE(entry->nextAttemptMs >= 62000);
+
+    q.markDelivered(10, 20);
+    TEST_ASSERT_TRUE(q.empty());
+}
+
 void test_failure_backs_off_without_dropping()
 {
     XRDeferredPacketQueue q;
@@ -80,6 +103,7 @@ void setup()
     RUN_TEST(test_enqueue_deduplicates_same_packet);
     RUN_TEST(test_plaintext_packet_is_rejected);
     RUN_TEST(test_success_removes_packet);
+    RUN_TEST(test_transport_acceptance_waits_for_real_ack);
     RUN_TEST(test_failure_backs_off_without_dropping);
     RUN_TEST(test_expiry_removes_old_packet);
     std::exit(UNITY_END());

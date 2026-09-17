@@ -579,6 +579,10 @@ void XRXBeeTransport::processData(const FrameHeader &header, uint64_t source64, 
     }
 
     packet->via_mqtt = false;
+    // Meshtastic currently has no generic sidecar transport enum. Mark this
+    // as the first secondary-radio path so it is never mistaken for an
+    // internally generated packet or for primary-LoRa RF metadata.
+    packet->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA_ALT1;
     if (router)
         router->enqueueReceivedMessage(packet);
     else

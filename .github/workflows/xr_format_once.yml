@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+
+concurrency:
+  group: xr-format-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   format-xr:
     if: github.event.pull_request.head.repo.full_name == github.repository
