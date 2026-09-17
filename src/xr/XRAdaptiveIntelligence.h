@@ -53,7 +53,12 @@ struct XRAdaptiveContext {
 };
 
 struct XRAdaptiveOutcome {
+    // delivered/acked are end-to-end message results. transportAccepted is a
+    // weaker observation used by sidecar transports such as ESP-NOW: it means
+    // the remote transport endpoint received and validated the carrier frame,
+    // not that the Meshtastic destination has produced its normal ACK yet.
     bool delivered = false;
+    bool transportAccepted = false;
     bool acked = false;
     bool duplicateObserved = false;
     bool privacyRejected = false;
