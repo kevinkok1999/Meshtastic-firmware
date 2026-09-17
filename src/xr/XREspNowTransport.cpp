@@ -22,6 +22,7 @@ namespace {
 constexpr uint8_t BROADCAST_MAC[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 constexpr UBaseType_t RX_QUEUE_DEPTH = 8;
 constexpr UBaseType_t TX_QUEUE_DEPTH = 4;
+constexpr UBaseType_t TX_STATUS_QUEUE_DEPTH = 4;
 constexpr uint32_t SERVICE_INTERVAL_MS = 50;
 
 bool macEqual(const uint8_t a[6], const uint8_t b[6])
@@ -66,7 +67,9 @@ bool XREspNowTransport::initialize()
         rxQueue_ = xQueueCreate(RX_QUEUE_DEPTH, sizeof(RxFrame));
     if (!txQueue_)
         txQueue_ = xQueueCreate(TX_QUEUE_DEPTH, sizeof(TxPacket));
-    if (!rxQueue_ || !txQueue_) {
+    if (!txStatusQueue_)
+        txStatusQueue_ = xQueueCreate(TX_STATUS_QUEUE_DEPTH, sizeof(TxStatus));
+    if (!rxQueue_ || !txQueue_ || !txStatusQueue_) {
         LOG_ERROR("XR ESP-NOW queue allocation failed");
         return false;
     }
@@ -97,6 +100,13 @@ bool XREspNowTransport::initialize()
         esp_now_deinit();
         return false;
     }
+    if (esp_now_register_send_cb(&XREspNowTransport::onSend) != ESP_OK) {
+        LOG_ERROR("XR ESP-NOW send callback registration failed");
+        esp_now_unregister_send_cb();
+        esp_now_unregister_recv_cb();
+        esp_now_deinit();
+        return false;
+    }
 
     if (!addEspNowPeerIfNeeded(BROADCAST_MAC)) {
         LOG_ERROR("XR ESP-NOW broadcast peer setup failed");
@@ -115,6 +125,7 @@ bool XREspNowTransport::initialize()
 void XREspNowTransport::shutdown()
 {
     if (initialized_) {
+        esp_now_unregister_send_cb();
         esp_now_unregister_recv_cb();
         esp_now_deinit();
         initialized_ = false;
@@ -126,6 +137,10 @@ void XREspNowTransport::shutdown()
     if (txQueue_) {
         vQueueDelete(txQueue_);
         txQueue_ = nullptr;
+    }
+    if (txStatusQueue_) {
+        vQueueDelete(txStatusQueue_);
+        txStatusQueue_ = nullptr;
     }
 }
 
@@ -361,17 +376,34 @@ bool XREspNowTransport::sendPacketToPeer(const Peer &peer, const meshtastic_Mesh
 
 bool XREspNowTransport::sendFrame(const uint8_t *mac, FrameHeader header, const uint8_t *payload, size_t payloadLength)
 {
-    if (!initialized_ || !mac || payloadLength > FRAGMENT_BYTES || sizeof(FrameHeader) + payloadLength > ESP_NOW_SAFE_FRAME)
+    if (!initialized_.load() || !txStatusQueue_ || !mac || payloadLength > FRAGMENT_BYTES ||
+        sizeof(FrameHeader) + payloadLength > ESP_NOW_SAFE_FRAME)
         return false;
     if (!addEspNowPeerIfNeeded(mac))
         return false;
+
+    // This sidecar owns one ESP-NOW send at a time. Drain any stale callback
+    // record before starting the next frame so a previous timeout cannot be
+    // mistaken for the current fragment.
+    TxStatus stale{};
+    while (xQueueReceive(txStatusQueue_, &stale, 0) == pdTRUE) {
+    }
 
     std::array<uint8_t, ESP_NOW_SAFE_FRAME> frame{};
     std::memcpy(frame.data(), &header, sizeof(header));
     if (payloadLength && payload)
         std::memcpy(frame.data() + sizeof(header), payload, payloadLength);
 
-    return esp_now_send(mac, frame.data(), sizeof(header) + payloadLength) == ESP_OK;
+    if (esp_now_send(mac, frame.data(), sizeof(header) + payloadLength) != ESP_OK)
+        return false;
+
+    TxStatus result{};
+    if (xQueueReceive(txStatusQueue_, &result, pdMS_TO_TICKS(SEND_STATUS_TIMEOUT_MS)) != pdTRUE)
+        return false;
+    if (!macEqual(result.mac, mac))
+        return false;
+
+    return result.status == ESP_NOW_SEND_SUCCESS;
 }
 
 XREspNowTransport::Peer *XREspNowTransport::findPeer(uint32_t nodeNum)
@@ -481,10 +513,22 @@ uint32_t XREspNowTransport::checksum32(const uint8_t *data, size_t length)
     return hash;
 }
 
+void XREspNowTransport::onSend(const uint8_t *mac, esp_now_send_status_t status)
+{
+    XREspNowTransport *self = instance_;
+    if (!self || !self->initialized_.load() || !self->txStatusQueue_ || !mac)
+        return;
+
+    TxStatus result{};
+    std::memcpy(result.mac, mac, sizeof(result.mac));
+    result.status = status;
+    (void)xQueueSend(self->txStatusQueue_, &result, 0);
+}
+
 void XREspNowTransport::onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length)
 {
     XREspNowTransport *self = instance_;
-    if (!self || !self->initialized_ || !self->rxQueue_ || !info || !data || length <= 0 ||
+    if (!self || !self->initialized_.load() || !self->rxQueue_ || !info || !data || length <= 0 ||
         length > static_cast<int>(ESP_NOW_SAFE_FRAME))
         return;
 

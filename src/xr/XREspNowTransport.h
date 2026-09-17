@@ -49,6 +49,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     static constexpr uint32_t PEER_FRESH_MS = 90u * 1000u;
     static constexpr uint32_t HELLO_INTERVAL_MS = 30u * 1000u;
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 10u * 1000u;
+    static constexpr uint32_t SEND_STATUS_TIMEOUT_MS = 250u;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
 
@@ -79,6 +80,11 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
     };
 
+    struct TxStatus {
+        uint8_t mac[6]{};
+        esp_now_send_status_t status = ESP_NOW_SEND_FAIL;
+    };
+
     struct Peer {
         bool used = false;
         uint32_t nodeNum = 0;
@@ -106,6 +112,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     uint32_t lastHelloMs_ = 0;
     QueueHandle_t rxQueue_ = nullptr;
     QueueHandle_t txQueue_ = nullptr;
+    QueueHandle_t txStatusQueue_ = nullptr;
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     XRAdaptiveCoordinator coordinator_{XRAdaptivePolicy{}, "/prefs/xr_ai_espnow.bin", "/prefs/xr_ai_espnow.tmp"};
@@ -127,6 +134,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     bool shouldMirror(const meshtastic_MeshPacket &packet, const Peer &peer, uint32_t nowMs);
 
     static uint32_t checksum32(const uint8_t *data, size_t length);
+    static void onSend(const uint8_t *mac, esp_now_send_status_t status);
     static void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length);
     static XREspNowTransport *instance_;
 };
