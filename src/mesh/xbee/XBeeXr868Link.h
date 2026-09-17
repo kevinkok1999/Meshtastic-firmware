@@ -11,8 +11,11 @@ namespace meshoffgrid::xbee {
 class XBeeXr868Link
 {
   public:
+    // Digi XBee XR 868 reports NP=0x49 (73 bytes) without encryption.
+    // With encryption enabled, the current Digi guide documents 65 bytes.
+    // Future work should query NP automatically and lower this limit when needed.
+    static constexpr size_t MAX_TX_PAYLOAD = 73;
     static constexpr size_t MAX_FRAME_DATA = 512;
-    static constexpr size_t MAX_TX_PAYLOAD = MAX_FRAME_DATA - 14;
 
     using ReceiveCallback = void (*)(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint8_t receiveOptions);
     using TxStatusCallback = void (*)(uint8_t frameId, uint8_t deliveryStatus, uint8_t retryCount, uint8_t discoveryStatus);
