@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <esp_idf_version.h>
 #include <esp_now.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -134,7 +135,11 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     bool shouldMirror(const meshtastic_MeshPacket &packet, const Peer &peer, uint32_t nowMs);
 
     static uint32_t checksum32(const uint8_t *data, size_t length);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+    static void onSend(const esp_now_send_info_t *txInfo, esp_now_send_status_t status);
+#else
     static void onSend(const uint8_t *mac, esp_now_send_status_t status);
+#endif
     static void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length);
     static XREspNowTransport *instance_;
 };

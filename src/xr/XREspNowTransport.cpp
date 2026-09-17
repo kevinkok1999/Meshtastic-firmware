@@ -102,7 +102,6 @@ bool XREspNowTransport::initialize()
     }
     if (esp_now_register_send_cb(&XREspNowTransport::onSend) != ESP_OK) {
         LOG_ERROR("XR ESP-NOW send callback registration failed");
-        esp_now_unregister_send_cb();
         esp_now_unregister_recv_cb();
         esp_now_deinit();
         return false;
@@ -110,6 +109,7 @@ bool XREspNowTransport::initialize()
 
     if (!addEspNowPeerIfNeeded(BROADCAST_MAC)) {
         LOG_ERROR("XR ESP-NOW broadcast peer setup failed");
+        esp_now_unregister_send_cb();
         esp_now_unregister_recv_cb();
         esp_now_deinit();
         return false;
@@ -513,8 +513,14 @@ uint32_t XREspNowTransport::checksum32(const uint8_t *data, size_t length)
     return hash;
 }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+void XREspNowTransport::onSend(const esp_now_send_info_t *txInfo, esp_now_send_status_t status)
+{
+    const uint8_t *mac = txInfo != nullptr ? txInfo->des_addr : nullptr;
+#else
 void XREspNowTransport::onSend(const uint8_t *mac, esp_now_send_status_t status)
 {
+#endif
     XREspNowTransport *self = instance_;
     if (!self || !self->initialized_.load() || !self->txStatusQueue_ || !mac)
         return;

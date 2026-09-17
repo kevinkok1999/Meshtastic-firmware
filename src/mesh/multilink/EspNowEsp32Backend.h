@@ -83,7 +83,11 @@ class EspNowEsp32Backend final : public EspNowBackend
     void pushReceived(const uint8_t srcMac[6], const uint8_t *data, int length, int16_t rssiDbm);
     static uint32_t monotonicMs();
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+    static void onSend(const esp_now_send_info_t *txInfo, esp_now_send_status_t status);
+#else
     static void onSend(const uint8_t *mac, esp_now_send_status_t status);
+#endif
 #if ESP_IDF_VERSION_MAJOR >= 5
     static void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int length);
 #else

@@ -321,8 +321,14 @@ void EspNowEsp32Backend::poll(uint32_t nowMs)
     (void)nowMs;
 }
 
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+void EspNowEsp32Backend::onSend(const esp_now_send_info_t *txInfo, esp_now_send_status_t status)
+{
+    const uint8_t *mac = txInfo != nullptr ? txInfo->des_addr : nullptr;
+#else
 void EspNowEsp32Backend::onSend(const uint8_t *mac, esp_now_send_status_t status)
 {
+#endif
     if (instance_ == nullptr)
         return;
 
@@ -331,7 +337,8 @@ void EspNowEsp32Backend::onSend(const uint8_t *mac, esp_now_send_status_t status
     if (peer != nullptr) {
         report.nodeId = peer->nodeId;
         const uint32_t now = monotonicMs();
-        report.latencyMs = peer->txStartedMs != 0 ? static_cast<uint16_t>(std::min<uint32_t>(now - peer->txStartedMs, 65535U)) : 0;
+        report.latencyMs =
+            peer->txStartedMs != 0 ? static_cast<uint16_t>(std::min<uint32_t>(now - peer->txStartedMs, 65535U)) : 0;
     }
     report.success = status == ESP_NOW_SEND_SUCCESS;
 
