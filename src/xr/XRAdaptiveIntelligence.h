@@ -61,6 +61,13 @@ struct XRAdaptiveOutcome {
 struct XRAdaptivePolicy {
     bool enabled = true;
 
+    // Production behavior is intentionally invisible to ordinary users: the
+    // model learns and applies proven improvements in the background without
+    // routine prompts or popups. Advanced diagnostics may still inspect it.
+    bool silentBackgroundLearning = true;
+    bool autoApplyPromotedStrategies = true;
+    bool exposeRoutineDecisionsToUi = false;
+
     // Conservative exploration: a small fraction of decisions may try an
     // eligible non-baseline strategy. Production default is intentionally low.
     uint8_t explorationPercent = 5;
