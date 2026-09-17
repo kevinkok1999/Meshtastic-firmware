@@ -73,6 +73,12 @@ bool XRAdaptiveIntelligence::actionAllowed(XRAdaptiveAction action, const XRAdap
         // only after XRPrivacyPolicy and authenticated broker transport approve it.
         return capabilities.wifiMqttAvailable && capabilities.wifiMqttPrivacyApproved &&
                context.networkAutopilotScore >= 55 && context.batteryPercent >= policy_.minimumBatteryForWifi;
+    case XRAdaptiveAction::ESP_NOW_PREFERRED:
+        // ESP-NOW is a local sidecar transport. For private traffic the payload
+        // must already be protected by Meshtastic and the caller must explicitly
+        // approve that privacy level before exposing the capability to the AI.
+        return capabilities.espNowAvailable && capabilities.espNowPrivacyApproved && context.espNowLinkScore >= 35 &&
+               context.batteryPercent >= policy_.minimumBatteryForEspNow;
     case XRAdaptiveAction::LORA_RX_FOCUS:
         return capabilities.loraAvailable && capabilities.rxFocusAvailable &&
                context.batteryPercent >= policy_.minimumBatteryForRxFocus;
@@ -311,7 +317,7 @@ XRAdaptiveIntelligence::Snapshot XRAdaptiveIntelligence::snapshot() const
 
 bool XRAdaptiveIntelligence::restore(const Snapshot &input)
 {
-    if (input.magic != 0x58524149 || input.version != 2 || input.checksum != checksumSnapshot(input))
+    if (input.magic != 0x58524149 || input.version != 3 || input.checksum != checksumSnapshot(input))
         return false;
 
     arms_ = input.arms;
