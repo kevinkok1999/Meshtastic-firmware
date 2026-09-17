@@ -44,8 +44,10 @@ bool XRXBeeTransport::initialize()
 
     if (!txQueue_)
         txQueue_ = xQueueCreate(TX_QUEUE_DEPTH, sizeof(TxPacket));
-    if (!txQueue_) {
-        LOG_ERROR("XR XBee TX queue allocation failed");
+    if (!deliveryEventQueue_)
+        deliveryEventQueue_ = xQueueCreate(DELIVERY_EVENT_QUEUE_DEPTH, sizeof(DeliveryEvent));
+    if (!txQueue_ || !deliveryEventQueue_) {
+        LOG_ERROR("XR XBee queue allocation failed");
         return false;
     }
 
@@ -82,6 +84,10 @@ void XRXBeeTransport::shutdown()
         vQueueDelete(txQueue_);
         txQueue_ = nullptr;
     }
+    if (deliveryEventQueue_) {
+        vQueueDelete(deliveryEventQueue_);
+        deliveryEventQueue_ = nullptr;
+    }
     activeTx_ = {};
     mirrorCandidate_ = {};
     deferred_.clear();
@@ -99,6 +105,7 @@ int32_t XRXBeeTransport::runOnce()
 
     const uint32_t nowMs = Time::getMillis();
     link_.poll();
+    drainDeliveryEvents(nowMs);
 
     deferred_.expire(nowMs);
     expireOutboundCache(nowMs);
@@ -134,11 +141,8 @@ RadioTxHook::PreTxAction XRXBeeTransport::beforeTransmit(RadioInterface *, mesht
 
     mirrorCandidate_ = {};
     if (initialized_ && packet && eligibleForMirror(*packet)) {
-        // Cache only the already-encrypted wire packet. If normal LoRa reliable
-        // delivery later exhausts its retries, this exact ciphertext can enter
-        // store/carry/forward without ever persisting a decoded/plaintext copy.
-        rememberOutbound(*packet, nowMs);
-
+        // Only copy into the bounded handoff record here. Cache/store mutations
+        // are performed by the XBee OSThread after packetReleased() queues it.
         mirrorCandidate_.valid = true;
         mirrorCandidate_.packet = *packet;
         mirrorCandidate_.ackExpected = packet->want_ack;
@@ -213,30 +217,69 @@ void XRXBeeTransport::expireOutboundCache(uint32_t nowMs)
     }
 }
 
+bool XRXBeeTransport::enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId,
+                                              uint32_t whenMs)
+{
+    if (!deliveryEventQueue_ || peer == 0 || packetId == 0)
+        return false;
+
+    DeliveryEvent event{};
+    event.type = type;
+    event.peer = peer;
+    event.packetId = packetId;
+    event.whenMs = whenMs;
+    return xQueueSend(deliveryEventQueue_, &event, 0) == pdTRUE;
+}
+
 void XRXBeeTransport::onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs)
 {
-    CachedOutbound *cached = findCachedOutbound(destination, packetId);
-    if (!cached)
-        return;
-
-    if (deferred_.enqueue(cached->packet, nowMs)) {
-        LOG_INFO("XR XBee recovery queued encrypted packet id=0x%08x to=0x%08x", packetId, destination);
-        (void)deferredStore_.service(deferred_, nowMs, true);
-    }
+    (void)enqueueDeliveryEvent(DeliveryEventType::Failed, destination, packetId, nowMs);
 }
 
 void XRXBeeTransport::onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
 {
-    deferred_.markDelivered(packetId, peer);
-    clearCachedOutbound(peer, packetId);
-    (void)deferredStore_.service(deferred_, nowMs, true);
+    (void)enqueueDeliveryEvent(DeliveryEventType::Acked, peer, packetId, nowMs);
 }
 
 void XRXBeeTransport::onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
 {
-    deferred_.markDelivered(packetId, peer);
-    clearCachedOutbound(peer, packetId);
-    (void)deferredStore_.service(deferred_, nowMs, true);
+    (void)enqueueDeliveryEvent(DeliveryEventType::Naked, peer, packetId, nowMs);
+}
+
+void XRXBeeTransport::drainDeliveryEvents(uint32_t nowMs)
+{
+    if (!deliveryEventQueue_)
+        return;
+
+    DeliveryEvent event{};
+    while (xQueueReceive(deliveryEventQueue_, &event, 0) == pdTRUE)
+        handleDeliveryEvent(event, nowMs);
+}
+
+void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t nowMs)
+{
+    switch (event.type) {
+    case DeliveryEventType::Failed: {
+        CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
+        if (!cached)
+            return;
+
+        if (deferred_.enqueue(cached->packet, nowMs)) {
+            deferred_.makeDue(event.packetId, event.peer, nowMs);
+            LOG_INFO("XR XBee recovery queued encrypted packet id=0x%08x to=0x%08x", event.packetId, event.peer);
+            (void)deferredStore_.service(deferred_, nowMs, true);
+        }
+        break;
+    }
+    case DeliveryEventType::Acked:
+    case DeliveryEventType::Naked:
+        deferred_.markDelivered(event.packetId, event.peer);
+        clearCachedOutbound(event.peer, event.packetId);
+        if (activeTx_.used && activeTx_.packetId == event.packetId && activeTx_.nodeNum == event.peer)
+            activeTx_ = {};
+        (void)deferredStore_.service(deferred_, nowMs, true);
+        break;
+    }
 }
 
 uint8_t XRXBeeTransport::peerCount() const
@@ -320,6 +363,7 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
     // a normal LoRa delivery succeeded.
     TxPacket immediate{};
     while (txQueue_ && xQueueReceive(txQueue_, &immediate, 0) == pdTRUE) {
+        rememberOutbound(immediate.packet, nowMs);
         Peer *peer = findPeer(immediate.packet.to);
         if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
             continue;
