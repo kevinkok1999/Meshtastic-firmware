@@ -17,7 +17,6 @@ class XRDeferredPacketQueue
     static constexpr size_t MAX_ENTRIES = 12;
     static constexpr uint32_t DEFAULT_TTL_MS = 24u * 60u * 60u * 1000u;
     static constexpr uint32_t RELIABLE_INITIAL_GRACE_MS = 8000u;
-    static constexpr uint32_t CLAIM_LEASE_MS = 5000u;
     static constexpr uint32_t ACK_WAIT_MS = 15000u;
 
     struct Entry {
