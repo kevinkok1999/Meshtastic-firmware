@@ -21,6 +21,9 @@ XRAdaptivePlan XRAdaptiveCoordinator::plan(const XRAdaptiveContext &context,
     case XRAdaptiveAction::ESP_NOW_PREFERRED:
         out.preferEspNow = true;
         break;
+    case XRAdaptiveAction::XBEE_PREFERRED:
+        out.preferXBee = true;
+        break;
     case XRAdaptiveAction::LORA_RX_FOCUS:
         out.preferLoRa = true;
         out.requestRxFocus = true;
