@@ -9,6 +9,7 @@
 #endif
 
 #include <memory>
+#include <new>
 #include <pb_decode.h>
 #include <pb_encode.h>
 
