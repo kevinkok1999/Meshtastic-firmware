@@ -69,14 +69,9 @@ bool XRAdaptiveIntelligence::actionAllowed(XRAdaptiveAction action, const XRAdap
     case XRAdaptiveAction::LORA_PREFERRED:
         return capabilities.loraAvailable;
     case XRAdaptiveAction::WIFI_MQTT_PREFERRED:
-        // For private traffic, the coordinator may set wifiMqttPrivacyApproved
-        // only after XRPrivacyPolicy and authenticated broker transport approve it.
         return capabilities.wifiMqttAvailable && capabilities.wifiMqttPrivacyApproved &&
                context.networkAutopilotScore >= 55 && context.batteryPercent >= policy_.minimumBatteryForWifi;
     case XRAdaptiveAction::ESP_NOW_PREFERRED:
-        // ESP-NOW is a local sidecar transport. For private traffic the payload
-        // must already be protected by Meshtastic and the caller must explicitly
-        // approve that privacy level before exposing the capability to the AI.
         return capabilities.espNowAvailable && capabilities.espNowPrivacyApproved && context.espNowLinkScore >= 35 &&
                context.batteryPercent >= policy_.minimumBatteryForEspNow;
     case XRAdaptiveAction::LORA_RX_FOCUS:
@@ -143,8 +138,6 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
         return result;
     }
 
-    // Exploitation is conservative: only baseline or a statistically promoted
-    // action with fresh evidence can become the normal choice.
     XRAdaptiveAction best = XRAdaptiveAction::BASELINE;
     int16_t bestReward = arms_[bucket][actionIndex(best)].rewardEwma;
 
@@ -163,9 +156,6 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
     result.expectedReward = bestReward;
     result.promoted = best != XRAdaptiveAction::BASELINE;
 
-    // A small deterministic exploration budget keeps learning alive. Stale
-    // strategies receive a modest re-test bonus so the model can discover that
-    // conditions have changed without forgetting everything at once.
     if (policy_.explorationPercent == 0)
         return result;
 
@@ -204,9 +194,12 @@ XRAdaptiveDecision XRAdaptiveIntelligence::choose(const XRAdaptiveContext &conte
 int16_t XRAdaptiveIntelligence::scoreOutcome(const XRAdaptiveOutcome &outcome)
 {
     if (outcome.privacyRejected)
-        return -100; // hard failure signal; privacy is never traded for delivery
+        return -100;
 
-    int32_t reward = outcome.delivered ? 70 : -55;
+    // A sidecar handoff is positive evidence, but deliberately much weaker
+    // than true end-to-end delivery. This keeps ESP-NOW/Wi-Fi link learning
+    // useful without falsely teaching the model that a chat message was ACKed.
+    int32_t reward = outcome.delivered ? 70 : (outcome.transportAccepted ? 15 : -55);
     if (outcome.acked)
         reward += 20;
     if (outcome.transportFailed)
@@ -214,7 +207,6 @@ int16_t XRAdaptiveIntelligence::scoreOutcome(const XRAdaptiveOutcome &outcome)
     if (outcome.duplicateObserved)
         reward -= 25;
 
-    // Small, bounded efficiency penalties. Delivery dominates the objective.
     reward -= std::min<int32_t>(15, outcome.latencyMs / 1000u);
     reward -= std::min<int32_t>(10, outcome.airtimeMs / 500u);
     reward -= std::min<int32_t>(10, outcome.estimatedEnergyMilliJoules / 250u);
@@ -234,7 +226,7 @@ void XRAdaptiveIntelligence::learn(const XRAdaptiveDecision &decision, const XRA
     arm.samples = satInc16(arm.samples);
     if (outcome.delivered)
         arm.deliveries = satInc16(arm.deliveries);
-    else
+    else if (!outcome.transportAccepted)
         arm.failures = satInc16(arm.failures);
 
     if (arm.samples == 1)
@@ -242,7 +234,8 @@ void XRAdaptiveIntelligence::learn(const XRAdaptiveDecision &decision, const XRA
     else
         arm.rewardEwma = static_cast<int16_t>((static_cast<int32_t>(arm.rewardEwma) * 7 + reward) / 8);
 
-    const bool failed = !outcome.delivered || outcome.transportFailed || outcome.privacyRejected;
+    const bool failed = (!outcome.delivered && !outcome.transportAccepted) || outcome.transportFailed ||
+                        outcome.privacyRejected;
     if (failed) {
         if (arm.failureStreak != UINT8_MAX)
             ++arm.failureStreak;
@@ -268,9 +261,6 @@ const XRAdaptiveArmState &XRAdaptiveIntelligence::state(uint8_t contextBucket, X
 
 uint32_t XRAdaptiveIntelligence::checksumSnapshot(const Snapshot &snapshot)
 {
-    // Field-by-field FNV-1a makes the journal format independent of compiler
-    // padding/alignment. This is integrity against torn/corrupt model records,
-    // not cryptographic authentication; protected storage provides that layer.
     constexpr uint32_t FNV_OFFSET = 2166136261u;
     constexpr uint32_t FNV_PRIME = 16777619u;
     uint32_t hash = FNV_OFFSET;
