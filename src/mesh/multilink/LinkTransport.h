@@ -8,6 +8,7 @@ namespace meshtastic::multilink {
 enum class LinkType : uint8_t {
     LoRa = 0,
     EspNow,
+    XBee,
     Ble,
     WifiNan,
     Backscatter,
