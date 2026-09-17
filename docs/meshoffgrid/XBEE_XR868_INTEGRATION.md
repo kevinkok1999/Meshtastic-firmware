@@ -80,7 +80,7 @@ Initial target:
 - Extended Transmit Status = `0x8B`
 - Receive Packet = `0x90`
 
-The driver currently implements the framing required for those core packet paths.
+The driver currently implements the framing required for those core packet paths. Digi documents NP=0x49 (73 bytes) for the XR 868 without encryption and 65 bytes with encryption, so the first driver revision caps outgoing RF payloads at 73 bytes and leaves automatic NP discovery as follow-up work.
 
 ## Source layout
 
@@ -165,7 +165,8 @@ Do not treat two nearby 868 MHz radios as independent until this has been measur
 - [x] Extended Transmit Status `0x8B` callback
 - [x] Modem Status `0x8A` callback
 - [ ] Native/unit tests for codec
-- [ ] Confirm exact XR 868 payload limits from configured RF mode
+- [x] Confirm documented XR 868 payload limit: 73 bytes without encryption, 65 bytes with encryption
+- [ ] Add automatic NP query so the runtime limit follows module configuration
 
 ### Phase 2 — hardware bring-up
 
