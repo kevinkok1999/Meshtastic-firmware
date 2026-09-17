@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <climits>
-#include <cstring>
 
 namespace meshoffgrid::xr {
 
@@ -250,18 +249,39 @@ const XRAdaptiveArmState &XRAdaptiveIntelligence::state(uint8_t contextBucket, X
 
 uint32_t XRAdaptiveIntelligence::checksumSnapshot(const Snapshot &snapshot)
 {
-    // FNV-1a over the snapshot except the checksum field. This catches torn or
-    // corrupted journal records; cryptographic integrity belongs to protected storage.
+    // Field-by-field FNV-1a makes the journal format independent of compiler
+    // padding/alignment. This is integrity against torn/corrupt model records,
+    // not cryptographic authentication; protected storage provides that layer.
     constexpr uint32_t FNV_OFFSET = 2166136261u;
     constexpr uint32_t FNV_PRIME = 16777619u;
-
-    Snapshot copy = snapshot;
-    copy.checksum = 0;
-    const auto *bytes = reinterpret_cast<const uint8_t *>(&copy);
     uint32_t hash = FNV_OFFSET;
-    for (size_t i = 0; i < sizeof(copy); ++i) {
-        hash ^= bytes[i];
+
+    auto feed8 = [&hash](uint8_t value) {
+        hash ^= value;
         hash *= FNV_PRIME;
+    };
+    auto feed16 = [&feed8](uint16_t value) {
+        feed8(static_cast<uint8_t>(value & 0xffu));
+        feed8(static_cast<uint8_t>((value >> 8) & 0xffu));
+    };
+    auto feed32 = [&feed8](uint32_t value) {
+        for (uint8_t shift = 0; shift < 32; shift += 8)
+            feed8(static_cast<uint8_t>((value >> shift) & 0xffu));
+    };
+
+    feed32(snapshot.magic);
+    feed16(snapshot.version);
+    feed16(snapshot.reserved);
+    feed32(snapshot.modelEpoch);
+    for (const auto &bucket : snapshot.arms) {
+        for (const auto &arm : bucket) {
+            feed16(arm.samples);
+            feed16(arm.deliveries);
+            feed16(arm.failures);
+            feed16(static_cast<uint16_t>(arm.rewardEwma));
+            feed8(arm.failureStreak);
+            feed32(arm.quarantineUntilMs);
+        }
     }
     return hash;
 }
