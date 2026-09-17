@@ -11,39 +11,43 @@ namespace meshoffgrid::xbee {
 class XBeeXr868Link
 {
   public:
-    // Digi XBee XR 868 reports NP=0x49 (73 bytes) without encryption.
-    // With encryption enabled, the current Digi guide documents 65 bytes.
-    // Future work should query NP automatically and lower this limit when needed.
-    static constexpr size_t MAX_TX_PAYLOAD = 73;
+    // Digi documents NP=0x49 (73 bytes) without encryption and 65 bytes with
+    // encryption for XR 868. NP is queried at runtime and can only lower this cap.
+    static constexpr size_t MAX_TX_PAYLOAD_HARD = 73;
     static constexpr size_t MAX_FRAME_DATA = 512;
 
     using ReceiveCallback = void (*)(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint8_t receiveOptions);
     using TxStatusCallback = void (*)(uint8_t frameId, uint8_t deliveryStatus, uint8_t retryCount, uint8_t discoveryStatus);
     using ModemStatusCallback = void (*)(uint8_t status);
+    using AtResponseCallback =
+        void (*)(uint8_t frameId, char command0, char command1, uint8_t status, const uint8_t *value, size_t valueLength);
 
     bool begin(HardwareSerial &serial, uint32_t baud, int8_t rxPin, int8_t txPin);
     void end();
 
-    /**
-     * Poll the serial stream. Call frequently from the normal device loop/thread.
-     * This method never waits for RF delivery.
-     */
+    // Call frequently from a normal task/thread. Never call from an ISR.
     void poll();
 
-    /**
-     * Send an API Transmit Request (0x10).
-     *
-     * Returns the allocated non-zero frame ID when queued to UART, or 0 on local failure.
-     * Delivery success/failure arrives later through TxStatusCallback.
-     */
+    // Returns a non-zero frame ID when the API frame was queued to UART.
+    // Delivery success/failure arrives asynchronously through TxStatusCallback.
     uint8_t send(uint64_t destination64, const uint8_t *payload, size_t payloadLength, uint8_t transmitOptions = 0,
                  uint8_t broadcastRadius = 0);
+
+    // Local AT query/write using API frame 0x08. parameterLength=0 performs a read.
+    uint8_t sendAt(const char command[2], const uint8_t *parameter = nullptr, size_t parameterLength = 0);
+
+    // Non-blocking discovery of the values needed by the higher-level transport.
+    // Responses arrive through 0x88 and update NP/SH/SL automatically.
+    void queryModuleInfo();
 
     void onReceive(ReceiveCallback callback) { receiveCallback_ = callback; }
     void onTxStatus(TxStatusCallback callback) { txStatusCallback_ = callback; }
     void onModemStatus(ModemStatusCallback callback) { modemStatusCallback_ = callback; }
+    void onAtResponse(AtResponseCallback callback) { atResponseCallback_ = callback; }
 
     bool isReady() const { return serial_ != nullptr; }
+    size_t maxTxPayload() const { return maxTxPayload_; }
+    uint64_t moduleAddress64() const { return moduleAddress64_; }
 
     uint32_t validFrames() const { return validFrames_; }
     uint32_t checksumErrors() const { return checksumErrors_; }
@@ -66,10 +70,15 @@ class XBeeXr868Link
     uint8_t frameData_[MAX_FRAME_DATA] = {};
 
     uint8_t nextFrameId_ = 1;
+    size_t maxTxPayload_ = MAX_TX_PAYLOAD_HARD;
+    uint32_t serialHigh_ = 0;
+    uint32_t serialLow_ = 0;
+    uint64_t moduleAddress64_ = 0;
 
     ReceiveCallback receiveCallback_ = nullptr;
     TxStatusCallback txStatusCallback_ = nullptr;
     ModemStatusCallback modemStatusCallback_ = nullptr;
+    AtResponseCallback atResponseCallback_ = nullptr;
 
     uint32_t validFrames_ = 0;
     uint32_t checksumErrors_ = 0;
@@ -81,6 +90,7 @@ class XBeeXr868Link
     uint8_t allocateFrameId();
 
     static uint64_t readU64BigEndian(const uint8_t *data);
+    static uint32_t readU32BigEndianVariable(const uint8_t *data, size_t length);
 };
 
 } // namespace meshoffgrid::xbee
