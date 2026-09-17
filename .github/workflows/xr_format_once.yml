@@ -1,0 +1,46 @@
+name: XR One-Shot Formatter
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  format-xr:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout XR head branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Format XR sources with repository Trunk rules
+        uses: trunk-io/trunk-action@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa # v2.0.0
+        with:
+          check-mode: none
+          cache: false
+          post-init: trunk fmt src/xr docs/xr test/test_xr_adaptive_intelligence/test_main.cpp .github/workflows/xr_tdeck_plus_build.yml
+
+      - name: Show formatted build workflow
+        run: cat .github/workflows/xr_tdeck_plus_build.yml
+
+      - name: Commit formatted XR source files
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git add src/xr docs/xr test/test_xr_adaptive_intelligence/test_main.cpp
+          if git diff --cached --quiet; then
+            echo "XR source files already formatted"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "style: format XR sources"
+          git push origin "HEAD:${HEAD_REF}"
