@@ -318,6 +318,13 @@ class RadioInterface
      */
     virtual int16_t getCurrentRSSI() { return 0; }
 
+    /**
+     * Return the radio's learned ambient noise floor in dBm when available.
+     * A conservative -120 dBm default keeps generic/non-RadioLib interfaces
+     * compatible while XR can use richer RF-environment data on SX126x.
+     */
+    virtual int32_t getNoiseFloor() { return -120; }
+
   private:
     /**
      * Convert our modemConfig enum into wf, sf, etc...
