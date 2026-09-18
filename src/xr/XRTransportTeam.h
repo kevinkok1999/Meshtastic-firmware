@@ -99,10 +99,10 @@ class XRTransportTeam
         uint32_t checksum = 0;
     };
 
-    LearningSnapshot learningSnapshot() const;
+    LearningSnapshot learningSnapshot();
     bool restoreLearning(const LearningSnapshot &snapshot, uint32_t nowMs);
-    bool learningDirty() const { return learningDirty_; }
-    void markLearningPersisted() { learningDirty_ = false; }
+    bool learningDirty();
+    void markLearningPersisted();
 
     // Primarily for deterministic native tests.
     void reset();
