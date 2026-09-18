@@ -11,9 +11,10 @@ namespace meshoffgrid::xbee {
 class XBeeXr868Link
 {
   public:
-    // Digi documents NP=0x49 (73 bytes) without encryption and 65 bytes with
-    // encryption for XR 868. NP is queried at runtime and can only lower this cap.
-    static constexpr size_t MAX_TX_PAYLOAD_HARD = 73;
+    // Digi XR 868 supports up to 256 bytes of application payload in API mode.
+    // NP is still queried at runtime and may lower this limit for the current
+    // radio configuration, so the transport never exceeds the module's answer.
+    static constexpr size_t MAX_TX_PAYLOAD_HARD = 256;
     static constexpr size_t MAX_FRAME_DATA = 512;
 
     using ReceiveCallback = void (*)(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint8_t receiveOptions);
