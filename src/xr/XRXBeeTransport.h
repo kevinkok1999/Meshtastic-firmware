@@ -38,7 +38,12 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     ~XRXBeeTransport() override;
 
     RadioTxHook::PreTxAction beforeTransmit(RadioInterface *, meshtastic_MeshPacket *) override { return PRETX_SEND; }
-    void packetReleased(RadioInterface *iface, const meshtastic_MeshPacket *packet) override;
+    void packetReleased(RadioInterface *, const meshtastic_MeshPacket *) override {}
+
+    // Called by Reliable/NextHop routing only after normal LoRa + ESP-NOW delivery
+    // has gone unacknowledged. XBee is therefore a real fallback/bridge route,
+    // not a parallel duplicate transport.
+    bool queueFallback(const meshtastic_MeshPacket &packet);
 
     bool ready() const { return initialized_ && online_; }
     uint8_t peerCount() const;
@@ -56,12 +61,14 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     static constexpr uint8_t MAX_PEERS = 24;
     static constexpr uint8_t MAX_REASSEMBLY = 4;
     static constexpr uint8_t MAX_RECENT_INGRESS = 24;
+    static constexpr uint8_t MAX_RECENT_FALLBACK = 24;
     static constexpr UBaseType_t TX_QUEUE_DEPTH = 6;
     static constexpr uint32_t SERVICE_INTERVAL_MS = 25;
     static constexpr uint32_t HELLO_INTERVAL_MS = 30u * 1000u;
     static constexpr uint32_t PEER_FRESH_MS = 5u * 60u * 1000u;
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 12u * 1000u;
     static constexpr uint32_t INGRESS_SUPPRESS_MS = 2u * 60u * 1000u;
+    static constexpr uint32_t FALLBACK_SUPPRESS_MS = 5u * 60u * 1000u;
     static constexpr uint32_t PROBE_INTERVAL_MS = 10u * 1000u;
     static constexpr size_t MAX_PACKET_BYTES = meshtastic_MeshPacket_size;
 
@@ -116,12 +123,20 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
         uint32_t seenMs = 0;
     };
 
+    struct RecentFallback {
+        bool used = false;
+        uint32_t packetFrom = 0;
+        uint32_t packetId = 0;
+        uint32_t queuedMs = 0;
+    };
+
     HardwareSerial serial_{MESHOFFGRID_XBEE_UART_NUM};
     meshoffgrid::xbee::XBeeXr868Link link_{};
     QueueHandle_t txQueue_ = nullptr;
     std::array<Peer, MAX_PEERS> peers_{};
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     std::array<RecentIngress, MAX_RECENT_INGRESS> ingress_{};
+    std::array<RecentFallback, MAX_RECENT_FALLBACK> fallbackHistory_{};
 
     bool initialized_ = false;
     bool initAttempted_ = false;
@@ -144,10 +159,13 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
 
     Peer *findPeer(uint32_t nodeNum);
     const Peer *findPeer(uint32_t nodeNum) const;
+    const Peer *selectFallbackPeer(uint32_t destination, uint32_t nowMs) const;
     void rememberPeer(uint32_t nodeNum, uint64_t address64, uint32_t nowMs);
     Reassembly &getReassembly(uint64_t source64, const FrameHeader &header, uint32_t nowMs);
     bool wasRecentIngress(uint32_t packetFrom, uint32_t packetId, uint32_t nowMs) const;
     void markIngress(uint32_t packetFrom, uint32_t packetId, uint32_t nowMs);
+    bool fallbackWasQueued(uint32_t packetFrom, uint32_t packetId, uint32_t nowMs) const;
+    void markFallbackQueued(uint32_t packetFrom, uint32_t packetId, uint32_t nowMs);
     void expireState(uint32_t nowMs);
 
     static uint32_t checksum32(const uint8_t *data, size_t length);
