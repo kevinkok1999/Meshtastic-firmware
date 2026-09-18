@@ -176,6 +176,7 @@ bool XREspNowTransport::initialize()
     const uint32_t nowMs = Time::getMillis();
     reportHiddenRfEnvironment(nowMs);
     (void)deferredStore_.load(deferred_, nowMs);
+    (void)XRTransportTeamStore::shared().loadOnce(XRTransportTeam::shared(), nowMs);
     initialized_ = true;
     lastHelloMs_ = 0;
     LOG_INFO("XR ESP-NOW sidecar ready (LoRa remains primary/fallback)");
@@ -185,6 +186,9 @@ bool XREspNowTransport::initialize()
 void XREspNowTransport::shutdown()
 {
     if (initialized_) {
+        const uint32_t nowMs = Time::getMillis();
+        (void)deferredStore_.service(deferred_, nowMs, true);
+        (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, true);
         esp_now_unregister_send_cb();
         esp_now_unregister_recv_cb();
         esp_now_deinit();
@@ -248,6 +252,7 @@ int32_t XREspNowTransport::runOnce()
     expireState(nowMs);
     expireOutboundCache(nowMs);
     (void)deferredStore_.service(deferred_, nowMs, false);
+    (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, false);
     coordinator_.service(nowMs);
     return SERVICE_INTERVAL_MS;
 }
