@@ -99,10 +99,10 @@ class XRTransportTeam
         uint32_t checksum = 0;
     };
 
-    LearningSnapshot learningSnapshot();
+    LearningSnapshot learningSnapshot(uint32_t &generation);
     bool restoreLearning(const LearningSnapshot &snapshot, uint32_t nowMs);
     bool learningDirty();
-    void markLearningPersisted();
+    void markLearningPersisted(uint32_t generation);
 
     // Primarily for deterministic native tests.
     void reset();
@@ -164,7 +164,8 @@ class XRTransportTeam
     XRDeliveryStateMachine delivery_{};
     std::array<DestinationMemory, MAX_DESTINATIONS> destinations_{};
     EnvironmentState environment_{};
-    bool learningDirty_ = false;
+    uint32_t learningGeneration_ = 0;
+    uint32_t persistedLearningGeneration_ = 0;
     std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
 
     void lock();
