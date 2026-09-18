@@ -199,7 +199,9 @@ jobs:
           done
 
           SHORT_SHA="$(git rev-parse --short=12 HEAD)"
-          python - "$RELEASE_DIR" "$FULL_NAME" "$SHORT_SHA" <<'PY'
+          FULL_SHA="$(sha256sum "$RELEASE_DIR/$FULL_NAME" | awk '{print $1}')"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          python - "$RELEASE_DIR" "$FULL_NAME" "$SHORT_SHA" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
           import json
           import pathlib
           import sys
@@ -207,8 +209,10 @@ jobs:
           release = pathlib.Path(sys.argv[1])
           full_name = sys.argv[2]
           version = sys.argv[3]
+          full_sha = sys.argv[4]
+          source_sha = sys.argv[5]
 
-          manifest = {
+          esp_web_tools = {
               "name": "MeshOffGrid XR Ultra - LILYGO T-Deck Plus",
               "version": version,
               "new_install_prompt_erase": True,
@@ -219,7 +223,28 @@ jobs:
                   }
               ],
           }
-          (release / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          (release / "esp-web-tools-manifest.json").write_text(
+              json.dumps(esp_web_tools, indent=2) + "\n", encoding="utf-8"
+          )
+
+          product_manifest = {
+              "schema": 1,
+              "channel": "candidate",
+              "product": "MeshOffGridNL T-Deck Plus",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "version": version,
+              "sourceCommit": source_sha,
+              "file": full_name,
+              "offset": 0,
+              "sha256": full_sha,
+              "size": 16711680,
+              "filesystemOffset": 13172736,
+          }
+          (release / "meshoffgrid-manifest.json").write_text(
+              json.dumps(product_manifest, indent=2) + "\n", encoding="utf-8"
+          )
           PY
 
           {
@@ -231,7 +256,8 @@ jobs:
             echo "Files:"
             echo "  $FULL_NAME  = complete first-install image at offset 0x0"
             echo "  $APP_NAME   = application-only image for compatible update flows"
-            echo "  manifest.json = ESP Web Tools-compatible single-image manifest"
+            echo "  esp-web-tools-manifest.json = ESP Web Tools-compatible single-image manifest"
+            echo "  meshoffgrid-manifest.json = MeshOffGridNL installer candidate manifest"
             echo "  xr-flash-map.json = exact PlatformIO-resolved source flash map"
             echo
             echo "XBee XR 868:"
@@ -252,7 +278,7 @@ jobs:
             echo "Flash $FULL_NAME at offset 0x0 using a compatible ESP32-S3 flasher."
             echo
             echo "BROWSER FLASHER"
-            echo "Host this directory over HTTPS and point ESP Web Tools at manifest.json."
+            echo "Host this directory over HTTPS and point ESP Web Tools at esp-web-tools-manifest.json."
             echo
             echo "APP-ONLY UPDATE"
             echo "Use $APP_NAME only with an update method that expects the application partition image."
@@ -261,9 +287,15 @@ jobs:
           } > "$RELEASE_DIR/FLASHING.txt"
 
           sha256sum "$RELEASE_DIR"/*.bin > "$RELEASE_DIR/SHA256SUMS.txt"
+
+          python scripts/validate_xr_release.py "$RELEASE_DIR" \
+            --full-name "$FULL_NAME" \
+            --app-name "$APP_NAME"
+
           cat "$RELEASE_DIR/BUILD_INFO.txt"
           cat "$RELEASE_DIR/FLASHING.txt"
           cat "$RELEASE_DIR/SHA256SUMS.txt"
+          cat "$RELEASE_DIR/VALIDATION.json"
 
       - name: Upload compiler diagnostics
         if: failure()
