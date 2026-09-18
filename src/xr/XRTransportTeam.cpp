@@ -428,15 +428,15 @@ void XRTransportTeam::reportRecoveryResult(XRTeamTransport transport, uint32_t d
     unlock();
 }
 
-void XRTransportTeam::markDelivered(uint32_t destination, uint32_t packetId)
+void XRTransportTeam::markDelivered(uint32_t destination, uint32_t packetId, uint32_t nowMs)
 {
     lock();
     if (PacketState *packet = findPacket(destination, packetId)) {
         if (packet->lastAcceptedWasRecovery && packet->lastAccepted != XRTeamTransport::None) {
-            updateQualityUnlocked(destination, packet->lastAccepted, 100, packet->lastTouchedMs);
+            updateQualityUnlocked(destination, packet->lastAccepted, 100, nowMs);
             if (DestinationMemory *memory = findDestination(destination)) {
                 memory->preferred = packet->lastAccepted;
-                memory->preferredUntilMs = packet->lastTouchedMs + PREFERRED_PATH_HOLD_MS;
+                memory->preferredUntilMs = nowMs + PREFERRED_PATH_HOLD_MS;
             }
         }
         *packet = {};
@@ -444,12 +444,12 @@ void XRTransportTeam::markDelivered(uint32_t destination, uint32_t packetId)
     unlock();
 }
 
-void XRTransportTeam::markCancelled(uint32_t destination, uint32_t packetId)
+void XRTransportTeam::markCancelled(uint32_t destination, uint32_t packetId, uint32_t nowMs)
 {
     lock();
     if (PacketState *packet = findPacket(destination, packetId)) {
         if (packet->lastAcceptedWasRecovery && packet->lastAccepted != XRTeamTransport::None)
-            updateQualityUnlocked(destination, packet->lastAccepted, 5, packet->lastTouchedMs);
+            updateQualityUnlocked(destination, packet->lastAccepted, 5, nowMs);
         *packet = {};
     }
     unlock();
