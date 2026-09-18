@@ -36,6 +36,9 @@
 #endif
 #include "modules/TraceRouteModule.h"
 #include "modules/WaypointModule.h"
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#include "xr/XRInternetMode.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_WAYPOINT
 #include "WaypointStore.h"
 #endif
@@ -1322,7 +1325,11 @@ void menuHandler::systemBaseMenu()
     }
     optionsEnumArray[options++] = Bluetooth;
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+    optionsArray[options] = "Communication Mode";
+#else
     optionsArray[options] = "WiFi Toggle";
+#endif
     optionsEnumArray[options++] = WiFiToggle;
 #endif
 
@@ -2672,6 +2679,41 @@ void menuHandler::wifiBaseMenu()
 
 void menuHandler::wifiToggleMenu()
 {
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+    enum optionsNumbers { Back, OffGrid, Internet };
+
+    static const char *optionsArray[] = {"Back", "Off-grid", "Internet (Wi-Fi)"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Communication Mode";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 3;
+    bannerOptions.InitialSelected =
+        meshoffgrid::xr::communicationMode() == meshoffgrid::xr::XRCommunicationMode::Internet ? Internet : OffGrid;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        using meshoffgrid::xr::XRCommunicationMode;
+        if (selected == OffGrid) {
+            if (meshoffgrid::xr::setCommunicationMode(XRCommunicationMode::OffGrid))
+                rebootAtMsec = Time::timerEndsAtMillis(DEFAULT_REBOOT_SECONDS * 1000);
+        } else if (selected == Internet) {
+            if (!meshoffgrid::xr::wifiCredentialsConfigured()) {
+                static const char *warningOptions[] = {"Back"};
+                BannerOverlayOptions warning;
+                warning.message = "Set Wi-Fi SSID first in Meshtastic settings";
+                warning.optionsArrayPtr = warningOptions;
+                warning.optionsCount = 1;
+                warning.bannerCallback = [](int) -> void {
+                    menuQueue = SystemBaseMenu;
+                    screen->runNow();
+                };
+                screen->showOverlayBanner(warning);
+                return;
+            }
+            if (meshoffgrid::xr::setCommunicationMode(XRCommunicationMode::Internet))
+                rebootAtMsec = Time::timerEndsAtMillis(DEFAULT_REBOOT_SECONDS * 1000);
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+#else
     enum optionsNumbers { Back, Wifi_disable, Wifi_enable };
 
     static const char *optionsArray[] = {"Back", "WiFi Disabled", "WiFi Enabled"};
@@ -2697,6 +2739,7 @@ void menuHandler::wifiToggleMenu()
         }
     };
     screen->showOverlayBanner(bannerOptions);
+#endif
 }
 
 void menuHandler::screenOptionsMenu()
