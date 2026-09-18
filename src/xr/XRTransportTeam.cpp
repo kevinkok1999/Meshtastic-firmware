@@ -4,18 +4,6 @@
 
 namespace meshoffgrid::xr {
 
-namespace {
-class TeamLockGuard
-{
-  public:
-    explicit TeamLockGuard(XRTransportTeam &team) : team_(team) { team_.lock(); }
-    ~TeamLockGuard() { team_.unlock(); }
-
-  private:
-    XRTransportTeam &team_;
-};
-} // namespace
-
 XRTransportTeam &XRTransportTeam::shared()
 {
     static XRTransportTeam team;
