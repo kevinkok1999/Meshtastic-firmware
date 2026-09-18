@@ -137,7 +137,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
 
     struct ActiveTx {
         bool used = false;
-        uint32_t nodeNum = 0;
+        uint32_t nodeNum = 0;        // final Meshtastic destination
+        uint32_t carrierNodeNum = 0; // XBee peer carrying toward that destination
         uint64_t destination64 = 0;
         uint32_t packetId = 0;
         uint16_t totalLength = 0;
@@ -180,7 +181,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     bool enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId, uint32_t whenMs);
     void sendHello(uint32_t nowMs);
     void serviceOutgoing(uint32_t nowMs);
-    bool prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue = false);
+    bool prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue = false,
+                         bool allowBridge = false);
     void rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs);
     CachedOutbound *findCachedOutbound(uint32_t destination, uint32_t packetId);
     void clearCachedOutbound(uint32_t destination, uint32_t packetId);
@@ -196,6 +198,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     Peer *findPeer(uint32_t nodeNum);
     const Peer *findPeer(uint32_t nodeNum) const;
     Peer *findPeerByAddress(uint64_t address64);
+    Peer *selectRecoveryPeer(uint32_t destination, uint32_t nowMs, bool allowBridge);
     Peer &rememberPeer(uint32_t nodeNum, uint64_t address64, uint32_t nowMs);
     Reassembly &getReassembly(const FrameHeader &header, uint64_t source64, uint32_t nowMs);
     void expireState(uint32_t nowMs);
