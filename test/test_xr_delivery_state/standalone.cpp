@@ -53,6 +53,20 @@ static void second_sidecar_cannot_race_active_one()
     assert(!sm.startSecondary(0x23, 4, XRDeliveryPath::XBee, 1101));
 }
 
+
+static void duplicated_primary_failure_is_idempotent()
+{
+    XRDeliveryStateMachine sm;
+    assert(sm.begin(0x25, 6, 1000));
+    assert(sm.markPrimaryFailed(0x25, 6, 1500));
+    assert(sm.markPrimaryFailed(0x25, 6, 1501));
+
+    const auto *entry = sm.find(0x25, 6);
+    assert(entry != nullptr);
+    assert(entry->phase == XRDeliveryPhase::RecoveryQueued);
+    assert(entry->primaryFailures == 1);
+}
+
 static void expiry_is_terminal()
 {
     XRDeliveryStateMachine sm;
@@ -70,6 +84,7 @@ int main()
     only_authoritative_ack_finishes_delivery();
     failed_secondary_returns_to_recovery();
     second_sidecar_cannot_race_active_one();
+    duplicated_primary_failure_is_idempotent();
     expiry_is_terminal();
     return 0;
 }
