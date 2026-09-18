@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: xr-tdeck-plus-${{ github.event.pull_request.number || github.ref }}
@@ -21,6 +22,20 @@ jobs:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
 
     steps:
+      - name: Cancel stale branch CI queue
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "Cleaning stale queued CI runs for branch: $GITHUB_HEAD_REF"
+          gh api --paginate             "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&branch=$GITHUB_HEAD_REF&per_page=100"             --jq '.workflow_runs[] | select(.name == "CI") | .id'           | sort -u           | while read -r run_id; do
+              [ -n "$run_id" ] || continue
+              echo "Cancelling stale CI run $run_id"
+              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
+            done
+
       - name: Checkout firmware branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
