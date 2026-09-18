@@ -45,7 +45,7 @@ HiddenRfSnapshot readHiddenRfSnapshot()
     snapshot.channelUtilizationPercent = static_cast<uint8_t>(utilization + 0.5f);
 
     if (router && router->getRadioIface())
-        snapshot.noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getNoiseFloor());
+        snapshot.noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getAmbientNoiseFloorDbm());
 
     // Unknown RF is treated as interference evidence only. A busy channel and
     // raised ambient noise lower the health score; neither can become a carrier.
