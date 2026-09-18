@@ -478,15 +478,14 @@ int32_t NextHopRouter::doRetransmissions()
 
                 if (!isBroadcast(p.packet->to)) {
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XBEE_XR868)
-                    // After the initial transmission plus multiple unacknowledged
-                    // LoRa retries (ESP-NOW has also had its sidecar opportunities),
-                    // admit XBee as the next fallback route. queueFallback() is
-                    // de-duplicated and only succeeds when a fresh XBee peer/gateway
-                    // is actually available.
-                    if (p.numRetransmissions == 2 && isFromUs(p.packet) && p.packet->want_ack &&
-                        meshoffgrid::xr::xrXBeeTransport) {
+                    // Seamless failover: the first retransmission deadline means the
+                    // initial delivery path produced no ACK. ESP-NOW already had its
+                    // sidecar opportunity during that first send, so admit XBee now
+                    // instead of waiting through several more LoRa retries.
+                    if (p.numRetransmissions == p.initialNumRetransmissions && isFromUs(p.packet) &&
+                        p.packet->want_ack && meshoffgrid::xr::xrXBeeTransport) {
                         if (meshoffgrid::xr::xrXBeeTransport->queueFallback(*p.packet))
-                            LOG_INFO("Escalated 0x%08x to XR XBee bridge after LoRa/ESP-NOW delivery failures", p.packet->id);
+                            LOG_INFO("Fast-failover 0x%08x to XR XBee after first missing ACK", p.packet->id);
                     }
 #endif
                     if (p.numRetransmissions == 1) {
