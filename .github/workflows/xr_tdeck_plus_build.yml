@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 concurrency:
@@ -197,7 +197,7 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_DIR=.pio/build/t-deck-ultra-xbee-internet
-          RELEASE_DIR=xr-ultra-release
+          RELEASE_DIR=xr-v5-release
           mkdir -p "$RELEASE_DIR"
 
           APP_NAME=XR-TDeck-Plus-firmware.bin
@@ -336,6 +336,26 @@ jobs:
           cat "$RELEASE_DIR/SHA256SUMS.txt"
           cat "$RELEASE_DIR/VALIDATION.json"
 
+      - name: Publish validated Version 5 release branch
+        if: success() && github.ref == 'refs/heads/xr-v5-internet-manual'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_DIR=xr-v5-release
+          PUBLISH_DIR="$(mktemp -d)"
+          git init "$PUBLISH_DIR"
+          cd "$PUBLISH_DIR"
+          git config user.name "MeshOffGridNL Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git checkout --orphan xr-v5-dual-mode-release
+          cp -R "$GITHUB_WORKSPACE/$RELEASE_DIR/." .
+          git add -A
+          git commit -m "Publish validated V5 firmware ${GITHUB_SHA}"
+          git push --force origin HEAD:refs/heads/xr-v5-dual-mode-release
+
       - name: Upload compiler diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -354,7 +374,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: MeshOffGrid-XR-V5-Dual-Mode-TDeck-Plus-${{ github.sha }}
-          path: xr-ultra-release/
+          path: xr-v5-release/
           if-no-files-found: error
           retention-days: 30
 
