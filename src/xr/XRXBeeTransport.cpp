@@ -1,4 +1,5 @@
 #include "XRXBeeTransport.h"
+#include "mesh/xbee/XBeeApiCodec.h"
 #include "XRTransportTeam.h"
 #include "XRTransportTeamStore.h"
 
