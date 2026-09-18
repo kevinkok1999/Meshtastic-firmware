@@ -41,7 +41,8 @@ def main() -> None:
     partitions_path = require_file(release / "partitions.bin")
     flash_map_path = require_file(release / "xr-flash-map.json")
     esp_manifest_path = require_file(release / "esp-web-tools-manifest.json")
-    product_manifest_path = require_file(release / "meshoffgrid-manifest.json")
+    product_manifest_path = require_file(release / "manifest.json")
+    compatibility_manifest_path = require_file(release / "meshoffgrid-manifest.json")
 
     full = full_path.read_bytes()
     app = app_path.read_bytes()
@@ -105,7 +106,11 @@ def main() -> None:
     if parts != [{"path": args.full_name, "offset": 0}]:
         raise SystemExit("ESP Web Tools manifest does not flash the canonical full image at offset 0")
 
-    product = json.loads(product_manifest_path.read_text(encoding="utf-8"))
+    product_text = product_manifest_path.read_text(encoding="utf-8")
+    compatibility_text = compatibility_manifest_path.read_text(encoding="utf-8")
+    if product_text != compatibility_text:
+        raise SystemExit("compatibility manifest differs from canonical manifest.json")
+    product = json.loads(product_text)
     required = {
         "schema": 1,
         "board": "lilygo-t-deck-plus",
@@ -120,6 +125,33 @@ def main() -> None:
     for key, expected in required.items():
         if product.get(key) != expected:
             raise SystemExit(f"MeshOffGrid manifest mismatch for {key}: {product.get(key)!r} != {expected!r}")
+
+    if product.get("channel") != "candidate":
+        raise SystemExit("unpublished release must remain on candidate channel")
+    version = str(product.get("version", ""))
+    pieces = version.split("-xr.")
+    if len(pieces) != 2 or pieces[0] != "2.8.1" or len(pieces[1]) != 7 or any(ch not in "0123456789abcdef" for ch in pieces[1].lower()):
+        raise SystemExit(f"unexpected candidate version format: {version!r}")
+    source_commit = str(product.get("sourceCommit", ""))
+    if len(source_commit) != 40 or any(ch not in "0123456789abcdef" for ch in source_commit.lower()):
+        raise SystemExit("sourceCommit is not a full Git SHA")
+    source_run_id = product.get("sourceRunId")
+    if not isinstance(source_run_id, int) or source_run_id <= 0:
+        raise SystemExit("sourceRunId must be a positive GitHub Actions run id")
+
+    mapped_images = flash_map.get("images", [])
+    mapped_roles = {entry.get("role"): entry for entry in mapped_images}
+    for role in ("bootloader", "partitions", "application", "filesystem"):
+        if role not in mapped_roles:
+            raise SystemExit(f"flash map missing required role: {role}")
+    if mapped_roles["bootloader"].get("offset") != 0:
+        raise SystemExit("flash map bootloader offset mismatch")
+    if mapped_roles["partitions"].get("offset") != PARTITION_OFFSET:
+        raise SystemExit("flash map partition-table offset mismatch")
+    if mapped_roles["application"].get("offset") != APP_OFFSET:
+        raise SystemExit("flash map application offset mismatch")
+    if mapped_roles["filesystem"].get("offset") != FILESYSTEM_OFFSET:
+        raise SystemExit("flash map filesystem offset mismatch")
 
     sums = {}
     sums_path = require_file(release / "SHA256SUMS.txt")
