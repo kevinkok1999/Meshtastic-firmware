@@ -1,4 +1,5 @@
 #include "XREspNowTransport.h"
+#include "XRTransportTeam.h"
 
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 
@@ -291,6 +292,10 @@ void XREspNowTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t
     }
     case DeliveryEventType::Acked:
     case DeliveryEventType::Naked:
+        if (event.type == DeliveryEventType::Acked)
+            XRTransportTeam::shared().markDelivered(event.peer, event.packetId);
+        else
+            XRTransportTeam::shared().markCancelled(event.peer, event.packetId);
         deferred_.markDelivered(event.packetId, event.peer);
         clearCachedOutbound(event.peer, event.packetId);
         (void)deferredStore_.service(deferred_, nowMs, true);
@@ -521,6 +526,17 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
     if (!peer || !shouldMirror(packet, *peer, nowMs))
         return false;
 
+    auto &team = XRTransportTeam::shared();
+    const uint8_t score = linkScoreFor(peer->nodeNum);
+    team.reportRoute(XRTeamTransport::EspNow, peer->nodeNum, score, true, nowMs);
+
+    if (fromDeferredQueue) {
+        if (!team.claimRecovery(XRTeamTransport::EspNow, packet.to, packet.id, nowMs))
+            return false;
+    } else if (!team.allowAssist(XRTeamTransport::EspNow, packet.to, packet.id, nowMs)) {
+        return false;
+    }
+
     ++peer->sends;
     const bool accepted = sendPacketToPeer(*peer, packet, nowMs);
     if (!accepted)
@@ -531,6 +547,9 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
             deferred_.markTransportAccepted(packet.id, packet.to, nowMs);
         else
             deferred_.markFailure(packet.id, packet.to, nowMs);
+        team.reportRecoveryResult(XRTeamTransport::EspNow, packet.to, packet.id, accepted, nowMs);
+    } else {
+        team.reportAssistResult(XRTeamTransport::EspNow, packet.to, packet.id, accepted, nowMs);
     }
 
     XRAdaptiveContext context{};
@@ -664,6 +683,7 @@ XREspNowTransport::Peer &XREspNowTransport::rememberPeer(uint32_t nodeNum, const
     std::memcpy(slot->mac, mac, sizeof(slot->mac));
     slot->rssiEwma = sameIdentity ? static_cast<int16_t>((slot->rssiEwma * 3 + rssi) / 4) : rssi;
     slot->lastSeenMs = nowMs;
+    XRTransportTeam::shared().reportRoute(XRTeamTransport::EspNow, nodeNum, linkScoreFor(nodeNum), true, nowMs);
     return *slot;
 }
 
@@ -702,8 +722,10 @@ XREspNowTransport::Reassembly &XREspNowTransport::getReassembly(const FrameHeade
 void XREspNowTransport::expireState(uint32_t nowMs)
 {
     for (auto &peer : peers_) {
-        if (peer.used && nowMs - peer.lastSeenMs > PEER_FRESH_MS)
+        if (peer.used && nowMs - peer.lastSeenMs > PEER_FRESH_MS) {
+            XRTransportTeam::shared().reportRoute(XRTeamTransport::EspNow, peer.nodeNum, 0, false, nowMs);
             peer.used = false;
+        }
     }
     for (auto &item : reassembly_) {
         if (item.used && nowMs - item.updatedMs > REASSEMBLY_TIMEOUT_MS)
