@@ -38,7 +38,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     ~XRXBeeTransport() override;
 
     RadioTxHook::PreTxAction beforeTransmit(RadioInterface *, meshtastic_MeshPacket *) override { return PRETX_SEND; }
-    void packetReleased(RadioInterface *, const meshtastic_MeshPacket *) override {}
+    void packetReleased(RadioInterface *iface, const meshtastic_MeshPacket *packet) override;
 
     // Called by Reliable/NextHop routing only after normal LoRa + ESP-NOW delivery
     // has gone unacknowledged. XBee is therefore a real fallback/bridge route,
