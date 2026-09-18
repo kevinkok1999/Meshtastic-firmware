@@ -48,6 +48,26 @@ static void unacked_assist_does_not_block_recovery_after_lora_failure()
     assert(sm.canStartSecondary(0x26, 7, XRDeliveryPath::XBee));
 }
 
+static void primary_failure_waits_for_inflight_assist()
+{
+    XRDeliveryStateMachine sm;
+    assert(sm.begin(0x27, 8, 1000));
+    assert(sm.startSecondary(0x27, 8, XRDeliveryPath::EspNow, 1050));
+
+    assert(sm.markPrimaryFailed(0x27, 8, 1060));
+    const auto *inflight = sm.find(0x27, 8);
+    assert(inflight != nullptr);
+    assert(inflight->primaryFailed);
+    assert(inflight->primaryFailures == 1);
+    assert(inflight->phase == XRDeliveryPhase::SecondaryActive);
+    assert(!sm.canStartSecondary(0x27, 8, XRDeliveryPath::XBee));
+
+    assert(sm.markCarrierResult(0x27, 8, XRDeliveryPath::EspNow, false, 1100));
+    const auto *recovery = sm.find(0x27, 8);
+    assert(recovery && recovery->phase == XRDeliveryPhase::RecoveryQueued);
+    assert(sm.canStartSecondary(0x27, 8, XRDeliveryPath::XBee));
+}
+
 static void failed_secondary_returns_to_recovery()
 {
     XRDeliveryStateMachine sm;
@@ -69,19 +89,6 @@ static void second_sidecar_cannot_race_active_one()
     assert(!sm.startSecondary(0x23, 4, XRDeliveryPath::XBee, 1101));
 }
 
-
-static void duplicated_primary_failure_is_idempotent()
-{
-    XRDeliveryStateMachine sm;
-    assert(sm.begin(0x25, 6, 1000));
-    assert(sm.markPrimaryFailed(0x25, 6, 1500));
-    assert(sm.markPrimaryFailed(0x25, 6, 1501));
-
-    const auto *entry = sm.find(0x25, 6);
-    assert(entry != nullptr);
-    assert(entry->phase == XRDeliveryPhase::RecoveryQueued);
-    assert(entry->primaryFailures == 1);
-}
 
 static void duplicate_primary_failure_is_idempotent()
 {
@@ -112,9 +119,9 @@ int main()
     carrier_success_is_not_delivery();
     only_authoritative_ack_finishes_delivery();
     unacked_assist_does_not_block_recovery_after_lora_failure();
+    primary_failure_waits_for_inflight_assist();
     failed_secondary_returns_to_recovery();
     second_sidecar_cannot_race_active_one();
-    duplicated_primary_failure_is_idempotent();
     expiry_is_terminal();
     return 0;
 }
