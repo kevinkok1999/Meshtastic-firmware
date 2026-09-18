@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: xr-flash-v2-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   xr-standalone-tests:
