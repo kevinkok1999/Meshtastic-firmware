@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build-tdeck-plus:
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 55
     env:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
@@ -189,7 +189,7 @@ jobs:
           for required in "$preferred" "$full" "$flash_map"; do
             if [ ! -s "$required" ]; then
               echo "Expected non-empty $required was not produced" >&2
-              find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+              find "$BUILD_DIR" -maxdepth 2 -type f -exec ls -lh {} \; || true
               exit 1
             fi
           done
@@ -231,7 +231,7 @@ jobs:
           SOURCE_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=7 HEAD)"
           VERSION="$BASE_VERSION-xr.$SHORT_SHA"
-          FULL_SHA="$(sha256sum "$RELEASE_DIR/$FULL_NAME" | awk '{print $1}')"
+          FULL_SHA="$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$RELEASE_DIR/$FULL_NAME")"
           python - "$RELEASE_DIR" "$FULL_NAME" "$VERSION" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
           import json
           import os
@@ -320,7 +320,18 @@ jobs:
             echo "Do not flash the app-only image at offset 0x0."
           } > "$RELEASE_DIR/FLASHING.txt"
 
-          (cd "$RELEASE_DIR" && sha256sum *.bin > SHA256SUMS.txt)
+          python - "$RELEASE_DIR" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+
+          release = pathlib.Path(sys.argv[1])
+          lines = []
+          for path in sorted(release.glob("*.bin")):
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              lines.append(f"{digest}  {path.name}")
+          (release / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
 
           python scripts/validate_xr_release.py "$RELEASE_DIR" \
             --full-name "$FULL_NAME" \
