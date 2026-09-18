@@ -30,7 +30,7 @@ jobs:
         with:
           check-mode: none
           cache: false
-          post-init: trunk fmt src/xr src/mesh/xbee src/mesh/multilink docs/xr docs/meshoffgrid test/test_xr_adaptive_intelligence test/test_xr_deferred_queue test/test_xbee_codec extra_scripts/xr_flash_bundle.py .github/workflows/xr_tdeck_plus_build.yml
+          post-init: trunk fmt src/xr src/mesh/xbee src/mesh/multilink docs/xr docs/meshoffgrid test/test_xr_adaptive_intelligence test/test_xr_deferred_queue test/test_xr_delivery_state test/test_xr_transport_team test/test_xbee_codec extra_scripts/xr_flash_bundle.py .github/workflows/xr_tdeck_plus_build.yml
 
       - name: Show formatted build workflow
         run: cat .github/workflows/xr_tdeck_plus_build.yml
@@ -40,7 +40,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
-          git add src/xr src/mesh/xbee src/mesh/multilink docs/xr docs/meshoffgrid test/test_xr_adaptive_intelligence test/test_xr_deferred_queue test/test_xbee_codec extra_scripts/xr_flash_bundle.py .github/workflows/xr_tdeck_plus_build.yml
+          git add src/xr src/mesh/xbee src/mesh/multilink docs/xr docs/meshoffgrid test/test_xr_adaptive_intelligence test/test_xr_deferred_queue test/test_xr_delivery_state test/test_xr_transport_team test/test_xbee_codec extra_scripts/xr_flash_bundle.py .github/workflows/xr_tdeck_plus_build.yml
           if git diff --cached --quiet; then
             echo "XR source files already formatted"
             exit 0
