@@ -148,11 +148,29 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_DIR=.pio/build/t-deck-ultra-xbee
-          preferred="$BUILD_DIR/firmware.bin"
           full="$BUILD_DIR/xr-full-flash.bin"
           flash_map="$BUILD_DIR/xr-flash-map.json"
 
-          for required in "$preferred" "$full" "$flash_map"; do
+          shopt -s nullglob
+          app_candidates=("$BUILD_DIR"/firmware-t-deck-ultra-xbee-*.bin)
+          fs_candidates=("$BUILD_DIR"/littlefs-t-deck-ultra-xbee-*.bin)
+          shopt -u nullglob
+
+          if [ "${#app_candidates[@]}" -ne 1 ]; then
+            echo "Expected exactly one versioned application image, found ${#app_candidates[@]}" >&2
+            find "$BUILD_DIR" -maxdepth 1 -type f -exec ls -lh {} \; || true
+            exit 1
+          fi
+          if [ "${#fs_candidates[@]}" -ne 1 ]; then
+            echo "Expected exactly one versioned LittleFS image, found ${#fs_candidates[@]}" >&2
+            find "$BUILD_DIR" -maxdepth 1 -type f -exec ls -lh {} \; || true
+            exit 1
+          fi
+
+          preferred="${app_candidates[0]}"
+          filesystem="${fs_candidates[0]}"
+
+          for required in "$preferred" "$filesystem" "$full" "$flash_map"; do
             if [ ! -s "$required" ]; then
               echo "Expected non-empty $required was not produced" >&2
               find "$BUILD_DIR" -maxdepth 2 -type f -exec ls -lh {} \; || true
@@ -161,9 +179,10 @@ jobs:
           done
 
           echo "firmware=$preferred" >> "$GITHUB_OUTPUT"
+          echo "filesystem=$filesystem" >> "$GITHUB_OUTPUT"
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "flash_map=$flash_map" >> "$GITHUB_OUTPUT"
-          ls -lh "$preferred" "$full" "$flash_map"
+          ls -lh "$preferred" "$filesystem" "$full" "$flash_map"
 
       - name: Package MeshOffGrid XR Ultra production flash bundle
         shell: bash
@@ -177,10 +196,11 @@ jobs:
           FULL_NAME=XR-TDeck-Plus-FULL-FLASH.bin
 
           cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/$APP_NAME"
+          cp "${{ steps.firmware.outputs.filesystem }}" "$RELEASE_DIR/littlefs.bin"
           cp "${{ steps.firmware.outputs.full }}" "$RELEASE_DIR/$FULL_NAME"
           cp "${{ steps.firmware.outputs.flash_map }}" "$RELEASE_DIR/xr-flash-map.json"
 
-          for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
+          for file in partitions.bin bootloader.bin boot_app0.bin; do
             if [ -s "$BUILD_DIR/$file" ]; then
               cp "$BUILD_DIR/$file" "$RELEASE_DIR/$file"
             fi

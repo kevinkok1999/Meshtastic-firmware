@@ -203,7 +203,16 @@ def build_xr_flash_bundle(source, target, build_env):
     entries.append((app_offset, app_path))
 
     build_dir = Path(build_env.subst("$BUILD_DIR")).resolve()
-    littlefs_path = build_dir / "littlefs.bin"
+
+    # Meshtastic's platformio-pre.py assigns a versioned filesystem image name
+    # (for example littlefs-t-deck-ultra-xbee-2.8.1.<sha>.bin). Resolve the
+    # actual SCons target instead of assuming PlatformIO's default littlefs.bin.
+    fs_image_name = str(build_env.subst("$ESP32_FS_IMAGE_NAME")).strip()
+    if not fs_image_name or "$ESP32_FS_IMAGE_NAME" in fs_image_name:
+        raise RuntimeError("ESP32_FS_IMAGE_NAME is unavailable; refusing to guess the LittleFS image")
+    if not fs_image_name.endswith(".bin"):
+        fs_image_name += ".bin"
+    littlefs_path = build_dir / fs_image_name
     if not littlefs_path.is_file() or littlefs_path.stat().st_size <= 0:
         raise RuntimeError(
             f"LittleFS image missing: {littlefs_path}. Run the buildfs target before the firmware build."
