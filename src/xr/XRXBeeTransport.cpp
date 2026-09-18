@@ -71,6 +71,7 @@ void XRXBeeTransport::shutdown()
     if (initialized_)
         link_.end();
     provisionState_ = ProvisionState::Idle;
+    activeTx_ = ActiveTx{};
     initialized_ = online_ = false;
     if (txQueue_) {
         vQueueDelete(txQueue_);
@@ -247,6 +248,7 @@ int32_t XRXBeeTransport::runOnce()
     }
 
     link_.poll();
+    servicePacketTx(nowMs);
 
     if (!online_) {
         const bool apiProbeTimedOut =
@@ -261,11 +263,16 @@ int32_t XRXBeeTransport::runOnce()
     }
 
     if (online_) {
-        TxPacket queued{};
-        while (txQueue_ && xQueueReceive(txQueue_, &queued, 0) == pdTRUE)
-            processTx(queued, nowMs);
+        if (!activeTx_.active) {
+            TxPacket queued{};
+            if (txQueue_ && xQueueReceive(txQueue_, &queued, 0) == pdTRUE)
+                processTx(queued, nowMs);
+        }
 
-        if (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)
+        servicePacketTx(nowMs);
+
+        const bool queueEmpty = !txQueue_ || uxQueueMessagesWaiting(txQueue_) == 0;
+        if (!activeTx_.active && queueEmpty && (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS))
             sendHello(nowMs);
     }
 
@@ -296,8 +303,11 @@ bool XRXBeeTransport::queueFallback(const meshtastic_MeshPacket &packet)
     queued.packet = packet;
     queued.packet.from = packetFrom;
 
-    if (xQueueSend(txQueue_, &queued, 0) != pdTRUE)
+    if (xQueueSend(txQueue_, &queued, 0) != pdTRUE) {
+        ++txQueueDrops_;
+        LOG_WARN("XR XBee TX queue full, drop fallback fr=0x%08x,to=0x%08x,id=0x%08x", packetFrom, packet.to, packet.id);
         return false;
+    }
 
     markFallbackQueued(packetFrom, packet.id, nowMs);
     LOG_INFO("XR XBee fallback queued fr=0x%08x,to=0x%08x,id=0x%08x", packetFrom, packet.to, packet.id);
@@ -331,6 +341,10 @@ void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPack
     if (xQueueSend(txQueue_, &queued, 0) == pdTRUE) {
         markFallbackQueued(packetFrom, packet->id, nowMs);
         LOG_INFO("XR XBee return path queued fr=0x%08x,to=0x%08x,id=0x%08x", packetFrom, packet->to, packet->id);
+    } else {
+        ++txQueueDrops_;
+        LOG_WARN("XR XBee TX queue full, drop return path fr=0x%08x,to=0x%08x,id=0x%08x", packetFrom, packet->to,
+                 packet->id);
     }
 }
 
@@ -360,7 +374,9 @@ void XRXBeeTransport::sendHello(uint32_t nowMs)
 
 void XRXBeeTransport::processTx(const TxPacket &queued, uint32_t nowMs)
 {
-    (void)sendPacket(queued.packet, nowMs);
+    if (!sendPacket(queued.packet, nowMs))
+        LOG_WARN("XR XBee could not start packet fr=0x%08x,to=0x%08x,id=0x%08x", queued.packet.from, queued.packet.to,
+                 queued.packet.id);
 }
 
 bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs)
@@ -412,43 +428,101 @@ bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t n
     if (!peer)
         return false;
 
-    const uint64_t destination = peer->address64;
-    const uint32_t checksum = checksum32(encoded.data(), totalLength);
+    if (activeTx_.active)
+        return false;
 
-    for (size_t index = 0; index < fragmentCount; ++index) {
-        const size_t offset = index * fragmentBytes;
-        const size_t length = std::min(fragmentBytes, totalLength - offset);
+    activeTx_ = ActiveTx{};
+    activeTx_.active = true;
+    activeTx_.destination64 = peer->address64;
+    activeTx_.carrierNode = router->getNodeNum();
+    activeTx_.packetFrom = working.from;
+    activeTx_.packetId = working.id;
+    activeTx_.checksum = checksum32(encoded.data(), totalLength);
+    activeTx_.totalLength = static_cast<uint16_t>(totalLength);
+    activeTx_.fragmentBytes = static_cast<uint8_t>(fragmentBytes);
+    activeTx_.fragmentCount = static_cast<uint8_t>(fragmentCount);
+    std::copy_n(encoded.data(), totalLength, activeTx_.encoded.data());
 
-        FrameHeader header{};
-        header.type = FrameType::DATA;
-        header.carrierNode = router->getNodeNum();
-        header.packetFrom = working.from;
-        header.packetId = working.id;
-        header.totalLength = static_cast<uint16_t>(totalLength);
-        header.fragmentOffset = static_cast<uint16_t>(offset);
-        header.fragmentIndex = static_cast<uint8_t>(index);
-        header.fragmentCount = static_cast<uint8_t>(fragmentCount);
-        header.fragmentLength = static_cast<uint8_t>(length);
-        header.checksum = checksum;
-
-        if (!sendFrame(destination, header, encoded.data() + offset, length))
-            return false;
-    }
-    return true;
+    servicePacketTx(nowMs);
+    return activeTx_.active;
 }
 
-bool XRXBeeTransport::sendFrame(uint64_t destination64, FrameHeader header, const uint8_t *payload, size_t payloadLength)
+void XRXBeeTransport::servicePacketTx(uint32_t nowMs)
+{
+    if (!activeTx_.active)
+        return;
+
+    if (activeTx_.inFlightFrameId) {
+        if (nowMs - activeTx_.inFlightSinceMs <= TX_STATUS_TIMEOUT_MS)
+            return;
+
+        ++txTimeouts_;
+        ++txFailures_;
+        LOG_WARN("XR XBee TX status timeout fr=0x%08x,id=0x%08x,fragment=%u/%u", activeTx_.packetFrom,
+                 activeTx_.packetId, static_cast<unsigned>(activeTx_.fragmentIndex + 1),
+                 static_cast<unsigned>(activeTx_.fragmentCount));
+        activeTx_.inFlightFrameId = 0;
+
+        if (activeTx_.retryCount < MAX_FRAGMENT_RETRIES) {
+            ++activeTx_.retryCount;
+            return;
+        }
+
+        LOG_WARN("XR XBee abort packet after TX timeout fr=0x%08x,id=0x%08x", activeTx_.packetFrom, activeTx_.packetId);
+        activeTx_ = ActiveTx{};
+        return;
+    }
+
+    if (activeTx_.fragmentIndex >= activeTx_.fragmentCount) {
+        activeTx_ = ActiveTx{};
+        return;
+    }
+
+    const size_t offset = static_cast<size_t>(activeTx_.fragmentIndex) * activeTx_.fragmentBytes;
+    const size_t length = std::min<size_t>(activeTx_.fragmentBytes, activeTx_.totalLength - offset);
+
+    FrameHeader header{};
+    header.type = FrameType::DATA;
+    header.carrierNode = activeTx_.carrierNode;
+    header.packetFrom = activeTx_.packetFrom;
+    header.packetId = activeTx_.packetId;
+    header.totalLength = activeTx_.totalLength;
+    header.fragmentOffset = static_cast<uint16_t>(offset);
+    header.fragmentIndex = activeTx_.fragmentIndex;
+    header.fragmentCount = activeTx_.fragmentCount;
+    header.fragmentLength = static_cast<uint8_t>(length);
+    header.checksum = activeTx_.checksum;
+
+    const uint8_t frameId = sendFrame(activeTx_.destination64, header, activeTx_.encoded.data() + offset, length);
+    if (!frameId) {
+        ++txFailures_;
+        LOG_WARN("XR XBee UART rejected fragment fr=0x%08x,id=0x%08x,fragment=%u/%u", activeTx_.packetFrom,
+                 activeTx_.packetId, static_cast<unsigned>(activeTx_.fragmentIndex + 1),
+                 static_cast<unsigned>(activeTx_.fragmentCount));
+        if (activeTx_.retryCount < MAX_FRAGMENT_RETRIES) {
+            ++activeTx_.retryCount;
+            return;
+        }
+        activeTx_ = ActiveTx{};
+        return;
+    }
+
+    activeTx_.inFlightFrameId = frameId;
+    activeTx_.inFlightSinceMs = nowMs;
+}
+
+uint8_t XRXBeeTransport::sendFrame(uint64_t destination64, FrameHeader header, const uint8_t *payload, size_t payloadLength)
 {
     if (!initialized_ || payloadLength > MAX_FRAGMENT_BYTES ||
         sizeof(FrameHeader) + payloadLength > std::min<size_t>(npLimit_, meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD))
-        return false;
+        return 0;
 
     std::array<uint8_t, meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD> carrier{};
     std::memcpy(carrier.data(), &header, sizeof(header));
     if (payloadLength && payload)
         std::memcpy(carrier.data() + sizeof(header), payload, payloadLength);
 
-    return link_.send(destination64, carrier.data(), sizeof(header) + payloadLength) != 0;
+    return link_.send(destination64, carrier.data(), sizeof(header) + payloadLength);
 }
 
 void XRXBeeTransport::processCarrier(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint32_t nowMs)
@@ -727,15 +801,51 @@ void XRXBeeTransport::onReceive(uint64_t source64, const uint8_t *payload, size_
         instance_->processCarrier(source64, payload, payloadLength, Time::getMillis());
 }
 
-void XRXBeeTransport::onTxStatus(uint8_t, uint8_t deliveryStatus, uint8_t, uint8_t)
+void XRXBeeTransport::onTxStatus(uint8_t frameId, uint8_t deliveryStatus, uint8_t retryCount, uint8_t discoveryStatus)
 {
     if (!instance_)
         return;
-    instance_->online_ = true;
-    if (deliveryStatus == 0x00)
-        ++instance_->txSuccess_;
-    else
-        ++instance_->txFailures_;
+
+    auto &self = *instance_;
+    self.online_ = true;
+
+    const bool matchesActive =
+        self.activeTx_.active && self.activeTx_.inFlightFrameId && self.activeTx_.inFlightFrameId == frameId;
+
+    if (deliveryStatus == 0x00) {
+        ++self.txSuccess_;
+        if (matchesActive) {
+            self.activeTx_.inFlightFrameId = 0;
+            self.activeTx_.retryCount = 0;
+            ++self.activeTx_.fragmentIndex;
+            if (self.activeTx_.fragmentIndex >= self.activeTx_.fragmentCount) {
+                LOG_INFO("XR XBee packet RF-complete fr=0x%08x,id=0x%08x,fragments=%u", self.activeTx_.packetFrom,
+                         self.activeTx_.packetId, static_cast<unsigned>(self.activeTx_.fragmentCount));
+                self.activeTx_ = ActiveTx{};
+            }
+        }
+        return;
+    }
+
+    ++self.txFailures_;
+    LOG_WARN("XR XBee TX failed status=0x%02x retries=%u discovery=0x%02x frame=%u", deliveryStatus,
+             static_cast<unsigned>(retryCount), discoveryStatus, static_cast<unsigned>(frameId));
+
+    if (!matchesActive)
+        return;
+
+    self.activeTx_.inFlightFrameId = 0;
+    if (self.activeTx_.retryCount < MAX_FRAGMENT_RETRIES) {
+        ++self.activeTx_.retryCount;
+        LOG_INFO("XR XBee retry fragment fr=0x%08x,id=0x%08x,fragment=%u/%u", self.activeTx_.packetFrom,
+                 self.activeTx_.packetId, static_cast<unsigned>(self.activeTx_.fragmentIndex + 1),
+                 static_cast<unsigned>(self.activeTx_.fragmentCount));
+        return;
+    }
+
+    LOG_WARN("XR XBee abort packet after RF failure fr=0x%08x,id=0x%08x", self.activeTx_.packetFrom,
+             self.activeTx_.packetId);
+    self.activeTx_ = ActiveTx{};
 }
 
 void XRXBeeTransport::onModemStatus(uint8_t)
@@ -745,6 +855,12 @@ void XRXBeeTransport::onModemStatus(uint8_t)
 
     // A modem-status frame can indicate a reset/rejoin. Re-validate the
     // runtime payload limit before XBee is admitted as an active route again.
+    if (instance_->activeTx_.active) {
+        ++instance_->txFailures_;
+        LOG_WARN("XR XBee modem reset/rejoin aborted active packet fr=0x%08x,id=0x%08x", instance_->activeTx_.packetFrom,
+                 instance_->activeTx_.packetId);
+        instance_->activeTx_ = ActiveTx{};
+    }
     instance_->online_ = false;
     instance_->lastProbeMs_ = 0;
 }

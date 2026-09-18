@@ -76,6 +76,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     static constexpr uint32_t FACTORY_GUARD_MS = 1100u;
     static constexpr uint32_t FACTORY_COMMAND_TIMEOUT_MS = 1200u;
     static constexpr uint32_t FACTORY_BAUD = 9600u;
+    static constexpr uint32_t TX_STATUS_TIMEOUT_MS = 15u * 1000u;
+    static constexpr uint8_t MAX_FRAGMENT_RETRIES = 1;
     static constexpr size_t MAX_PACKET_BYTES = meshtastic_MeshPacket_size;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
@@ -112,6 +114,23 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
 
     struct TxPacket {
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
+    };
+
+    struct ActiveTx {
+        bool active = false;
+        std::array<uint8_t, MAX_PACKET_BYTES> encoded{};
+        uint64_t destination64 = 0;
+        uint32_t carrierNode = 0;
+        uint32_t packetFrom = 0;
+        uint32_t packetId = 0;
+        uint32_t checksum = 0;
+        uint16_t totalLength = 0;
+        uint8_t fragmentBytes = 0;
+        uint8_t fragmentCount = 0;
+        uint8_t fragmentIndex = 0;
+        uint8_t inFlightFrameId = 0;
+        uint8_t retryCount = 0;
+        uint32_t inFlightSinceMs = 0;
     };
 
     struct Peer {
@@ -155,6 +174,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     std::array<Reassembly, MAX_REASSEMBLY> reassembly_{};
     std::array<RecentIngress, MAX_RECENT_INGRESS> ingress_{};
     std::array<RecentFallback, MAX_RECENT_FALLBACK> fallbackHistory_{};
+    ActiveTx activeTx_{};
 
     bool initialized_ = false;
     bool initAttempted_ = false;
@@ -164,6 +184,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     uint32_t lastProbeMs_ = 0;
     uint32_t txSuccess_ = 0;
     uint32_t txFailures_ = 0;
+    uint32_t txQueueDrops_ = 0;
+    uint32_t txTimeouts_ = 0;
     ProvisionState provisionState_ = ProvisionState::Idle;
     uint32_t provisionDeadlineMs_ = 0;
     uint32_t lastProvisionAttemptMs_ = 0;
@@ -180,7 +202,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     void sendHello(uint32_t nowMs);
     void processTx(const TxPacket &queued, uint32_t nowMs);
     bool sendPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs);
-    bool sendFrame(uint64_t destination64, FrameHeader header, const uint8_t *payload, size_t payloadLength);
+    void servicePacketTx(uint32_t nowMs);
+    uint8_t sendFrame(uint64_t destination64, FrameHeader header, const uint8_t *payload, size_t payloadLength);
     void processCarrier(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint32_t nowMs);
     void processData(uint64_t source64, const FrameHeader &header, const uint8_t *payload, uint32_t nowMs);
 
