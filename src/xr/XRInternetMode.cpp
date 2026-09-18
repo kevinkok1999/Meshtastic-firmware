@@ -35,7 +35,6 @@ static void setMqttChannelFlags(bool enabled)
         channel.settings.downlink_enabled = enabled;
         channels.setChannel(channel);
     }
-    channels.onConfigChanged();
 }
 
 bool setCommunicationMode(XRCommunicationMode mode)
