@@ -343,7 +343,22 @@ void XREspNowTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t
         break;
     }
     case DeliveryEventType::Acked:
-    case DeliveryEventType::Naked:
+    case DeliveryEventType::Naked: {
+        CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
+        if (cached && cached->adaptivePlanValid) {
+            XRAdaptiveOutcome finalOutcome{};
+            if (event.type == DeliveryEventType::Acked) {
+                finalOutcome.delivered = true;
+                finalOutcome.acked = true;
+            } else {
+                finalOutcome.transportFailed = true;
+            }
+            const uint32_t elapsed = nowMs - cached->adaptiveAttemptMs;
+            finalOutcome.latencyMs = static_cast<uint16_t>(std::min<uint32_t>(elapsed, UINT16_MAX));
+            coordinator_.report(cached->adaptivePlan, finalOutcome, nowMs);
+            cached->adaptivePlanValid = false;
+        }
+
         if (event.type == DeliveryEventType::Acked)
             XRTransportTeam::shared().markDelivered(event.peer, event.packetId, nowMs);
         else
@@ -352,6 +367,7 @@ void XREspNowTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t
         clearCachedOutbound(event.peer, event.packetId);
         (void)deferredStore_.service(deferred_, nowMs, true);
         break;
+    }
     }
 }
 
@@ -615,6 +631,7 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
     const HiddenRfSnapshot rf = readHiddenRfSnapshot();
     XRAdaptiveContext context{};
     context.espNowLinkScore = linkScoreFor(peer->nodeNum);
+    context.rfLinkScore = context.espNowLinkScore;
     context.channelHealthScore = rf.channelHealthScore;
     context.batteryPercent = rf.batteryPercent;
     context.peerSeenRecently = true;
@@ -627,10 +644,27 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
     capabilities.espNowPrivacyApproved = true;
 
     const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, packet.id);
-    XRAdaptiveOutcome outcome{};
-    outcome.transportAccepted = accepted;
-    outcome.transportFailed = !accepted;
-    coordinator_.report(plan, outcome, nowMs);
+
+    CachedOutbound *cached = findCachedOutbound(packet.to, packet.id);
+    if (cached && packet.want_ack) {
+        cached->adaptivePlan = plan;
+        cached->adaptivePlanValid = true;
+        cached->adaptiveAttemptMs = nowMs;
+
+        // A local carrier failure is definitive enough to learn immediately.
+        // A local success is not: wait for the real end-to-end Meshtastic ACK.
+        if (!accepted) {
+            XRAdaptiveOutcome outcome{};
+            outcome.transportFailed = true;
+            coordinator_.report(plan, outcome, nowMs);
+            cached->adaptivePlanValid = false;
+        }
+    } else {
+        XRAdaptiveOutcome outcome{};
+        outcome.transportAccepted = accepted;
+        outcome.transportFailed = !accepted;
+        coordinator_.report(plan, outcome, nowMs);
+    }
     return accepted;
 }
 
