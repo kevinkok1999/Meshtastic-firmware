@@ -12,6 +12,7 @@
 #include "configuration.h"
 
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <algorithm>
 #include <cstring>
 #include <pb_decode.h>
@@ -77,6 +78,64 @@ constexpr UBaseType_t RX_QUEUE_DEPTH = 8;
 constexpr UBaseType_t TX_QUEUE_DEPTH = 4;
 constexpr UBaseType_t TX_STATUS_QUEUE_DEPTH = 4;
 constexpr uint32_t SERVICE_INTERVAL_MS = 50;
+
+#if defined(MESHOFFGRID_ENABLE_ESPNOW_LR)
+constexpr uint8_t HELLO_CAPS_VERSION = 1;
+constexpr uint8_t HELLO_CAP_ESPNOW_LR = 0x01;
+bool espNowLongRangeEnabled = false;
+
+#pragma pack(push, 1)
+struct HelloCapabilities {
+    uint8_t version = HELLO_CAPS_VERSION;
+    uint8_t flags = 0;
+};
+#pragma pack(pop)
+
+bool enableEspNowLongRangeProtocol()
+{
+    uint8_t protocols = 0;
+    const esp_err_t getResult = esp_wifi_get_protocol(WIFI_IF_STA, &protocols);
+    if (getResult != ESP_OK) {
+        LOG_WARN("XR ESP-NOW LR could not read Wi-Fi protocol mask: %d", static_cast<int>(getResult));
+        return false;
+    }
+
+    const uint8_t desired = static_cast<uint8_t>(protocols | WIFI_PROTOCOL_LR);
+    const esp_err_t setResult = esp_wifi_set_protocol(WIFI_IF_STA, desired);
+    if (setResult != ESP_OK) {
+        LOG_WARN("XR ESP-NOW LR protocol enable failed: %d; standard ESP-NOW remains available",
+                 static_cast<int>(setResult));
+        return false;
+    }
+
+#if defined(MESHOFFGRID_RANGE_FIRST)
+    const esp_err_t psResult = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (psResult != ESP_OK)
+        LOG_WARN("XR range-first could not disable Wi-Fi power save: %d", static_cast<int>(psResult));
+#endif
+
+    return true;
+}
+
+bool configureEspNowPeerRate(const uint8_t mac[6], bool longRange)
+{
+    if (!mac)
+        return false;
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 2, 0)
+    esp_now_rate_config_t rate{};
+    rate.phymode = longRange ? WIFI_PHY_MODE_LR : WIFI_PHY_MODE_11B;
+    rate.rate = longRange ? WIFI_PHY_RATE_LORA_250K : WIFI_PHY_RATE_1M_L;
+    rate.ersu = false;
+    rate.dcm = false;
+    return esp_now_set_peer_rate_config(mac, &rate) == ESP_OK;
+#else
+    (void)mac;
+    return esp_wifi_config_espnow_rate(WIFI_IF_STA,
+                                       longRange ? WIFI_PHY_RATE_LORA_250K : WIFI_PHY_RATE_1M_L) == ESP_OK;
+#endif
+}
+#endif
 
 bool macEqual(const uint8_t a[6], const uint8_t b[6])
 {
@@ -146,6 +205,14 @@ bool XREspNowTransport::initialize()
         }
     }
 
+#if defined(MESHOFFGRID_ENABLE_ESPNOW_LR)
+    espNowLongRangeEnabled = enableEspNowLongRangeProtocol();
+    if (espNowLongRangeEnabled)
+        LOG_INFO("XR ESP-NOW Long Range enabled (BGN+LR, 250 kbps for LR-capable XR peers)");
+    else
+        LOG_WARN("XR ESP-NOW Long Range unavailable; continuing with standard ESP-NOW");
+#endif
+
     const esp_err_t initResult = esp_now_init();
     if (initResult != ESP_OK) {
         LOG_ERROR("XR ESP-NOW init failed: %d", static_cast<int>(initResult));
@@ -179,7 +246,12 @@ bool XREspNowTransport::initialize()
     (void)XRTransportTeamStore::shared().loadOnce(XRTransportTeam::shared(), nowMs);
     initialized_ = true;
     lastHelloMs_ = 0;
+#if defined(MESHOFFGRID_ENABLE_ESPNOW_LR)
+    LOG_INFO("XR ESP-NOW sidecar ready (range-first=%s; LoRa remains primary/fallback)",
+             espNowLongRangeEnabled ? "LR-250K" : "standard");
+#else
     LOG_INFO("XR ESP-NOW sidecar ready (LoRa remains primary/fallback)");
+#endif
     return true;
 }
 
@@ -460,8 +532,13 @@ uint8_t XREspNowTransport::linkScoreFor(uint32_t nodeNum) const
     if (!peer)
         return 0;
 
-    int score = (static_cast<int>(peer->rssiEwma) + 100) * 2;
+    // LR peers stay useful deeper into the weak-signal region. This is a
+    // routing score, not a claimed receiver-sensitivity threshold.
+    const int rssiFloor = peer->lrCapable ? -110 : -100;
+    int score = (static_cast<int>(peer->rssiEwma) - rssiFloor) * 2;
     score = std::clamp(score, 0, 100);
+    if (peer->lrCapable && peer->rssiEwma > -120)
+        score = std::max(score, 5);
     if (peer->sends) {
         const int failurePenalty = (100 * peer->sendFailures / peer->sends) / 2;
         score -= failurePenalty;
@@ -480,8 +557,31 @@ void XREspNowTransport::sendHello(uint32_t nowMs)
     if (!header.fromNode)
         return;
 
+#if defined(MESHOFFGRID_ENABLE_ESPNOW_LR)
+    HelloCapabilities capabilities{};
+    if (espNowLongRangeEnabled)
+        capabilities.flags |= HELLO_CAP_ESPNOW_LR;
+
+    // Send one compatibility beacon at the normal 1 Mbps rate so older XR
+    // builds can still discover us at ordinary ESP-NOW range.
+    (void)configureEspNowPeerRate(BROADCAST_MAC, false);
+    const bool standardSent =
+        sendFrame(BROADCAST_MAC, header, reinterpret_cast<const uint8_t *>(&capabilities), sizeof(capabilities));
+
+    // Then send the same capability beacon at Espressif LR 250 kbps. New
+    // range-first peers can discover each other beyond normal ESP-NOW range.
+    bool longRangeSent = false;
+    if (espNowLongRangeEnabled && configureEspNowPeerRate(BROADCAST_MAC, true)) {
+        longRangeSent =
+            sendFrame(BROADCAST_MAC, header, reinterpret_cast<const uint8_t *>(&capabilities), sizeof(capabilities));
+    }
+
+    if (standardSent || longRangeSent)
+        lastHelloMs_ = nowMs;
+#else
     if (sendFrame(BROADCAST_MAC, header, nullptr, 0))
         lastHelloMs_ = nowMs;
+#endif
 }
 
 void XREspNowTransport::processRx(const RxFrame &frame, uint32_t nowMs)
@@ -516,8 +616,33 @@ void XREspNowTransport::processHello(const FrameHeader &header, const RxFrame &f
             return;
     }
 
-    rememberPeer(header.fromNode, frame.mac, frame.rssi, nowMs);
-    (void)addEspNowPeerIfNeeded(frame.mac);
+    bool peerAdvertisesLongRange = false;
+#if defined(MESHOFFGRID_ENABLE_ESPNOW_LR)
+    if (frame.length >= sizeof(FrameHeader) + sizeof(HelloCapabilities)) {
+        HelloCapabilities capabilities{};
+        std::memcpy(&capabilities, frame.bytes + sizeof(FrameHeader), sizeof(capabilities));
+        peerAdvertisesLongRange =
+            capabilities.version == HELLO_CAPS_VERSION && (capabilities.flags & HELLO_CAP_ESPNOW_LR) != 0;
+    }
+#endif
+
+    Peer &peer = rememberPeer(header.fromNode, frame.mac, frame.rssi, nowMs);
+    if (!addEspNowPeerIfNeeded(frame.mac))
+        return;
+
+#if defined(MESHOFFGRID_ENABLE_ESPNOW_LR)
+    const bool useLongRange = espNowLongRangeEnabled && peerAdvertisesLongRange;
+    if (configureEspNowPeerRate(frame.mac, useLongRange)) {
+        peer.lrCapable = useLongRange;
+    } else {
+        peer.lrCapable = false;
+        (void)configureEspNowPeerRate(frame.mac, false);
+    }
+    XRTransportTeam::shared().reportRoute(XRTeamTransport::EspNow, header.fromNode, linkScoreFor(header.fromNode), true,
+                                          nowMs);
+    LOG_DEBUG("XR ESP-NOW peer 0x%08x mode=%s RSSI=%d", header.fromNode, peer.lrCapable ? "LR-250K" : "1M",
+              static_cast<int>(peer.rssiEwma));
+#endif
 }
 
 void XREspNowTransport::processData(const FrameHeader &header, const RxFrame &frame, uint32_t nowMs)
@@ -709,7 +834,11 @@ bool XREspNowTransport::sendPacketToPeer(const Peer &peer, const meshtastic_Mesh
         header.fragmentLength = static_cast<uint16_t>(length);
         header.checksum = checksum;
 
-        if (!sendFrame(peer.mac, header, encoded.data() + offset, length))
+        const uint8_t maxAttempts = peer.lrCapable ? 2 : 1;
+        bool sent = false;
+        for (uint8_t attempt = 0; attempt < maxAttempts && !sent; ++attempt)
+            sent = sendFrame(peer.mac, header, encoded.data() + offset, length);
+        if (!sent)
             return false;
     }
     return true;

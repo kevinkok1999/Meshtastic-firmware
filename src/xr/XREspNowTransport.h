@@ -128,6 +128,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         uint16_t sends = 0;
         uint16_t sendFailures = 0;
         uint32_t lastSeenMs = 0;
+        bool lrCapable = false;
     };
 
     struct Reassembly {
