@@ -94,6 +94,12 @@ bool XRXBeeTransport::initialize()
     if (initialized_)
         return true;
 
+    if (MESHOFFGRID_XBEE_RX_PIN < 0 || MESHOFFGRID_XBEE_TX_PIN < 0 ||
+        MESHOFFGRID_XBEE_RX_PIN == MESHOFFGRID_XBEE_TX_PIN) {
+        LOG_INFO("XR XBee compiled but inactive: configure dedicated RX/TX pins");
+        return false;
+    }
+
     if (!txQueue_)
         txQueue_ = xQueueCreate(TX_QUEUE_DEPTH, sizeof(TxPacket));
     if (!deliveryEventQueue_)
@@ -113,15 +119,21 @@ bool XRXBeeTransport::initialize()
         return false;
     }
 
-    link_.queryModuleInfo();
-    lastInfoQueryMs_ = Time::getMillis();
+    initialized_ = true;
+    online_ = false;
+    provisionState_ = ProvisionState::Idle;
+    lastProbeMs_ = 0;
+    lastProvisionAttemptMs_ = 0;
+
+    const uint32_t nowMs = Time::getMillis();
+    probeModule(nowMs);
+    lastInfoQueryMs_ = nowMs;
     coordinator_.begin();
 
     if (!deferredStore_.load(deferred_, lastInfoQueryMs_))
         LOG_WARN("XR XBee deferred queue could not be restored; starting with current RAM state");
 
-    initialized_ = true;
-    LOG_INFO("XR XBee sidecar initialized; LoRa remains available");
+    LOG_INFO("XR XBee UART ready; probing XR868 API mode while LoRa/ESP-NOW remain available");
     return true;
 }
 
@@ -129,9 +141,14 @@ void XRXBeeTransport::shutdown()
 {
     if (initialized_) {
         (void)deferredStore_.service(deferred_, Time::getMillis(), true);
-        link_.end();
+        if (provisionState_ != ProvisionState::Idle)
+            serial_.end();
+        else
+            link_.end();
         initialized_ = false;
     }
+    online_ = false;
+    provisionState_ = ProvisionState::Idle;
     if (txQueue_) {
         vQueueDelete(txQueue_);
         txQueue_ = nullptr;
@@ -157,8 +174,29 @@ int32_t XRXBeeTransport::runOnce()
 
     const uint32_t nowMs = Time::getMillis();
     reportHiddenRfEnvironment(nowMs);
+
+    if (provisionState_ != ProvisionState::Idle) {
+        serviceFactoryProvisioning(nowMs);
+        expireState(nowMs);
+        (void)deferredStore_.service(deferred_, nowMs);
+        coordinator_.service(nowMs);
+        return SERVICE_INTERVAL_MS;
+    }
+
     link_.poll();
     drainDeliveryEvents(nowMs);
+
+    if (!online_) {
+        const bool apiProbeTimedOut =
+            lastProbeMs_ && (nowMs - lastProbeMs_ >= FACTORY_PROVISION_AFTER_MS);
+        const bool provisionRetryDue =
+            !lastProvisionAttemptMs_ || (nowMs - lastProvisionAttemptMs_ >= FACTORY_PROVISION_RETRY_MS);
+
+        if (apiProbeTimedOut && provisionRetryDue)
+            startFactoryProvisioning(nowMs);
+        else if (!lastProbeMs_ || nowMs - lastProbeMs_ >= PROBE_INTERVAL_MS)
+            probeModule(nowMs);
+    }
 
     deferred_.expire(nowMs);
     expireOutboundCache(nowMs);
@@ -168,11 +206,13 @@ int32_t XRXBeeTransport::runOnce()
         lastInfoQueryMs_ = nowMs;
     }
 
-    serviceOutgoing(nowMs);
+    if (online_) {
+        serviceOutgoing(nowMs);
 
-    if (!activeTx_.used && coexistence_.canUseSecondary(nowMs) &&
-        (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)) {
-        sendHello(nowMs);
+        if (!activeTx_.used && coexistence_.canUseSecondary(nowMs) &&
+            (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)) {
+            sendHello(nowMs);
+        }
     }
 
     expireState(nowMs);
@@ -193,7 +233,7 @@ RadioTxHook::PreTxAction XRXBeeTransport::beforeTransmit(RadioInterface *, mesht
     coexistence_.onLoRaTxStart(nowMs);
 
     mirrorCandidate_ = {};
-    if (initialized_ && packet && eligibleForMirror(*packet)) {
+    if (ready() && packet && eligibleForMirror(*packet)) {
         // Only copy into the bounded handoff record here. Cache/store mutations
         // are performed by the XBee OSThread after packetReleased() queues it.
         mirrorCandidate_.valid = true;
