@@ -17,6 +17,18 @@
 #include <pb_decode.h>
 #include <pb_encode.h>
 
+// GPIO47/48 are the T-Deck Plus ES7210 microphone clock pins according to
+// LILYGO's hardware documentation. Production firmware may intentionally reuse
+// them for XR868 UART only when that trade-off is made explicit in the build.
+#if defined(MESHOFFGRID_XBEE_REUSES_ES7210_PINS)
+static_assert(MESHOFFGRID_XBEE_RX_PIN == 47 && MESHOFFGRID_XBEE_TX_PIN == 48,
+              "XR868 ES7210 pin-reuse profile must remain RX=47/TX=48");
+#else
+static_assert((MESHOFFGRID_XBEE_RX_PIN != 47 && MESHOFFGRID_XBEE_RX_PIN != 48 &&
+               MESHOFFGRID_XBEE_TX_PIN != 47 && MESHOFFGRID_XBEE_TX_PIN != 48),
+              "GPIO47/48 are ES7210 microphone clock pins; define MESHOFFGRID_XBEE_REUSES_ES7210_PINS only for an intentional profile");
+#endif
+
 namespace meshoffgrid::xr {
 
 XRXBeeTransport *XRXBeeTransport::instance_ = nullptr;
