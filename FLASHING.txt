@@ -1,0 +1,26 @@
+XR T-Deck Plus — first-test flash package
+
+Easiest clean first installation (ESP32-S3, 16 MB layout):
+1. Optional clean start (ERASES settings): esptool.py --chip esp32s3 erase_flash
+2. Flash the single complete image:
+   esptool.py --chip esp32s3 write_flash 0x000000 XR-TDeck-Plus-FULL-FLASH.bin
+
+Alternative first installation using separate images:
+   esptool.py --chip esp32s3 write_flash 0x000000 XR-TDeck-Plus-factory.bin
+   esptool.py --chip esp32s3 write_flash 0xc90000 XR-TDeck-Plus-littlefs.bin
+
+Firmware-only update on a device already using this 16 MB partition layout:
+   esptool.py --chip esp32s3 write_flash 0x010000 XR-TDeck-Plus-firmware.bin
+
+XBee XR868 profile in this build:
+- UART2
+- T-Deck GPIO48 (TX) -> XBee DIN/RX
+- T-Deck GPIO47 (RX) <- XBee DOUT/TX
+- Common GND
+- Bare XR 868 UART I/O is 3.3 V-class; use an appropriate regulated supply/carrier.
+- Firmware first probes AP=1 at 115200 baud.
+- A factory-default XR 868 (AP=0, 9600 baud) is automatically provisioned once detected:
+  AP=1, AO=0, BD=7 (115200), then saved with WR.
+- If no XBee answers either path, LoRa/ESP-NOW continue without XBee.
+- A previously customized XBee with non-default baud/guard/command settings should be reset to factory defaults or
+  configured in XCTU for AP=1, AO=0, 115200 baud.

@@ -1,0 +1,5 @@
+source_commit=7facc4e993c92ad21cff3429c9fc7f87a6b2643b
+workflow_run=35343153969
+target=t-deck-tft
+filesystem_offset=0xc90000
+platformio=6.2.0

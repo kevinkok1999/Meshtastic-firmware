@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "product": "MeshOffGridNL T-Deck Plus",
+  "board": "lilygo-t-deck-plus",
+  "chip": "ESP32-S3",
+  "flashSizeBytes": 16777216,
+  "version": "2.8.1-xr.7facc4e",
+  "sourceCommit": "7facc4e993c92ad21cff3429c9fc7f87a6b2643b",
+  "sourceRunId": 35343153969,
+  "file": "XR-TDeck-Plus-FULL-FLASH.bin",
+  "offset": 0,
+  "sha256": "6c2c5a6814ea76b28d648c39d3d4b5a8b901d8b9ee0e28d57f66989ba85d9c42",
+  "size": 16711680,
+  "filesystemOffset": 13172736
+}
