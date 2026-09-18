@@ -45,6 +45,7 @@ class XRDeliveryStateMachine
         uint8_t attemptedMask = 0;
         uint8_t acceptedMask = 0;
         uint8_t primaryFailures = 0;
+        bool primaryFailed = false;
         uint8_t secondaryAttempts = 0;
         uint32_t createdAtMs = 0;
         uint32_t updatedAtMs = 0;
