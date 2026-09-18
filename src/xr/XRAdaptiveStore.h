@@ -12,7 +12,7 @@ class XRAdaptiveStore {
     // Loads only aggregate learning state. No messages, SSIDs, peer names, or
     // precise locations are stored in this model.
     static bool load(XRAdaptiveIntelligence &engine);
-    static bool loadAt(XRAdaptiveIntelligence &engine, const char *path);
+    static bool loadAt(XRAdaptiveIntelligence &engine, const char *path, const char *tempPath = nullptr);
 
     // Persists a validated fixed-size snapshot. When protected storage is
     // active, the existing Meshtastic encrypted-storage path is used.
