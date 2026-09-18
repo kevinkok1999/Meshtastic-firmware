@@ -80,6 +80,30 @@ class XRTransportTeam
 
     XRTeamTransport preferredTransport(uint32_t destination, uint32_t nowMs);
 
+    // Only compact aggregate path quality is persisted. Packet payloads, peer
+    // names/addresses and RF observations are intentionally excluded.
+    struct LearningRecord {
+        bool used = false;
+        uint32_t destination = 0;
+        int16_t espNowQuality = 50;
+        int16_t xbeeQuality = 50;
+        uint16_t espNowSamples = 0;
+        uint16_t xbeeSamples = 0;
+    };
+
+    struct LearningSnapshot {
+        uint32_t magic = 0x5852544c; // "XRTL"
+        uint16_t version = 1;
+        uint16_t recordCount = MAX_DESTINATIONS;
+        std::array<LearningRecord, MAX_DESTINATIONS> records{};
+        uint32_t checksum = 0;
+    };
+
+    LearningSnapshot learningSnapshot() const;
+    bool restoreLearning(const LearningSnapshot &snapshot, uint32_t nowMs);
+    bool learningDirty() const { return learningDirty_; }
+    void markLearningPersisted() { learningDirty_ = false; }
+
     // Primarily for deterministic native tests.
     void reset();
 
@@ -140,6 +164,7 @@ class XRTransportTeam
     XRDeliveryStateMachine delivery_{};
     std::array<DestinationMemory, MAX_DESTINATIONS> destinations_{};
     EnvironmentState environment_{};
+    bool learningDirty_ = false;
     std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
 
     void lock();
@@ -159,6 +184,7 @@ class XRTransportTeam
     static bool deadlinePending(uint32_t nowMs, uint32_t deadlineMs);
     static uint32_t &cooldownFor(PacketState &packet, XRTeamTransport transport);
     static XRDeliveryPath deliveryPathFor(XRTeamTransport transport);
+    static uint32_t checksumLearningSnapshot(const LearningSnapshot &snapshot);
     static int clampScore(int value, int minValue, int maxValue);
 };
 
