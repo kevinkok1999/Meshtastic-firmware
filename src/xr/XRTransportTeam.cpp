@@ -232,12 +232,10 @@ XRTeamTransport XRTransportTeam::selectBestUnlocked(uint32_t destination, uint32
 
         // Raw radio score is only one signal. Add bounded, per-destination
         // experience plus hysteresis so rapidly changing RF does not make the
-        // device thrash between transports.
+        // device thrash between transports. Energy is deliberately NOT part of
+        // this quality score; battery is allowed to break ties only later.
         int effective = static_cast<int>(route.score);
         effective += (static_cast<int>(qualityForUnlocked(destination, route.transport)) - 50) / 5;
-
-        if (route.transport == XRTeamTransport::EspNow)
-            effective += 2; // lower-cost tie-break for a strong local direct path
         if (route.kind == XRTeamRouteKind::Direct)
             effective += 3;
         else
@@ -252,9 +250,6 @@ XRTeamTransport XRTransportTeam::selectBestUnlocked(uint32_t destination, uint32
         // 868 MHz congestion/noise makes a direct sidecar route comparatively
         // more attractive.
         if (environment_.reportedAtMs != 0 && (nowMs - environment_.reportedAtMs) <= ENVIRONMENT_TTL_MS) {
-            if (environment_.batteryPercent < 15)
-                effective -= route.transport == XRTeamTransport::XBee ? 10 : 5;
-
             if (route.kind == XRTeamRouteKind::Bridge) {
                 if (environment_.channelUtilizationPercent >= 35)
                     effective -= 6;
@@ -268,6 +263,36 @@ XRTeamTransport XRTransportTeam::selectBestUnlocked(uint32_t destination, uint32
 
         effective = clampScore(effective, 0, 120);
 
+        const bool lowBattery = environment_.reportedAtMs != 0 &&
+                                (nowMs - environment_.reportedAtMs) <= ENVIRONMENT_TTL_MS &&
+                                environment_.batteryPercent < 15;
+
+        if (best == XRTeamTransport::None || effective > bestScore + QUALITY_EQUIVALENCE_MARGIN) {
+            bestScore = effective;
+            best = route.transport;
+            continue;
+        }
+
+        if (bestScore > effective + QUALITY_EQUIVALENCE_MARGIN)
+            continue;
+
+        // Within a tiny quality band the paths are treated as effectively
+        // equivalent. Only here may low-battery mode prefer the lower-cost
+        // integrated ESP-NOW radio over the optional external XBee radio.
+        if (lowBattery) {
+            const int candidateEnergyRank = route.transport == XRTeamTransport::EspNow ? 0 : 1;
+            const int bestEnergyRank = best == XRTeamTransport::EspNow ? 0 : 1;
+            if (candidateEnergyRank < bestEnergyRank) {
+                bestScore = effective;
+                best = route.transport;
+                continue;
+            }
+            if (candidateEnergyRank > bestEnergyRank)
+                continue;
+        }
+
+        // Quality still wins inside the equivalence band whenever there is a
+        // measurable difference. Exact ties stay deterministic.
         if (effective > bestScore ||
             (effective == bestScore && static_cast<uint8_t>(route.transport) < static_cast<uint8_t>(best))) {
             bestScore = effective;
