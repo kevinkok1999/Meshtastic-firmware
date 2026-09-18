@@ -84,8 +84,8 @@ def main() -> None:
         raise SystemExit(f"unexpected production environment: {flash_map.get('environment')}")
     if flash_map.get("flash_size_bytes") != FLASH_BYTES:
         raise SystemExit("flash map does not declare exactly 16 MiB")
-    if flash_map.get("flash_mode") != "dio":
-        raise SystemExit(f"flash map mode mismatch: {flash_map.get('flash_mode')!r} != 'dio'")
+    if flash_map.get("flash_mode") != "qio":
+        raise SystemExit(f"flash map mode mismatch: {flash_map.get('flash_mode')!r} != 'qio'")
     if flash_map.get("flash_frequency") != "80m":
         raise SystemExit(
             f"flash map frequency mismatch: {flash_map.get('flash_frequency')!r} != '80m'"

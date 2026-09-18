@@ -6,7 +6,6 @@ import csv
 import hashlib
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 Import("env")
@@ -285,7 +284,6 @@ def build_xr_flash_bundle(source, target, env):
     # mode/frequency/size and recomputes its digest when required.
     full_path = build_dir / "xr-full-flash.bin"
     map_path = build_dir / "xr-flash-map.json"
-    python_exe = Path(sys.executable).resolve()
     uploader = _resolved_path(env.subst("$UPLOADER"))
     flash_mode = str(board.get("build.flash_mode", "")).strip().lower()
     flash_freq = _flash_frequency_arg(board)
@@ -296,7 +294,6 @@ def build_xr_flash_bundle(source, target, env):
         raise RuntimeError(f"PlatformIO esptool uploader not found: {uploader}")
 
     command = [
-        str(python_exe),
         str(uploader),
         "--chip",
         "esp32s3",
