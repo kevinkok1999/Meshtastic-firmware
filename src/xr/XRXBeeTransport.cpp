@@ -1,5 +1,6 @@
 #include "XRXBeeTransport.h"
 #include "XRTransportTeam.h"
+#include "XRTransportTeamStore.h"
 
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR) && defined(MESHOFFGRID_ENABLE_XBEE_XR868) && \
     defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
@@ -132,6 +133,7 @@ bool XRXBeeTransport::initialize()
 
     if (!deferredStore_.load(deferred_, lastInfoQueryMs_))
         LOG_WARN("XR XBee deferred queue could not be restored; starting with current RAM state");
+    (void)XRTransportTeamStore::shared().loadOnce(XRTransportTeam::shared(), lastInfoQueryMs_);
 
     LOG_INFO("XR XBee UART ready; probing XR868 API mode while LoRa/ESP-NOW remain available");
     return true;
@@ -140,7 +142,9 @@ bool XRXBeeTransport::initialize()
 void XRXBeeTransport::shutdown()
 {
     if (initialized_) {
-        (void)deferredStore_.service(deferred_, Time::getMillis(), true);
+        const uint32_t nowMs = Time::getMillis();
+        (void)deferredStore_.service(deferred_, nowMs, true);
+        (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, true);
         if (provisionState_ != ProvisionState::Idle)
             serial_.end();
         else
@@ -339,6 +343,7 @@ int32_t XRXBeeTransport::runOnce()
         serviceFactoryProvisioning(nowMs);
         expireState(nowMs);
         (void)deferredStore_.service(deferred_, nowMs);
+        (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, false);
         coordinator_.service(nowMs);
         return SERVICE_INTERVAL_MS;
     }
@@ -377,6 +382,7 @@ int32_t XRXBeeTransport::runOnce()
 
     expireState(nowMs);
     (void)deferredStore_.service(deferred_, nowMs);
+    (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, false);
     coordinator_.service(nowMs);
     return SERVICE_INTERVAL_MS;
 }
