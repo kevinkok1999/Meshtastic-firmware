@@ -1,5 +1,7 @@
 #pragma once
 
+#include "configuration.h"
+
 #if defined(ARCH_ESP32) && defined(T_DECK)
 
 #include "XRAdaptiveCoordinator.h"
