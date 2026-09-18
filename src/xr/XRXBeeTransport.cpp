@@ -412,7 +412,8 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
             continue;
 
         auto &team = XRTransportTeam::shared();
-        team.reportRoute(XRTeamTransport::XBee, peer->nodeNum, linkScoreFor(peer->nodeNum), true, nowMs);
+        team.reportRoute(XRTeamTransport::XBee, immediate.packet.to, linkScoreFor(peer->nodeNum), true, nowMs,
+                         XRTeamRouteKind::Direct);
         if (!team.allowAssist(XRTeamTransport::XBee, immediate.packet.to, immediate.packet.id, nowMs))
             continue;
 
@@ -439,7 +440,8 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
             continue;
 
         auto &team = XRTransportTeam::shared();
-        team.reportRoute(XRTeamTransport::XBee, queued->packet.to, linkScoreFor(peer->nodeNum), true, nowMs);
+        team.reportRoute(XRTeamTransport::XBee, queued->packet.to, linkScoreFor(peer->nodeNum), true, nowMs,
+                         peer->nodeNum == queued->packet.to ? XRTeamRouteKind::Direct : XRTeamRouteKind::Bridge);
         if (!team.claimRecovery(XRTeamTransport::XBee, queued->packet.to, queued->packet.id, nowMs))
             continue;
 
