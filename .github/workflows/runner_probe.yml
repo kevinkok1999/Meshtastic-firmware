@@ -28,16 +28,23 @@ jobs:
           echo "RUNNER_OS=$RUNNER_OS"
           echo "RUNNER_ARCH=$RUNNER_ARCH"
 
-      - name: Cancel stale XR branch queue
+      - name: Cancel stale XR branch runs but keep newest
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_BRANCH: feature/xr-team-delivery
         run: |
           set -euo pipefail
-          echo "Cancelling stale queued runs for $TARGET_BRANCH"
-          gh api --paginate             "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&branch=$TARGET_BRANCH&per_page=100"             --jq '.workflow_runs[].id'           | sort -u           | while read -r run_id; do
-              [ -n "$run_id" ] || continue
-              echo "Cancelling queued run $run_id"
-              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
-            done
+          echo "Keeping newest active XR run; cancelling older queued/in-progress runs."
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=$TARGET_BRANCH&per_page=100" \
+            --jq '.workflow_runs
+              | map(select(.status == "queued" or .status == "pending" or .status == "in_progress"))
+              | sort_by(.created_at)
+              | reverse
+              | .[1:]
+              | .[].id' \
+            | while read -r run_id; do
+                [ -n "$run_id" ] || continue
+                echo "Cancelling stale XR run $run_id"
+                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
+              done
