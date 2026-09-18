@@ -22,6 +22,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+#ifndef MESHOFFGRID_XBEE_UART_NUM
+#define MESHOFFGRID_XBEE_UART_NUM 2
+#endif
+
 namespace meshoffgrid::xr {
 
 class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, public XRDeliveryEventSink
@@ -38,7 +42,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     void onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs) override;
 
 
-    bool ready() const { return initialized_; }
+    bool ready() const { return initialized_ && online_; }
     uint8_t peerCount() const;
     uint8_t linkScoreFor(uint32_t nodeNum) const;
     uint64_t localXBeeAddress() const { return link_.moduleAddress64(); }
@@ -64,10 +68,27 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 20u * 1000u;
     static constexpr uint32_t TX_STATUS_TIMEOUT_MS = 4000u;
     static constexpr uint32_t SERVICE_INTERVAL_MS = 20u;
+    static constexpr uint32_t PROBE_INTERVAL_MS = 10u * 1000u;
+    static constexpr uint32_t FACTORY_PROVISION_AFTER_MS = 3u * 1000u;
+    static constexpr uint32_t FACTORY_PROVISION_RETRY_MS = 60u * 1000u;
+    static constexpr uint32_t FACTORY_GUARD_MS = 1100u;
+    static constexpr uint32_t FACTORY_COMMAND_TIMEOUT_MS = 1200u;
+    static constexpr uint32_t FACTORY_BAUD = 9600u;
     static constexpr UBaseType_t DELIVERY_EVENT_QUEUE_DEPTH = 8;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
     enum class DeliveryEventType : uint8_t { Failed = 1, Acked = 2, Naked = 3 };
+    enum class ProvisionState : uint8_t {
+        Idle,
+        GuardBefore,
+        GuardAfter,
+        WaitEnter,
+        WaitAp,
+        WaitAo,
+        WaitBd,
+        WaitWr,
+        ReopenDelay,
+    };
 
 #pragma pack(push, 1)
     struct FrameHeader {
@@ -158,14 +179,20 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
         std::array<uint8_t, meshtastic_MeshPacket_size> encoded{};
     };
 
-    HardwareSerial serial_{2};
+    HardwareSerial serial_{MESHOFFGRID_XBEE_UART_NUM};
     meshoffgrid::xbee::XBeeXr868Link link_{};
     QueueHandle_t txQueue_ = nullptr;
     QueueHandle_t deliveryEventQueue_ = nullptr;
     std::atomic<bool> initialized_{false};
     bool initAttempted_ = false;
+    bool online_ = false;
     uint32_t lastHelloMs_ = 0;
     uint32_t lastInfoQueryMs_ = 0;
+    uint32_t lastProbeMs_ = 0;
+    uint32_t lastProvisionAttemptMs_ = 0;
+    ProvisionState provisionState_ = ProvisionState::Idle;
+    uint32_t provisionDeadlineMs_ = 0;
+    uint8_t commandOkMatch_ = 0;
 
     PendingMirror mirrorCandidate_{};
     static constexpr size_t OUTBOUND_CACHE_SIZE = 16;
@@ -182,6 +209,12 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
 
     bool initialize();
     void shutdown();
+    void probeModule(uint32_t nowMs);
+    void startFactoryProvisioning(uint32_t nowMs);
+    void serviceFactoryProvisioning(uint32_t nowMs);
+    void finishFactoryProvisioning(uint32_t nowMs, bool configured);
+    bool consumeCommandOk();
+    void sendFactoryCommand(const char *command, ProvisionState waitState, uint32_t nowMs);
     void drainDeliveryEvents(uint32_t nowMs);
     void handleDeliveryEvent(const DeliveryEvent &event, uint32_t nowMs);
     bool enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId, uint32_t whenMs);
