@@ -1136,6 +1136,7 @@ void XRXBeeTransport::onModemStatus(uint8_t status)
     }
 
     const uint32_t nowMs = Time::getMillis();
+    online_ = false;
     LOG_WARN("XR XBee disruptive modem status: 0x%02x", status);
 
     if (activeTx_.used)
@@ -1146,8 +1147,8 @@ void XRXBeeTransport::onModemStatus(uint8_t status)
             XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, peer.nodeNum, 0, false, nowMs);
     }
 
-    // Force the normal service loop to refresh module identity/configuration
-    // on its next pass instead of waiting for the periodic five-minute probe.
+    // Force a fresh API probe before sidecar traffic is allowed again.
+    lastProbeMs_ = 0;
     lastInfoQueryMs_ = nowMs - 5u * 60u * 1000u;
 }
 
@@ -1159,10 +1160,28 @@ void XRXBeeTransport::onAtResponse(uint8_t, char command0, char command1, uint8_
         return;
     }
 
-    if (command0 == 'A' && command1 == 'P' && valueLength && value[0] != 1)
-        LOG_WARN("XR XBee requires AP=1; module reports AP=%u", static_cast<unsigned>(value[0]));
-    if (command0 == 'A' && command1 == 'O' && valueLength && value[0] != 0)
-        LOG_WARN("XR XBee integration expects AO=0; module reports AO=%u", static_cast<unsigned>(value[0]));
+    // Any valid API response proves that the XR868 is alive on the expected
+    // UART/mode. Traffic still remains peer-gated by normal route discovery.
+    online_ = true;
+
+    if (command0 == 'N' && command1 == 'P') {
+        LOG_INFO("XR XBee online, NP=%u", static_cast<unsigned>(link_.maxTxPayload()));
+        return;
+    }
+
+    if (command0 == 'A' && command1 == 'P' && valueLength && value[0] != 1) {
+        static constexpr char kAp[2] = {'A', 'P'};
+        const uint8_t apiMode = 1;
+        (void)link_.sendAt(kAp, &apiMode, 1);
+        LOG_WARN("XR XBee corrected AP=%u to AP=1", static_cast<unsigned>(value[0]));
+    }
+
+    if (command0 == 'A' && command1 == 'O' && valueLength && value[0] != 0) {
+        static constexpr char kAo[2] = {'A', 'O'};
+        const uint8_t standardFrames = 0;
+        (void)link_.sendAt(kAo, &standardFrames, 1);
+        LOG_WARN("XR XBee corrected AO=%u to AO=0", static_cast<unsigned>(value[0]));
+    }
 }
 
 } // namespace meshoffgrid::xr
