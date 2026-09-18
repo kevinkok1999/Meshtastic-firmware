@@ -1,4 +1,5 @@
 #include "XRXBeeTransport.h"
+#include "XRInternetMode.h"
 #include "mesh/xbee/XBeeApiCodec.h"
 #include "XRTransportTeam.h"
 #include "XRTransportTeamStore.h"
@@ -341,6 +342,13 @@ void XRXBeeTransport::serviceFactoryProvisioning(uint32_t nowMs)
 
 int32_t XRXBeeTransport::runOnce()
 {
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+    if (internetModeActive()) {
+        if (initialized_)
+            shutdown();
+        return 5000;
+    }
+#endif
     if (!initAttempted_) {
         initAttempted_ = true;
         if (!initialize())
@@ -408,6 +416,12 @@ bool XRXBeeTransport::eligibleForMirror(const meshtastic_MeshPacket &packet) con
 
 RadioTxHook::PreTxAction XRXBeeTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+    if (internetModeActive()) {
+        mirrorCandidate_ = {};
+        return PRETX_SEND;
+    }
+#endif
     const uint32_t nowMs = Time::getMillis();
     coexistence_.onLoRaTxStart(nowMs);
 
