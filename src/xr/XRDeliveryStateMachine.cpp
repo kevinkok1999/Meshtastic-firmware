@@ -116,20 +116,17 @@ bool XRDeliveryStateMachine::markPrimaryFailed(uint32_t destination, uint32_t pa
     if (!entry || terminal(entry->phase))
         return false;
 
-    // XRDeliveryEvents fans the same reliable-LoRa failure out to multiple
-    // sidecars. Count/transition that primary failure once, not once per sink.
+    // XRDeliveryEvents fans the same authoritative LoRa failure out to every
+    // installed sidecar. Treat duplicate sink notifications idempotently.
     if (entry->phase == XRDeliveryPhase::RecoveryQueued ||
-        entry->phase == XRDeliveryPhase::SecondaryActive ||
-        entry->phase == XRDeliveryPhase::CarrierAccepted) {
+        entry->phase == XRDeliveryPhase::SecondaryActive) {
         entry->updatedAtMs = nowMs;
         return true;
     }
 
-    // Multiple sidecar sinks can observe the same authoritative LoRa failure.
-    // Treat that notification idempotently so one failed LoRa delivery is never
-    // learned/counted twice merely because two helpers are installed.
-    if (entry->phase != XRDeliveryPhase::RecoveryQueued)
-        entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
+    // A best-effort carrier acceptance is not end-to-end delivery. If normal
+    // reliable LoRa later fails and no ACK arrived, recovery must be allowed.
+    entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
     entry->phase = XRDeliveryPhase::RecoveryQueued;
     entry->activePath = XRDeliveryPath::None;
     entry->updatedAtMs = nowMs;
