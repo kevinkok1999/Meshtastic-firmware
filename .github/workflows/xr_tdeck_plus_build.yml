@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 concurrency:
@@ -357,6 +357,24 @@ jobs:
           path: xr-ultra-release/
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish permanent Range-First release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_BRANCH=xr-range-first
+          SNAPSHOT_DIR="$(mktemp -d)"
+          cp -R xr-ultra-release/. "$SNAPSHOT_DIR/"
+
+          git config user.name "MeshOffGridNL Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout --orphan __xr_range_publish
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx >/dev/null 2>&1 || true
+          cp -R "$SNAPSHOT_DIR"/. .
+          git add -A
+          git commit -m "release(range-first): ${GITHUB_SHA}"
+          git push origin HEAD:refs/heads/$RELEASE_BRANCH --force
 
   flash-ready-gate:
     name: Flash-ready candidate gate
