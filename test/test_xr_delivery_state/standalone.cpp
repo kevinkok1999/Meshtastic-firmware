@@ -67,6 +67,19 @@ static void duplicated_primary_failure_is_idempotent()
     assert(entry->primaryFailures == 1);
 }
 
+static void duplicate_primary_failure_is_idempotent()
+{
+    XRDeliveryStateMachine sm;
+    assert(sm.begin(0x25, 6, 1000));
+    assert(sm.markPrimaryFailed(0x25, 6, 1500));
+    assert(sm.markPrimaryFailed(0x25, 6, 1501));
+
+    const auto *entry = sm.find(0x25, 6);
+    assert(entry != nullptr);
+    assert(entry->primaryFailures == 1);
+    assert(entry->phase == XRDeliveryPhase::RecoveryQueued);
+}
+
 static void expiry_is_terminal()
 {
     XRDeliveryStateMachine sm;
