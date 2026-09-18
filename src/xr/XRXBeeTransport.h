@@ -71,9 +71,25 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     static constexpr uint32_t FALLBACK_SUPPRESS_MS = 5u * 60u * 1000u;
     static constexpr uint32_t RETURN_ROUTE_MS = 2u * 60u * 1000u;
     static constexpr uint32_t PROBE_INTERVAL_MS = 10u * 1000u;
+    static constexpr uint32_t FACTORY_PROVISION_AFTER_MS = 3u * 1000u;
+    static constexpr uint32_t FACTORY_PROVISION_RETRY_MS = 60u * 1000u;
+    static constexpr uint32_t FACTORY_GUARD_MS = 1100u;
+    static constexpr uint32_t FACTORY_COMMAND_TIMEOUT_MS = 1200u;
+    static constexpr uint32_t FACTORY_BAUD = 9600u;
     static constexpr size_t MAX_PACKET_BYTES = meshtastic_MeshPacket_size;
 
     enum class FrameType : uint8_t { HELLO = 1, DATA = 2 };
+    enum class ProvisionState : uint8_t {
+        Idle,
+        GuardBefore,
+        GuardAfter,
+        WaitEnter,
+        WaitAp,
+        WaitAo,
+        WaitBd,
+        WaitWr,
+        ReopenDelay
+    };
 
 #pragma pack(push, 1)
     struct FrameHeader {
@@ -148,10 +164,19 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     uint32_t lastProbeMs_ = 0;
     uint32_t txSuccess_ = 0;
     uint32_t txFailures_ = 0;
+    ProvisionState provisionState_ = ProvisionState::Idle;
+    uint32_t provisionDeadlineMs_ = 0;
+    uint32_t lastProvisionAttemptMs_ = 0;
+    uint8_t commandOkMatch_ = 0;
 
     bool initialize();
     void shutdown();
     void probeModule(uint32_t nowMs);
+    void startFactoryProvisioning(uint32_t nowMs);
+    void serviceFactoryProvisioning(uint32_t nowMs);
+    void finishFactoryProvisioning(uint32_t nowMs, bool configured);
+    bool consumeCommandOk();
+    void sendFactoryCommand(const char *command, ProvisionState waitState, uint32_t nowMs);
     void sendHello(uint32_t nowMs);
     void processTx(const TxPacket &queued, uint32_t nowMs);
     bool sendPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs);
