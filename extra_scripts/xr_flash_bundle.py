@@ -78,14 +78,14 @@ def _role_for(path, offset, app_path):
 
 
 def _partition_table_path(build_env):
-    board = build_env.BoardConfig()
+    board = env.BoardConfig()
     configured = board.get("build.partitions", None)
     if not configured:
         raise RuntimeError("Board partition CSV is unavailable; refusing to guess flash layout")
 
     candidate = Path(str(configured))
     if not candidate.is_absolute():
-        candidate = Path(build_env.subst("$PROJECT_DIR")) / candidate
+        candidate = Path(env.subst("$PROJECT_DIR")) / candidate
     candidate = candidate.resolve()
 
     if not candidate.is_file():
@@ -93,7 +93,7 @@ def _partition_table_path(build_env):
     return candidate
 
 
-def _read_partitions(build_env):
+def _read_partitions(env):
     path = _partition_table_path(build_env)
     partitions = []
 
@@ -157,21 +157,21 @@ def _require_role(resolved, role):
     return matches[0]
 
 
-def build_xr_flash_bundle(source, target, build_env):
+def build_xr_flash_bundle(source, target, env):
     app_path = Path(str(target[0])).resolve()
-    app_offset_raw = build_env.get("ESP32_APP_OFFSET")
+    app_offset_raw = env.get("ESP32_APP_OFFSET")
     if app_offset_raw is None:
         raise RuntimeError("ESP32_APP_OFFSET is unavailable; refusing to guess flash layout")
     app_offset = _parse_offset(app_offset_raw)
 
-    board = build_env.BoardConfig()
+    board = env.BoardConfig()
     flash_bytes = _parse_flash_size(board.get("upload.flash_size", None))
     if flash_bytes != EXPECTED_FLASH_BYTES:
         raise RuntimeError(
             f"Canonical T-Deck Plus XR build requires exactly 16 MiB flash, got {flash_bytes} bytes"
         )
 
-    partition_path, partitions = _read_partitions(build_env)
+    partition_path, partitions = _read_partitions(env)
     filesystem = _filesystem_partition(partitions)
 
     app0 = next((part for part in partitions if part["name"] == "app0"), None)
@@ -192,7 +192,7 @@ def build_xr_flash_bundle(source, target, build_env):
     if max(part["end"] for part in partitions) > flash_bytes:
         raise RuntimeError("Partition table extends beyond physical 16 MiB flash")
 
-    raw = build_env.Flatten(build_env.get("FLASH_EXTRA_IMAGES", []))
+    raw = env.Flatten(env.get("FLASH_EXTRA_IMAGES", []))
     if len(raw) % 2 != 0:
         raise RuntimeError(f"Unexpected FLASH_EXTRA_IMAGES shape: {raw!r}")
 
@@ -202,12 +202,12 @@ def build_xr_flash_bundle(source, target, build_env):
 
     entries.append((app_offset, app_path))
 
-    build_dir = Path(build_env.subst("$BUILD_DIR")).resolve()
+    build_dir = Path(env.subst("$BUILD_DIR")).resolve()
 
     # Meshtastic's platformio-pre.py assigns a versioned filesystem image name
     # (for example littlefs-t-deck-ultra-xbee-2.8.1.<sha>.bin). Resolve the
     # actual SCons target instead of assuming PlatformIO's default littlefs.bin.
-    fs_image_name = str(build_env.subst("$ESP32_FS_IMAGE_NAME")).strip()
+    fs_image_name = str(env.subst("$ESP32_FS_IMAGE_NAME")).strip()
     if not fs_image_name or "$ESP32_FS_IMAGE_NAME" in fs_image_name:
         raise RuntimeError("ESP32_FS_IMAGE_NAME is unavailable; refusing to guess the LittleFS image")
     if not fs_image_name.endswith(".bin"):
@@ -286,7 +286,7 @@ def build_xr_flash_bundle(source, target, build_env):
     full_path = build_dir / "xr-full-flash.bin"
     map_path = build_dir / "xr-flash-map.json"
     python_exe = Path(sys.executable).resolve()
-    uploader = _resolved_path(build_env.subst("$UPLOADER"))
+    uploader = _resolved_path(env.subst("$UPLOADER"))
     flash_mode = str(board.get("build.flash_mode", "")).strip().lower()
     flash_freq = _flash_frequency_arg(board)
 
@@ -345,7 +345,7 @@ def build_xr_flash_bundle(source, target, build_env):
     manifest = {
         "schema": 2,
         "target": "LILYGO T-Deck Plus",
-        "environment": build_env.subst("$PIOENV"),
+        "environment": env.subst("$PIOENV"),
         "mcu": board.get("build.mcu", "esp32s3"),
         "flash_mode": flash_mode,
         "flash_frequency": flash_freq,
