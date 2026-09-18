@@ -61,7 +61,7 @@ static void test_end_to_end_ack_creates_path_hysteresis()
 {
     XRTransportTeam team;
     team.reportRoute(XRTeamTransport::EspNow, 0x66, 78, true, 1000, XRTeamRouteKind::Direct);
-    team.reportRoute(XRTeamTransport::XBee, 0x66, 80, true, 1000, XRTeamRouteKind::Direct);
+    team.reportRoute(XRTeamTransport::XBee, 0x66, 88, true, 1000, XRTeamRouteKind::Direct);
 
     assert(!team.claimRecovery(XRTeamTransport::XBee, 0x66, 21, 2000));
     const uint32_t claimAt = 2000 + XRTransportTeam::RECOVERY_ARBITRATION_MS + 1;
