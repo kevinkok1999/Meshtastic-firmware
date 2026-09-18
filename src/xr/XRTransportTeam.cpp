@@ -31,6 +31,19 @@ uint32_t &XRTransportTeam::cooldownFor(PacketState &packet, XRTeamTransport tran
     return transport == XRTeamTransport::XBee ? packet.xbeeCooldownUntilMs : packet.espNowCooldownUntilMs;
 }
 
+XRDeliveryPath XRTransportTeam::deliveryPathFor(XRTeamTransport transport)
+{
+    switch (transport) {
+    case XRTeamTransport::EspNow:
+        return XRDeliveryPath::EspNow;
+    case XRTeamTransport::XBee:
+        return XRDeliveryPath::XBee;
+    case XRTeamTransport::None:
+        return XRDeliveryPath::None;
+    }
+    return XRDeliveryPath::None;
+}
+
 int XRTransportTeam::clampScore(int value, int minValue, int maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
@@ -317,6 +330,8 @@ bool XRTransportTeam::allowAssist(XRTeamTransport transport, uint32_t destinatio
         return false;
 
     lock();
+    delivery_.expire(nowMs);
+    (void)delivery_.begin(destination, packetId, nowMs);
     PacketState *packet = allocatePacket(destination, packetId, nowMs);
     if (!packet) {
         unlock();
@@ -337,6 +352,11 @@ bool XRTransportTeam::allowAssist(XRTeamTransport transport, uint32_t destinatio
         return false;
     }
 
+    if (!delivery_.startSecondary(destination, packetId, deliveryPathFor(transport), nowMs)) {
+        unlock();
+        return false;
+    }
+
     packet->assistOwner = transport;
     packet->assistUntilMs = nowMs + ASSIST_RESERVATION_MS;
     packet->lastTouchedMs = nowMs;
@@ -351,6 +371,7 @@ void XRTransportTeam::reportAssistResult(XRTeamTransport transport, uint32_t des
     PacketState *packet = findPacket(destination, packetId);
     if (packet && packet->assistOwner == transport) {
         packet->lastTouchedMs = nowMs;
+        (void)delivery_.markCarrierResult(destination, packetId, deliveryPathFor(transport), accepted, nowMs);
         updateQualityUnlocked(destination, transport, accepted ? 56 : 18, nowMs);
         if (!accepted) {
             packet->assistOwner = XRTeamTransport::None;
@@ -358,6 +379,18 @@ void XRTransportTeam::reportAssistResult(XRTeamTransport transport, uint32_t des
             cooldownFor(*packet, transport) = nowMs + FAILED_TRANSPORT_COOLDOWN_MS;
         }
     }
+    unlock();
+}
+
+void XRTransportTeam::notePrimaryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs)
+{
+    if (destination == 0 || packetId == 0)
+        return;
+
+    lock();
+    delivery_.expire(nowMs);
+    (void)delivery_.markPrimaryFailed(destination, packetId, nowMs);
+    (void)allocatePacket(destination, packetId, nowMs);
     unlock();
 }
 
@@ -403,6 +436,7 @@ bool XRTransportTeam::claimRecovery(XRTeamTransport transport, uint32_t destinat
         packet->lastAccepted = XRTeamTransport::None;
         packet->lastAcceptedWasRecovery = false;
         packet->ackWaitUntilMs = 0;
+        (void)delivery_.queueRecovery(destination, packetId, nowMs);
     }
 
     if (deadlinePending(nowMs, packet->recoveryLeaseUntilMs)) {
@@ -415,6 +449,11 @@ bool XRTransportTeam::claimRecovery(XRTeamTransport transport, uint32_t destinat
 
     const XRTeamTransport preferred = selectBestUnlocked(destination, nowMs, packet);
     if (preferred != transport) {
+        unlock();
+        return false;
+    }
+
+    if (!delivery_.startSecondary(destination, packetId, deliveryPathFor(transport), nowMs)) {
         unlock();
         return false;
     }
@@ -442,6 +481,7 @@ void XRTransportTeam::reportRecoveryResult(XRTeamTransport transport, uint32_t d
     }
 
     packet->lastTouchedMs = nowMs;
+    (void)delivery_.markCarrierResult(destination, packetId, deliveryPathFor(transport), accepted, nowMs);
     updateQualityUnlocked(destination, transport, accepted ? 62 : 10, nowMs);
     if (accepted) {
         packet->lastAccepted = transport;
@@ -456,6 +496,7 @@ void XRTransportTeam::reportRecoveryResult(XRTeamTransport transport, uint32_t d
 void XRTransportTeam::markDelivered(uint32_t destination, uint32_t packetId, uint32_t nowMs)
 {
     lock();
+    (void)delivery_.markDelivered(destination, packetId, nowMs);
     if (PacketState *packet = findPacket(destination, packetId)) {
         if (packet->lastAcceptedWasRecovery && packet->lastAccepted != XRTeamTransport::None) {
             updateQualityUnlocked(destination, packet->lastAccepted, 100, nowMs);
@@ -472,6 +513,7 @@ void XRTransportTeam::markDelivered(uint32_t destination, uint32_t packetId, uin
 void XRTransportTeam::markCancelled(uint32_t destination, uint32_t packetId, uint32_t nowMs)
 {
     lock();
+    (void)delivery_.markCancelled(destination, packetId, nowMs);
     if (PacketState *packet = findPacket(destination, packetId)) {
         if (packet->lastAcceptedWasRecovery && packet->lastAccepted != XRTeamTransport::None)
             updateQualityUnlocked(destination, packet->lastAccepted, 5, nowMs);
@@ -486,6 +528,7 @@ void XRTransportTeam::reset()
     routes_ = {};
     packets_ = {};
     destinations_ = {};
+    delivery_.reset();
     environment_ = {};
     environment_.batteryPercent = 100;
     environment_.noiseFloorDbm = -120;
