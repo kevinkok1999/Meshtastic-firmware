@@ -22,6 +22,43 @@ XREspNowTransport *XREspNowTransport::instance_ = nullptr;
 XREspNowTransport *xrEspNowTransport = nullptr;
 
 namespace {
+struct HiddenRfSnapshot {
+    uint8_t batteryPercent = 100;
+    uint8_t channelUtilizationPercent = 0;
+    uint8_t channelHealthScore = 100;
+    int16_t noiseFloorDbm = -120;
+};
+
+HiddenRfSnapshot readHiddenRfSnapshot()
+{
+    HiddenRfSnapshot snapshot{};
+
+    if (powerStatus && powerStatus->getHasBattery())
+        snapshot.batteryPercent = powerStatus->getBatteryChargePercent();
+
+    float utilization = airTime ? airTime->smoothedChannelUtilizationPercent() : 0.0f;
+    if (utilization < 0.0f)
+        utilization = 0.0f;
+    if (utilization > 100.0f)
+        utilization = 100.0f;
+    snapshot.channelUtilizationPercent = static_cast<uint8_t>(utilization + 0.5f);
+
+    if (router && router->getRadioIface())
+        snapshot.noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getNoiseFloor());
+
+    // Unknown RF is treated as interference evidence only. A busy channel and
+    // raised ambient noise lower the health score; neither can become a carrier.
+    int health = 100 - static_cast<int>(snapshot.channelUtilizationPercent);
+    if (snapshot.noiseFloorDbm > -100)
+        health -= (snapshot.noiseFloorDbm + 100) * 2;
+    if (health < 0)
+        health = 0;
+    if (health > 100)
+        health = 100;
+    snapshot.channelHealthScore = static_cast<uint8_t>(health);
+    return snapshot;
+}
+
 void reportHiddenRfEnvironment(uint32_t nowMs)
 {
     static uint32_t lastReportMs = 0;
@@ -29,22 +66,9 @@ void reportHiddenRfEnvironment(uint32_t nowMs)
         return;
     lastReportMs = nowMs;
 
-    uint8_t batteryPercent = 100;
-    if (powerStatus && powerStatus->getHasBattery())
-        batteryPercent = powerStatus->getBatteryChargePercent();
-
-    float utilization = airTime ? airTime->smoothedChannelUtilizationPercent() : 0.0f;
-    if (utilization < 0.0f)
-        utilization = 0.0f;
-    if (utilization > 100.0f)
-        utilization = 100.0f;
-
-    int16_t noiseFloorDbm = -120;
-    if (router && router->getRadioIface())
-        noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getNoiseFloor());
-
-    XRTransportTeam::shared().reportEnvironment(
-        batteryPercent, static_cast<uint8_t>(utilization + 0.5f), noiseFloorDbm, nowMs);
+    const HiddenRfSnapshot snapshot = readHiddenRfSnapshot();
+    XRTransportTeam::shared().reportEnvironment(snapshot.batteryPercent, snapshot.channelUtilizationPercent,
+                                                snapshot.noiseFloorDbm, nowMs);
 }
 
 constexpr uint8_t BROADCAST_MAC[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
