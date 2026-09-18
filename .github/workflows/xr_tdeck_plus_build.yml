@@ -189,8 +189,8 @@ jobs:
           RELEASE_DIR=xr-ultra-release
           mkdir -p "$RELEASE_DIR"
 
-          APP_NAME=MeshOffGrid-XR-Ultra-TDeck-Plus-firmware.bin
-          FULL_NAME=MeshOffGrid-XR-Ultra-TDeck-Plus-full.bin
+          APP_NAME=XR-TDeck-Plus-firmware.bin
+          FULL_NAME=XR-TDeck-Plus-FULL-FLASH.bin
 
           cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/$APP_NAME"
           cp "${{ steps.firmware.outputs.full }}" "$RELEASE_DIR/$FULL_NAME"
@@ -202,11 +202,21 @@ jobs:
             fi
           done
 
-          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
-          FULL_SHA="$(sha256sum "$RELEASE_DIR/$FULL_NAME" | awk '{print $1}')"
+          BASE_VERSION="$(python - <<'PY'
+          import configparser
+          cfg = configparser.ConfigParser()
+          cfg.read("version.properties")
+          v = cfg["VERSION"]
+          print(f"{v['major']}.{v['minor']}.{v['build']}")
+          PY
+          )"
           SOURCE_SHA="$(git rev-parse HEAD)"
-          python - "$RELEASE_DIR" "$FULL_NAME" "$SHORT_SHA" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          VERSION="$BASE_VERSION-xr.$SHORT_SHA"
+          FULL_SHA="$(sha256sum "$RELEASE_DIR/$FULL_NAME" | awk '{print $1}')"
+          python - "$RELEASE_DIR" "$FULL_NAME" "$VERSION" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
           import json
+          import os
           import pathlib
           import sys
 
@@ -240,15 +250,16 @@ jobs:
               "flashSizeBytes": 16777216,
               "version": version,
               "sourceCommit": source_sha,
+              "sourceRunId": int(os.environ.get("GITHUB_RUN_ID", "0")),
               "file": full_name,
               "offset": 0,
               "sha256": full_sha,
               "size": 16711680,
               "filesystemOffset": 13172736,
           }
-          (release / "meshoffgrid-manifest.json").write_text(
-              json.dumps(product_manifest, indent=2) + "\n", encoding="utf-8"
-          )
+          product_text = json.dumps(product_manifest, indent=2) + "\n"
+          (release / "manifest.json").write_text(product_text, encoding="utf-8")
+          (release / "meshoffgrid-manifest.json").write_text(product_text, encoding="utf-8")
           PY
 
           {
@@ -261,7 +272,8 @@ jobs:
             echo "  $FULL_NAME  = complete first-install image at offset 0x0"
             echo "  $APP_NAME   = application-only image for compatible update flows"
             echo "  esp-web-tools-manifest.json = ESP Web Tools-compatible single-image manifest"
-            echo "  meshoffgrid-manifest.json = MeshOffGridNL installer candidate manifest"
+            echo "  manifest.json = canonical MeshOffGridNL installer candidate manifest"
+            echo "  meshoffgrid-manifest.json = identical compatibility copy"
             echo "  xr-flash-map.json = exact PlatformIO-resolved source flash map"
             echo
             echo "XBee XR 868:"
@@ -290,7 +302,7 @@ jobs:
             echo "Do not flash the app-only image at offset 0x0."
           } > "$RELEASE_DIR/FLASHING.txt"
 
-          sha256sum "$RELEASE_DIR"/*.bin > "$RELEASE_DIR/SHA256SUMS.txt"
+          (cd "$RELEASE_DIR" && sha256sum *.bin > SHA256SUMS.txt)
 
           python scripts/validate_xr_release.py "$RELEASE_DIR" \
             --full-name "$FULL_NAME" \
