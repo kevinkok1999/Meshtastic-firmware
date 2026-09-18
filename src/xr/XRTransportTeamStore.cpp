@@ -120,16 +120,23 @@ bool XRTransportTeamStore::service(XRTransportTeam &team, uint32_t nowMs, bool f
     if (!loaded_ && !loadOnce(team, nowMs))
         return false;
 
-    if (!team.learningDirty())
-        return true;
+    // Serialize both snapshot capture and the following write. This prevents a
+    // slower caller from writing an older generation after another sidecar has
+    // already persisted newer learning.
+    lock();
 
-    if (!force && lastPersistMs_ != 0 && (nowMs - lastPersistMs_) < MIN_PERSIST_INTERVAL_MS)
+    if (!team.learningDirty()) {
+        unlock();
         return true;
+    }
+
+    if (!force && lastPersistMs_ != 0 && (nowMs - lastPersistMs_) < MIN_PERSIST_INTERVAL_MS) {
+        unlock();
+        return true;
+    }
 
     uint32_t generation = 0;
     const auto snapshot = team.learningSnapshot(generation);
-
-    lock();
 
 #ifdef MESHTASTIC_ENCRYPTED_STORAGE
     if (EncryptedStorage::isLockdownActive()) {
