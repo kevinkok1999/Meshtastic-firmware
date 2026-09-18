@@ -32,6 +32,22 @@ static void only_authoritative_ack_finishes_delivery()
     assert(!sm.startSecondary(0x21, 2, XRDeliveryPath::EspNow, 2700));
 }
 
+static void unacked_assist_does_not_block_recovery_after_lora_failure()
+{
+    XRDeliveryStateMachine sm;
+    assert(sm.begin(0x26, 7, 1000));
+    assert(sm.startSecondary(0x26, 7, XRDeliveryPath::EspNow, 1050));
+    assert(sm.markCarrierResult(0x26, 7, XRDeliveryPath::EspNow, true, 1100));
+
+    const auto *accepted = sm.find(0x26, 7);
+    assert(accepted && accepted->phase == XRDeliveryPhase::CarrierAccepted);
+
+    assert(sm.markPrimaryFailed(0x26, 7, 1500));
+    const auto *recovery = sm.find(0x26, 7);
+    assert(recovery && recovery->phase == XRDeliveryPhase::RecoveryQueued);
+    assert(sm.canStartSecondary(0x26, 7, XRDeliveryPath::XBee));
+}
+
 static void failed_secondary_returns_to_recovery()
 {
     XRDeliveryStateMachine sm;
@@ -95,6 +111,7 @@ int main()
 {
     carrier_success_is_not_delivery();
     only_authoritative_ack_finishes_delivery();
+    unacked_assist_does_not_block_recovery_after_lora_failure();
     failed_secondary_returns_to_recovery();
     second_sidecar_cannot_race_active_one();
     duplicated_primary_failure_is_idempotent();
