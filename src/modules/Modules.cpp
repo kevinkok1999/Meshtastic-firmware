@@ -1,6 +1,9 @@
 #include "configuration.h"
 #if defined(ARCH_ESP32) && defined(T_DECK)
 #include "xr/XREspNowTransport.h"
+#if defined(MESHOFFGRID_ENABLE_XBEE_XR868)
+#include "xr/XRXBeeTransport.h"
+#endif
 #endif
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "buzz/BuzzerFeedbackThread.h"
@@ -301,6 +304,11 @@ void setupModules()
     // Construct late enough that Meshtastic preferences/filesystem are ready. The OSThread
     // runs after setup(), so ESP-NOW initialization cannot race the remaining board/radio setup.
     meshoffgrid::xr::xrEspNowTransport = new meshoffgrid::xr::XREspNowTransport();
+#if defined(MESHOFFGRID_ENABLE_XBEE_XR868)
+    // XBee remains dormant unless dedicated UART pins are configured and an
+    // XR868 module answers the API-mode NP probe. LoRa/ESP-NOW are unaffected.
+    meshoffgrid::xr::xrXBeeTransport = new meshoffgrid::xr::XRXBeeTransport();
+#endif
 #endif
     // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
     // acks
