@@ -112,24 +112,35 @@ int32_t XRXBeeTransport::runOnce()
     return SERVICE_INTERVAL_MS;
 }
 
-void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *packet)
+bool XRXBeeTransport::queueFallback(const meshtastic_MeshPacket &packet)
 {
-    if (!ready() || !txQueue_ || !packet || packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag ||
-        packet->via_mqtt || !isFromUs(packet))
-        return;
-
-    // XBee is an additional route for directed traffic. Normal mesh broadcasts remain
-    // on LoRa/ESP-NOW to avoid multiplying network-wide traffic.
-    if (isBroadcast(packet->to))
-        return;
+    if (!ready() || !txQueue_ || isBroadcast(packet.to) || packet.via_mqtt)
+        return false;
 
     const uint32_t nowMs = Time::getMillis();
-    if (wasRecentIngress(packet->from, packet->id, nowMs))
-        return;
+    uint32_t packetFrom = packet.from;
+    if (!packetFrom && router)
+        packetFrom = router->getNodeNum();
+
+    if (!packetFrom || fallbackWasQueued(packetFrom, packet.id, nowMs) ||
+        wasRecentIngress(packetFrom, packet.id, nowMs))
+        return false;
+
+    // Do not queue a fallback if there is no fresh XBee endpoint that can act
+    // either as the final destination or as a bridge into a remote mesh area.
+    if (!selectFallbackPeer(packet.to, nowMs))
+        return false;
 
     TxPacket queued{};
-    queued.packet = *packet;
-    (void)xQueueSend(txQueue_, &queued, 0);
+    queued.packet = packet;
+    queued.packet.from = packetFrom;
+
+    if (xQueueSend(txQueue_, &queued, 0) != pdTRUE)
+        return false;
+
+    markFallbackQueued(packetFrom, packet.id, nowMs);
+    LOG_INFO("XR XBee fallback queued fr=0x%08x,to=0x%08x,id=0x%08x", packetFrom, packet.to, packet.id);
+    return true;
 }
 
 uint8_t XRXBeeTransport::peerCount() const
@@ -161,14 +172,36 @@ void XRXBeeTransport::processTx(const TxPacket &queued, uint32_t nowMs)
     (void)sendPacket(queued.packet, nowMs);
 }
 
-bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t)
+bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs)
 {
-    if (!ready() || !router || packet.which_payload_variant != meshtastic_MeshPacket_encrypted_tag)
+    if (!ready() || !router || isBroadcast(packet.to))
+        return false;
+
+    // ReliableRouter keeps its retransmission copy before Router::send() performs
+    // normal LoRa encryption. Prepare an independent carrier copy here so XBee
+    // uses exactly the same Meshtastic ciphertext semantics without mutating the
+    // pending LoRa record.
+    meshtastic_MeshPacket working = packet;
+    if (!working.from)
+        working.from = router->getNodeNum();
+
+    working.next_hop = NO_NEXT_HOP_PREFERENCE;
+    working.relay_node = 0;
+    if (!working.hop_start)
+        working.hop_start = working.hop_limit;
+
+    if (working.which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
+        const auto encodeResult = perhapsEncode(&working);
+        if (encodeResult != meshtastic_Routing_Error_NONE)
+            return false;
+    }
+
+    if (working.which_payload_variant != meshtastic_MeshPacket_encrypted_tag)
         return false;
 
     std::array<uint8_t, MAX_PACKET_BYTES> encoded{};
     pb_ostream_t stream = pb_ostream_from_buffer(encoded.data(), encoded.size());
-    if (!pb_encode(&stream, meshtastic_MeshPacket_fields, &packet) || stream.bytes_written == 0)
+    if (!pb_encode(&stream, meshtastic_MeshPacket_fields, &working) || stream.bytes_written == 0)
         return false;
 
     const size_t carrierLimit = std::min<size_t>(npLimit_, meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD);
@@ -184,9 +217,9 @@ bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t)
     if (!fragmentCount || fragmentCount > MAX_FRAGMENTS)
         return false;
 
-    const Peer *peer = findPeer(packet.to);
+    const Peer *peer = selectFallbackPeer(working.to, nowMs);
     if (!peer)
-        return false; // Never flood directed DATA just to discover a route; HELLO frames perform discovery.
+        return false;
 
     const uint64_t destination = peer->address64;
     const uint32_t checksum = checksum32(encoded.data(), totalLength);
@@ -198,8 +231,8 @@ bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t)
         FrameHeader header{};
         header.type = FrameType::DATA;
         header.carrierNode = router->getNodeNum();
-        header.packetFrom = packet.from;
-        header.packetId = packet.id;
+        header.packetFrom = working.from;
+        header.packetId = working.id;
         header.totalLength = static_cast<uint16_t>(totalLength);
         header.fragmentOffset = static_cast<uint16_t>(offset);
         header.fragmentIndex = static_cast<uint8_t>(index);
@@ -316,6 +349,29 @@ const XRXBeeTransport::Peer *XRXBeeTransport::findPeer(uint32_t nodeNum) const
     return nullptr;
 }
 
+const XRXBeeTransport::Peer *XRXBeeTransport::selectFallbackPeer(uint32_t destination, uint32_t nowMs) const
+{
+    // Prefer a direct XBee-capable destination when available.
+    if (const Peer *direct = findPeer(destination)) {
+        if (direct->used && nowMs - direct->lastSeenMs <= PEER_FRESH_MS)
+            return direct;
+    }
+
+    // Otherwise use the freshest XBee-capable peer as a bridge. That peer
+    // re-injects the original encrypted MeshPacket into its local Meshtastic
+    // router, where LoRa/normal mesh forwarding can continue toward the final
+    // destination. XBee fallback is only triggered for the original sender, so
+    // the packet cannot bounce indefinitely between XBee bridges.
+    const Peer *best = nullptr;
+    for (const auto &peer : peers_) {
+        if (!peer.used || !peer.address64 || nowMs - peer.lastSeenMs > PEER_FRESH_MS)
+            continue;
+        if (!best || peer.lastSeenMs > best->lastSeenMs)
+            best = &peer;
+    }
+    return best;
+}
+
 void XRXBeeTransport::rememberPeer(uint32_t nodeNum, uint64_t address64, uint32_t nowMs)
 {
     if (!nodeNum || !address64)
@@ -405,6 +461,36 @@ void XRXBeeTransport::markIngress(uint32_t packetFrom, uint32_t packetId, uint32
     *slot = RecentIngress{true, packetFrom, packetId, nowMs};
 }
 
+bool XRXBeeTransport::fallbackWasQueued(uint32_t packetFrom, uint32_t packetId, uint32_t nowMs) const
+{
+    for (const auto &item : fallbackHistory_) {
+        if (item.used && item.packetFrom == packetFrom && item.packetId == packetId &&
+            nowMs - item.queuedMs <= FALLBACK_SUPPRESS_MS)
+            return true;
+    }
+    return false;
+}
+
+void XRXBeeTransport::markFallbackQueued(uint32_t packetFrom, uint32_t packetId, uint32_t nowMs)
+{
+    RecentFallback *slot = nullptr;
+    for (auto &item : fallbackHistory_) {
+        if (item.used && item.packetFrom == packetFrom && item.packetId == packetId) {
+            slot = &item;
+            break;
+        }
+        if (!item.used && !slot)
+            slot = &item;
+    }
+    if (!slot) {
+        slot = &fallbackHistory_[0];
+        for (auto &item : fallbackHistory_)
+            if (item.queuedMs < slot->queuedMs)
+                slot = &item;
+    }
+    *slot = RecentFallback{true, packetFrom, packetId, nowMs};
+}
+
 void XRXBeeTransport::expireState(uint32_t nowMs)
 {
     for (auto &peer : peers_)
@@ -417,6 +503,10 @@ void XRXBeeTransport::expireState(uint32_t nowMs)
 
     for (auto &item : ingress_)
         if (item.used && nowMs - item.seenMs > INGRESS_SUPPRESS_MS)
+            item.used = false;
+
+    for (auto &item : fallbackHistory_)
+        if (item.used && nowMs - item.queuedMs > FALLBACK_SUPPRESS_MS)
             item.used = false;
 }
 
