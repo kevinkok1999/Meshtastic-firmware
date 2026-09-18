@@ -5,6 +5,7 @@
 import csv
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 Import("env")
@@ -42,6 +43,14 @@ def _parse_flash_size(value):
 
 def _resolved_path(value):
     return Path(env.subst(str(value))).expanduser().resolve()
+
+
+def _flash_frequency_arg(board):
+    raw = str(board.get("build.f_flash", "40000000L")).strip().lower().replace("l", "")
+    hz = int(raw, 0)
+    if hz % 1_000_000 != 0:
+        raise RuntimeError(f"Unsupported non-MHz flash frequency: {hz}")
+    return f"{hz // 1_000_000}m"
 
 
 def _sha256(path):
@@ -260,19 +269,63 @@ def build_xr_flash_bundle(source, target, build_env):
     if filesystem_image["offset"] != EXPECTED_FILESYSTEM_OFFSET:
         raise RuntimeError("Filesystem image offset mismatch")
 
-    # Produce a deterministic first-install image through the end of the
-    # filesystem partition. The final 64 KiB coredump partition intentionally
-    # remains erased by the installer's eraseAll step.
-    full_size = EXPECTED_FILESYSTEM_END
-    image = bytearray(b"\xff" * full_size)
-    for item in resolved:
-        data = Path(item["path"]).read_bytes()
-        start = item["offset"]
-        image[start : start + len(data)] = data
-
+    # Build the canonical first-install image with Espressif's own merge
+    # implementation. This is intentionally not a bytearray concatenation:
+    # esptool patches the bootloader flash header to the board's actual flash
+    # mode/frequency/size and recomputes its digest when required.
     full_path = build_dir / "xr-full-flash.bin"
     map_path = build_dir / "xr-flash-map.json"
-    full_path.write_bytes(image)
+    python_exe = _resolved_path(build_env.subst("$PYTHONEXE"))
+    uploader = _resolved_path(build_env.subst("$UPLOADER"))
+    flash_mode = str(board.get("build.flash_mode", "")).strip().lower()
+    flash_freq = _flash_frequency_arg(board)
+
+    if not flash_mode:
+        raise RuntimeError("Board flash mode is unavailable; refusing to build canonical image")
+    if not uploader.is_file():
+        raise RuntimeError(f"PlatformIO esptool uploader not found: {uploader}")
+
+    command = [
+        str(python_exe),
+        str(uploader),
+        "--chip",
+        "esp32s3",
+        "merge_bin",
+        "-o",
+        str(full_path),
+        "--flash_mode",
+        flash_mode,
+        "--flash_freq",
+        flash_freq,
+        "--flash_size",
+        "16MB",
+    ]
+    for item in resolved:
+        command.extend([hex(item["offset"]), item["path"]])
+
+    print("XR merge command:", " ".join(command))
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    if completed.stdout:
+        print(completed.stdout)
+    if completed.stderr:
+        print(completed.stderr)
+    if completed.returncode != 0:
+        raise RuntimeError(f"esptool merge_bin failed with exit code {completed.returncode}")
+
+    if not full_path.is_file() or full_path.stat().st_size <= 0:
+        raise RuntimeError("esptool did not create the canonical full-flash image")
+
+    # Keep the release image deterministic through the end of LittleFS while
+    # intentionally leaving the final 64 KiB coredump partition erased. If the
+    # filesystem builder emitted a sparse/short image, pad only with erased FF.
+    current_size = full_path.stat().st_size
+    if current_size > EXPECTED_FILESYSTEM_END:
+        raise RuntimeError(
+            f"Merged image size {current_size} exceeds canonical 0x{EXPECTED_FILESYSTEM_END:x}"
+        )
+    if current_size < EXPECTED_FILESYSTEM_END:
+        with full_path.open("ab") as handle:
+            handle.write(b"\xff" * (EXPECTED_FILESYSTEM_END - current_size))
 
     if full_path.stat().st_size != EXPECTED_FILESYSTEM_END:
         raise RuntimeError(
@@ -284,6 +337,8 @@ def build_xr_flash_bundle(source, target, build_env):
         "target": "LILYGO T-Deck Plus",
         "environment": build_env.subst("$PIOENV"),
         "mcu": board.get("build.mcu", "esp32s3"),
+        "flash_mode": flash_mode,
+        "flash_frequency": flash_freq,
         "flash_size_bytes": flash_bytes,
         "partition_csv": str(partition_path),
         "app_offset": app_offset,
