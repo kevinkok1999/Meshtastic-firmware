@@ -579,8 +579,11 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
 
     activeTx_ = {};
 
+    const HiddenRfSnapshot rf = readHiddenRfSnapshot();
     XRAdaptiveContext context{};
     context.xbeeLinkScore = linkScoreFor(carrierNodeNum);
+    context.channelHealthScore = rf.channelHealthScore;
+    context.batteryPercent = rf.batteryPercent;
     context.peerSeenRecently = true;
     context.directMessage = true;
     context.privatePayload = true;
