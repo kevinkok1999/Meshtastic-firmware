@@ -212,7 +212,7 @@ void XRTransportTeam::updateQualityUnlocked(uint32_t destination, XRTeamTranspor
     if (*samples != UINT16_MAX)
         ++(*samples);
     memory->lastTouchedMs = nowMs;
-    learningDirty_ = true;
+    ++learningGeneration_;
 }
 
 int16_t XRTransportTeam::qualityForUnlocked(uint32_t destination, XRTeamTransport transport) const
@@ -556,7 +556,7 @@ void XRTransportTeam::markCancelled(uint32_t destination, uint32_t packetId, uin
     unlock();
 }
 
-XRTransportTeam::LearningSnapshot XRTransportTeam::learningSnapshot()
+XRTransportTeam::LearningSnapshot XRTransportTeam::learningSnapshot(uint32_t &generation)
 {
     lock();
     LearningSnapshot snapshot{};
@@ -571,6 +571,7 @@ XRTransportTeam::LearningSnapshot XRTransportTeam::learningSnapshot()
         record.xbeeSamples = memory.xbeeSamples;
     }
     snapshot.checksum = checksumLearningSnapshot(snapshot);
+    generation = learningGeneration_;
     unlock();
     return snapshot;
 }
@@ -600,7 +601,8 @@ bool XRTransportTeam::restoreLearning(const LearningSnapshot &snapshot, uint32_t
         memory.preferredUntilMs = 0;
         memory.lastTouchedMs = nowMs;
     }
-    learningDirty_ = false;
+    ++learningGeneration_;
+    persistedLearningGeneration_ = learningGeneration_;
     unlock();
     return true;
 }
@@ -608,15 +610,18 @@ bool XRTransportTeam::restoreLearning(const LearningSnapshot &snapshot, uint32_t
 bool XRTransportTeam::learningDirty()
 {
     lock();
-    const bool dirty = learningDirty_;
+    const bool dirty = learningGeneration_ != persistedLearningGeneration_;
     unlock();
     return dirty;
 }
 
-void XRTransportTeam::markLearningPersisted()
+void XRTransportTeam::markLearningPersisted(uint32_t generation)
 {
     lock();
-    learningDirty_ = false;
+    // A save may race with new learning. Mark only the captured generation as
+    // persisted; newer learning remains dirty and will be checkpointed later.
+    if (static_cast<int32_t>(generation - persistedLearningGeneration_) > 0)
+        persistedLearningGeneration_ = generation;
     unlock();
 }
 
@@ -628,7 +633,8 @@ void XRTransportTeam::reset()
     destinations_ = {};
     delivery_.reset();
     environment_ = {};
-    learningDirty_ = false;
+    learningGeneration_ = 0;
+    persistedLearningGeneration_ = 0;
     environment_.batteryPercent = 100;
     environment_.noiseFloorDbm = -120;
     unlock();
