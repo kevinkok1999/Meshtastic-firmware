@@ -253,6 +253,11 @@ class RadioInterface
     /// Some boards (1st gen Pinetab Lora module) have broken IRQ wires, so we need to poll via i2c registers
     virtual bool isIRQPending() { return false; }
 
+    /** Read-only ambient RF noise floor for adaptive transport selection.
+     * Keeps the low-level driver hook protected while exposing a safe metric.
+     */
+    int32_t getAmbientNoiseFloorDbm() { return getNoiseFloor(); }
+
     // Whether we use the default frequency slot given our LoRa config (region and modem preset)
     static bool uses_default_frequency_slot;
 
