@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: xr-flash-v2-${{ github.ref }}
-  cancel-in-progress: false
+  # Priority flash-candidate branch: when a proven-bad older run exists, the newest fixed candidate replaces it.
+  cancel-in-progress: true
 
 jobs:
   xr-standalone-tests:
