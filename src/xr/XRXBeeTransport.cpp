@@ -388,7 +388,7 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
         if (!team.allowAssist(XRTeamTransport::XBee, immediate.packet.to, immediate.packet.id, nowMs))
             continue;
 
-        if (prepareActiveTx(immediate.packet, nowMs, false)) {
+        if (prepareActiveTx(immediate.packet, nowMs, false, false)) {
             sendNextFragment(nowMs);
             return;
         }
@@ -406,16 +406,16 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
         if (static_cast<int32_t>(nowMs - queued->nextAttemptMs) < 0)
             continue;
 
-        Peer *peer = findPeer(queued->packet.to);
-        if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+        Peer *peer = selectRecoveryPeer(queued->packet.to, nowMs, queued->packet.hop_limit > 0);
+        if (!peer)
             continue;
 
         auto &team = XRTransportTeam::shared();
-        team.reportRoute(XRTeamTransport::XBee, peer->nodeNum, linkScoreFor(peer->nodeNum), true, nowMs);
+        team.reportRoute(XRTeamTransport::XBee, queued->packet.to, linkScoreFor(peer->nodeNum), true, nowMs);
         if (!team.claimRecovery(XRTeamTransport::XBee, queued->packet.to, queued->packet.id, nowMs))
             continue;
 
-        if (prepareActiveTx(queued->packet, nowMs, true)) {
+        if (prepareActiveTx(queued->packet, nowMs, true, queued->packet.hop_limit > 0)) {
             sendNextFragment(nowMs);
             return;
         }
@@ -425,9 +425,10 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
     }
 }
 
-bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue)
+bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue,
+                                      bool allowBridge)
 {
-    Peer *peer = findPeer(packet.to);
+    Peer *peer = allowBridge ? selectRecoveryPeer(packet.to, nowMs, true) : findPeer(packet.to);
     if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
         return false;
 
@@ -446,7 +447,8 @@ bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint3
 
     activeTx_ = {};
     activeTx_.used = true;
-    activeTx_.nodeNum = peer->nodeNum;
+    activeTx_.nodeNum = packet.to;
+    activeTx_.carrierNodeNum = peer->nodeNum;
     activeTx_.destination64 = peer->address64;
     activeTx_.packetId = packet.id;
     activeTx_.totalLength = static_cast<uint16_t>(stream.bytes_written);
@@ -508,6 +510,7 @@ void XRXBeeTransport::sendNextFragment(uint32_t nowMs)
 void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
 {
     const uint32_t nodeNum = activeTx_.nodeNum;
+    const uint32_t carrierNodeNum = activeTx_.carrierNodeNum;
     const uint32_t packetId = activeTx_.packetId;
 
     if (activeTx_.fromDeferredQueue) {
@@ -523,7 +526,7 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
     activeTx_ = {};
 
     XRAdaptiveContext context{};
-    context.xbeeLinkScore = linkScoreFor(nodeNum);
+    context.xbeeLinkScore = linkScoreFor(carrierNodeNum);
     context.peerSeenRecently = true;
     context.directMessage = true;
     context.privatePayload = true;
@@ -651,6 +654,30 @@ const XRXBeeTransport::Peer *XRXBeeTransport::findPeer(uint32_t nodeNum) const
         if (peer.used && peer.nodeNum == nodeNum)
             return &peer;
     return nullptr;
+}
+
+XRXBeeTransport::Peer *XRXBeeTransport::selectRecoveryPeer(uint32_t destination, uint32_t nowMs, bool allowBridge)
+{
+    if (Peer *direct = findPeer(destination)) {
+        if (direct->used && nowMs - direct->lastSeenMs <= PEER_FRESH_MS)
+            return direct;
+    }
+
+    if (!allowBridge)
+        return nullptr;
+
+    Peer *best = nullptr;
+    uint8_t bestScore = 0;
+    for (auto &peer : peers_) {
+        if (!peer.used || nowMs - peer.lastSeenMs > PEER_FRESH_MS)
+            continue;
+        const uint8_t score = linkScoreFor(peer.nodeNum);
+        if (!best || score > bestScore) {
+            best = &peer;
+            bestScore = score;
+        }
+    }
+    return best;
 }
 
 XRXBeeTransport::Peer *XRXBeeTransport::findPeerByAddress(uint64_t address64)
@@ -783,7 +810,7 @@ void XRXBeeTransport::onTxStatus(uint8_t frameId, uint8_t deliveryStatus, uint8_
     if (!activeTx_.used || activeTx_.waitingFrameId != frameId)
         return;
 
-    Peer *peer = findPeer(activeTx_.nodeNum);
+    Peer *peer = findPeer(activeTx_.carrierNodeNum);
     if (deliveryStatus == XBEE_DELIVERY_SUCCESS) {
         if (peer && peer->fragmentsOk != UINT16_MAX)
             ++peer->fragmentsOk;
