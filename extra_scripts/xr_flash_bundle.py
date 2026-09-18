@@ -9,20 +9,10 @@ from pathlib import Path
 
 Import("env")
 
-EXPECTED_FLASH_BYTES = 0x1000000
+EXPECTED_FLASH_BYTES = 16 * 1024 * 1024
 EXPECTED_APP_OFFSET = 0x10000
 EXPECTED_FILESYSTEM_OFFSET = 0xC90000
-EXPECTED_FILESYSTEM_SIZE = 0x360000
-EXPECTED_COREDUMP_OFFSET = 0xFF0000
-
-EXPECTED_PARTITIONS = {
-    "nvs": (0x9000, 0x5000),
-    "otadata": (0xE000, 0x2000),
-    "app0": (0x10000, 0x640000),
-    "app1": (0x650000, 0x640000),
-    "spiffs": (0xC90000, 0x360000),
-    "coredump": (0xFF0000, 0x10000),
-}
+EXPECTED_FILESYSTEM_END = 0xFF0000
 
 
 def _parse_offset(value):
@@ -32,55 +22,34 @@ def _parse_offset(value):
     return int(text, 0)
 
 
+def _parse_flash_size(value):
+    if isinstance(value, int):
+        return value
+
+    text = str(value or "").strip().lower().replace(" ", "")
+    if not text:
+        return 0
+    if text.endswith("mb"):
+        return int(text[:-2], 10) * 1024 * 1024
+    if text.endswith("m"):
+        return int(text[:-1], 10) * 1024 * 1024
+    if text.endswith("kb"):
+        return int(text[:-2], 10) * 1024
+    if text.endswith("k"):
+        return int(text[:-1], 10) * 1024
+    return int(text, 0)
+
+
 def _resolved_path(value):
     return Path(env.subst(str(value))).expanduser().resolve()
 
 
-def _partition_csv(build_env):
-    configured = build_env.GetProjectOption("board_build.partitions", None)
-    if not configured:
-        configured = build_env.BoardConfig().get("build.partitions", None)
-    if not configured:
-        raise RuntimeError("board_build.partitions is unavailable")
-
-    path = Path(build_env.subst("$PROJECT_DIR")) / str(configured)
-    path = path.resolve()
-    if not path.is_file():
-        raise RuntimeError(f"Partition CSV does not exist: {path}")
-    return path
-
-
-def _read_partitions(path):
-    partitions = {}
-    with path.open("r", encoding="utf-8") as handle:
-        for raw in handle:
-            stripped = raw.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            row = next(csv.reader([raw], skipinitialspace=True))
-            if len(row) < 5:
-                raise RuntimeError(f"Invalid partition row: {raw.rstrip()}")
-            name = row[0].strip()
-            offset = int(row[3].strip(), 0)
-            size = int(row[4].strip(), 0)
-            partitions[name] = {"offset": offset, "size": size}
-    return partitions
-
-
-def _validate_partition_layout(partitions):
-    for name, expected in EXPECTED_PARTITIONS.items():
-        actual = partitions.get(name)
-        if actual is None:
-            raise RuntimeError(f"Required partition '{name}' is missing")
-        if (actual["offset"], actual["size"]) != expected:
-            raise RuntimeError(
-                f"Partition '{name}' changed: "
-                f"expected offset=0x{expected[0]:x},size=0x{expected[1]:x}; "
-                f"got offset=0x{actual['offset']:x},size=0x{actual['size']:x}"
-            )
-
-    if partitions["coredump"]["offset"] + partitions["coredump"]["size"] != EXPECTED_FLASH_BYTES:
-        raise RuntimeError("Partition layout no longer fills exactly 16 MiB")
+def _sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _role_for(path, offset, app_path):
@@ -93,61 +62,125 @@ def _role_for(path, offset, app_path):
         return "partitions"
     if "boot_app" in name or "ota_data" in name:
         return "ota_data_initial"
+    if "littlefs" in name or "spiffs" in name:
+        return "filesystem"
     return f"image_{offset:08x}"
 
 
-def _sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _partition_table_path(build_env):
+    board = build_env.BoardConfig()
+    configured = board.get("build.partitions", None)
+    if not configured:
+        raise RuntimeError("Board partition CSV is unavailable; refusing to guess flash layout")
+
+    candidate = Path(str(configured))
+    if not candidate.is_absolute():
+        candidate = Path(build_env.subst("$PROJECT_DIR")) / candidate
+    candidate = candidate.resolve()
+
+    if not candidate.is_file():
+        raise RuntimeError(f"Partition CSV does not exist: {candidate}")
+    return candidate
 
 
-def _validate_binary_markers(image):
-    if len(image) <= EXPECTED_FILESYSTEM_OFFSET:
-        raise RuntimeError("Full image is too small to contain the filesystem")
-    if image[0] != 0xE9:
-        raise RuntimeError("Bootloader image magic at 0x000000 is not ESP32 0xE9")
-    if image[0x8000:0x8002] != b"\xaa\x50":
-        raise RuntimeError("Partition-table signature at 0x008000 is not 0xAA50")
-    if image[EXPECTED_APP_OFFSET] != 0xE9:
-        raise RuntimeError("Application image magic at 0x010000 is not ESP32 0xE9")
+def _read_partitions(build_env):
+    path = _partition_table_path(build_env)
+    partitions = []
 
-    fs = image[EXPECTED_FILESYSTEM_OFFSET:EXPECTED_COREDUMP_OFFSET]
-    if not fs or all(byte == 0xFF for byte in fs):
-        raise RuntimeError("Filesystem region is empty/erased; refusing incomplete full-flash image")
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.reader(handle):
+            if not row:
+                continue
+            first = row[0].strip()
+            if not first or first.startswith("#"):
+                continue
+            if len(row) < 5:
+                raise RuntimeError(f"Malformed partition row in {path}: {row!r}")
+
+            name = row[0].strip()
+            part_type = row[1].strip()
+            subtype = row[2].strip()
+            offset = int(row[3].strip(), 0)
+            size = int(row[4].strip(), 0)
+            if size <= 0:
+                raise RuntimeError(f"Invalid partition size for {name}: {size}")
+
+            partitions.append(
+                {
+                    "name": name,
+                    "type": part_type,
+                    "subtype": subtype,
+                    "offset": offset,
+                    "size": size,
+                    "end": offset + size,
+                }
+            )
+
+    if not partitions:
+        raise RuntimeError(f"No partitions parsed from {path}")
+
+    for previous, current in zip(partitions, partitions[1:]):
+        if current["offset"] < previous["end"]:
+            raise RuntimeError(
+                f"Partition overlap: {previous['name']} ends at 0x{previous['end']:x}, "
+                f"{current['name']} starts at 0x{current['offset']:x}"
+            )
+
+    return path, partitions
+
+
+def _filesystem_partition(partitions):
+    for part in partitions:
+        subtype = part["subtype"].lower()
+        name = part["name"].lower()
+        if part["type"].lower() == "data" and (
+            subtype in {"spiffs", "littlefs", "fat"} or name in {"spiffs", "littlefs", "filesystem"}
+        ):
+            return part
+    raise RuntimeError("No filesystem partition found in partition CSV")
+
+
+def _require_role(resolved, role):
+    matches = [entry for entry in resolved if entry["role"] == role]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected exactly one {role} image, found {len(matches)}")
+    return matches[0]
 
 
 def build_xr_flash_bundle(source, target, build_env):
-    app_path = Path(build_env.subst("$BUILD_DIR")) / f"{build_env.subst('$PROGNAME')}.bin"
-    app_path = app_path.resolve()
-    if not app_path.is_file():
-        print(f"XR bundle deferred until application exists: {app_path}")
-        return
-
+    app_path = Path(str(target[0])).resolve()
     app_offset_raw = build_env.get("ESP32_APP_OFFSET")
     if app_offset_raw is None:
         raise RuntimeError("ESP32_APP_OFFSET is unavailable; refusing to guess flash layout")
     app_offset = _parse_offset(app_offset_raw)
-    if app_offset != EXPECTED_APP_OFFSET:
-        raise RuntimeError(f"Unexpected app offset 0x{app_offset:x}; expected 0x{EXPECTED_APP_OFFSET:x}")
 
-    partitions_path = _partition_csv(build_env)
-    partitions = _read_partitions(partitions_path)
-    _validate_partition_layout(partitions)
-
-    build_dir = Path(build_env.subst("$BUILD_DIR")).resolve()
-    filesystem_path = build_dir / "littlefs.bin"
-    if not filesystem_path.is_file():
-        print("XR full-flash bundle deferred: run buildfs to produce littlefs.bin")
-        return
-
-    filesystem_size = filesystem_path.stat().st_size
-    if filesystem_size <= 0 or filesystem_size > EXPECTED_FILESYSTEM_SIZE:
+    board = build_env.BoardConfig()
+    flash_bytes = _parse_flash_size(board.get("upload.flash_size", None))
+    if flash_bytes != EXPECTED_FLASH_BYTES:
         raise RuntimeError(
-            f"Invalid LittleFS image size {filesystem_size}; partition limit is {EXPECTED_FILESYSTEM_SIZE}"
+            f"Canonical T-Deck Plus XR build requires exactly 16 MiB flash, got {flash_bytes} bytes"
         )
+
+    partition_path, partitions = _read_partitions(build_env)
+    filesystem = _filesystem_partition(partitions)
+
+    app0 = next((part for part in partitions if part["name"] == "app0"), None)
+    if app0 is None or app0["offset"] != EXPECTED_APP_OFFSET:
+        raise RuntimeError(
+            f"Expected app0 at 0x{EXPECTED_APP_OFFSET:x}; partition table does not match canonical layout"
+        )
+    if app_offset != EXPECTED_APP_OFFSET:
+        raise RuntimeError(f"Resolved app offset is 0x{app_offset:x}, expected 0x{EXPECTED_APP_OFFSET:x}")
+    if filesystem["offset"] != EXPECTED_FILESYSTEM_OFFSET:
+        raise RuntimeError(
+            f"Filesystem offset is 0x{filesystem['offset']:x}, expected 0x{EXPECTED_FILESYSTEM_OFFSET:x}"
+        )
+    if filesystem["end"] != EXPECTED_FILESYSTEM_END:
+        raise RuntimeError(
+            f"Filesystem end is 0x{filesystem['end']:x}, expected 0x{EXPECTED_FILESYSTEM_END:x}"
+        )
+    if max(part["end"] for part in partitions) > flash_bytes:
+        raise RuntimeError("Partition table extends beyond physical 16 MiB flash")
 
     raw = build_env.Flatten(build_env.get("FLASH_EXTRA_IMAGES", []))
     if len(raw) % 2 != 0:
@@ -156,92 +189,108 @@ def build_xr_flash_bundle(source, target, build_env):
     entries = []
     for index in range(0, len(raw), 2):
         entries.append((_parse_offset(raw[index]), _resolved_path(raw[index + 1])))
+
     entries.append((app_offset, app_path))
+
+    build_dir = Path(build_env.subst("$BUILD_DIR")).resolve()
+    littlefs_path = build_dir / "littlefs.bin"
+    if not littlefs_path.is_file() or littlefs_path.stat().st_size <= 0:
+        raise RuntimeError(
+            f"LittleFS image missing: {littlefs_path}. Run the buildfs target before the firmware build."
+        )
+    if littlefs_path.stat().st_size > filesystem["size"]:
+        raise RuntimeError(
+            f"LittleFS image ({littlefs_path.stat().st_size}) exceeds filesystem partition ({filesystem['size']})"
+        )
+    entries.append((filesystem["offset"], littlefs_path.resolve()))
 
     unique = []
     seen = set()
-    for offset, path in entries:
-        key = (offset, str(path))
+    for offset, image_path in entries:
+        key = (offset, str(image_path))
         if key not in seen:
-            unique.append((offset, path))
+            unique.append((offset, image_path))
             seen.add(key)
 
     resolved = []
-    for offset, path in sorted(unique, key=lambda item: item[0]):
-        if not path.is_file():
-            raise RuntimeError(f"Flash image does not exist: {path}")
-        size = path.stat().st_size
+    for offset, image_path in sorted(unique, key=lambda item: item[0]):
+        if not image_path.is_file():
+            raise RuntimeError(f"Flash image does not exist: {image_path}")
+        size = image_path.stat().st_size
         if size <= 0:
-            raise RuntimeError(f"Flash image is empty: {path}")
+            raise RuntimeError(f"Flash image is empty: {image_path}")
+        end = offset + size
+        if end > flash_bytes:
+            raise RuntimeError(f"Flash image exceeds 16 MiB at 0x{end:x}: {image_path}")
+
         resolved.append(
             {
                 "offset": offset,
-                "path": str(path),
-                "source_name": path.name,
-                "role": _role_for(path, offset, app_path),
+                "path": str(image_path),
+                "source_name": image_path.name,
+                "role": _role_for(image_path, offset, app_path),
                 "size": size,
+                "end": end,
+                "sha256": _sha256(image_path),
             }
         )
 
-    resolved.append(
-        {
-            "offset": EXPECTED_FILESYSTEM_OFFSET,
-            "path": str(filesystem_path),
-            "source_name": filesystem_path.name,
-            "role": "littlefs",
-            "size": filesystem_size,
-            "partition_size": EXPECTED_FILESYSTEM_SIZE,
-        }
-    )
-    resolved.sort(key=lambda item: item["offset"])
-
     previous_end = 0
     for item in resolved:
-        item_end = item["offset"] + item["size"]
         if item["offset"] < previous_end:
             raise RuntimeError(f"Overlapping flash region at 0x{item['offset']:x}: {item['path']}")
-        if item_end > EXPECTED_COREDUMP_OFFSET:
-            raise RuntimeError(
-                f"Flash region crosses reserved coredump boundary: {item['path']} ends at 0x{item_end:x}"
-            )
-        previous_end = item_end
+        previous_end = item["end"]
 
     if not resolved or resolved[0]["offset"] != 0:
-        raise RuntimeError("Resolved ESP32-S3 flash map does not start at offset 0")
+        raise RuntimeError(
+            "Resolved ESP32-S3 flash map does not start at offset 0; refusing to create a misleading full image"
+        )
 
-    # The first-install image intentionally ends at the coredump partition.
-    # eraseAll=true erases the final 64 KiB coredump area before flashing.
-    image = bytearray(b"\xff" * EXPECTED_COREDUMP_OFFSET)
+    bootloader = _require_role(resolved, "bootloader")
+    partition_bin = _require_role(resolved, "partitions")
+    application = _require_role(resolved, "application")
+    filesystem_image = _require_role(resolved, "filesystem")
+
+    if bootloader["offset"] != 0:
+        raise RuntimeError(f"Bootloader must start at 0x0, got 0x{bootloader['offset']:x}")
+    if partition_bin["offset"] != 0x8000:
+        raise RuntimeError(f"Partition table must start at 0x8000, got 0x{partition_bin['offset']:x}")
+    if application["offset"] != EXPECTED_APP_OFFSET:
+        raise RuntimeError("Application offset mismatch")
+    if filesystem_image["offset"] != EXPECTED_FILESYSTEM_OFFSET:
+        raise RuntimeError("Filesystem image offset mismatch")
+
+    # Produce a deterministic first-install image through the end of the
+    # filesystem partition. The final 64 KiB coredump partition intentionally
+    # remains erased by the installer's eraseAll step.
+    full_size = EXPECTED_FILESYSTEM_END
+    image = bytearray(b"\xff" * full_size)
     for item in resolved:
         data = Path(item["path"]).read_bytes()
         start = item["offset"]
-        image[start:start + len(data)] = data
-
-    _validate_binary_markers(image)
+        image[start : start + len(data)] = data
 
     full_path = build_dir / "xr-full-flash.bin"
     map_path = build_dir / "xr-flash-map.json"
     full_path.write_bytes(image)
 
-    if full_path.stat().st_size != EXPECTED_COREDUMP_OFFSET:
+    if full_path.stat().st_size != EXPECTED_FILESYSTEM_END:
         raise RuntimeError(
-            f"Full image size mismatch: {full_path.stat().st_size} != {EXPECTED_COREDUMP_OFFSET}"
+            f"Full image size {full_path.stat().st_size} != canonical 0x{EXPECTED_FILESYSTEM_END:x}"
         )
 
-    board = build_env.BoardConfig()
     manifest = {
         "schema": 2,
         "target": "LILYGO T-Deck Plus",
         "environment": build_env.subst("$PIOENV"),
         "mcu": board.get("build.mcu", "esp32s3"),
-        "flash_size_bytes": EXPECTED_FLASH_BYTES,
-        "app_offset": app_offset,
-        "filesystem_offset": EXPECTED_FILESYSTEM_OFFSET,
-        "filesystem_size": EXPECTED_FILESYSTEM_SIZE,
-        "coredump_offset": EXPECTED_COREDUMP_OFFSET,
-        "partition_csv": str(partitions_path),
+        "flashSizeBytes": flash_bytes,
+        "partitionCsv": str(partition_path),
+        "appOffset": app_offset,
+        "filesystemOffset": filesystem["offset"],
+        "filesystemSize": filesystem["size"],
         "images": resolved,
-        "full_image": {
+        "fullImage": {
             "path": str(full_path),
             "offset": 0,
             "size": full_path.stat().st_size,
@@ -253,11 +302,8 @@ def build_xr_flash_bundle(source, target, build_env):
     print(f"XR flash map: {map_path}")
     print(
         f"XR full flash image: {full_path} "
-        f"({full_path.stat().st_size} bytes, sha256={manifest['full_image']['sha256']})"
+        f"({full_path.stat().st_size} bytes, sha256={manifest['fullImage']['sha256']})"
     )
 
 
-# The firmware post-action can run before the filesystem exists. The buildfs
-# post-action is authoritative and overwrites the bundle once LittleFS is built.
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", build_xr_flash_bundle)
-env.AddPostAction("$BUILD_DIR/littlefs.bin", build_xr_flash_bundle)
