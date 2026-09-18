@@ -125,7 +125,11 @@ bool XRDeliveryStateMachine::markPrimaryFailed(uint32_t destination, uint32_t pa
         return true;
     }
 
-    entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
+    // Multiple sidecar sinks can observe the same authoritative LoRa failure.
+    // Treat that notification idempotently so one failed LoRa delivery is never
+    // learned/counted twice merely because two helpers are installed.
+    if (entry->phase != XRDeliveryPhase::RecoveryQueued)
+        entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
     entry->phase = XRDeliveryPhase::RecoveryQueued;
     entry->activePath = XRDeliveryPath::None;
     entry->updatedAtMs = nowMs;
