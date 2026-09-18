@@ -42,7 +42,7 @@ jobs:
         run: |
           pio pkg install -e t-deck-tft
           pio pkg install -e t-deck-ultra
-          pio pkg install -e t-deck-xbee-ci
+          pio pkg install -e t-deck-ultra-xbee
 
       - name: Apply pioarduino SCons compatibility fix
         run: |
@@ -128,25 +128,38 @@ jobs:
           pio test -e native -f test_xr_adaptive_intelligence
 
 
-      - name: Compile optional XBee XR 868 integration
+      - name: Build canonical production target (LoRa + ESP-NOW + XBee)
         shell: bash
         run: |
           set -o pipefail
-          pio run -e t-deck-xbee-ci 2>&1 | tee /tmp/xbee-build.log
+          pio run -e t-deck-ultra-xbee 2>&1 | tee /tmp/xbee-build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            echo "::group::XBee compiler diagnostics"
-            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xbee-build.log | tail -n 120 || true
+            echo "::group::Production compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xbee-build.log | tail -n 160 || true
             echo "::endgroup::"
             exit "$status"
           fi
 
-      - name: Validate Ultra firmware image
+      - name: Build production LittleFS image
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-ultra-xbee -t buildfs 2>&1 | tee /tmp/buildfs.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::LittleFS diagnostics"
+            tail -n 160 /tmp/buildfs.log || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Validate production firmware image
         id: firmware
         shell: bash
         run: |
           set -euo pipefail
-          BUILD_DIR=.pio/build/t-deck-ultra
+          BUILD_DIR=.pio/build/t-deck-ultra-xbee
           preferred="$BUILD_DIR/firmware.bin"
           full="$BUILD_DIR/xr-full-flash.bin"
           flash_map="$BUILD_DIR/xr-flash-map.json"
@@ -164,11 +177,11 @@ jobs:
           echo "flash_map=$flash_map" >> "$GITHUB_OUTPUT"
           ls -lh "$preferred" "$full" "$flash_map"
 
-      - name: Package MeshOffGrid XR Ultra flash bundle
+      - name: Package MeshOffGrid XR Ultra production flash bundle
         shell: bash
         run: |
           set -euo pipefail
-          BUILD_DIR=.pio/build/t-deck-ultra
+          BUILD_DIR=.pio/build/t-deck-ultra-xbee
           RELEASE_DIR=xr-ultra-release
           mkdir -p "$RELEASE_DIR"
 
@@ -212,7 +225,7 @@ jobs:
           {
             echo "MeshOffGrid XR Ultra"
             echo "Target: LILYGO T-Deck Plus / ESP32-S3"
-            echo "Profile: t-deck-ultra"
+            echo "Profile: t-deck-ultra-xbee"
             echo "Commit: $(git rev-parse HEAD)"
             echo
             echo "Files:"
@@ -222,8 +235,11 @@ jobs:
             echo "  xr-flash-map.json = exact PlatformIO-resolved source flash map"
             echo
             echo "XBee XR 868:"
-            echo "  Driver is compile-tested separately in t-deck-xbee-ci."
-            echo "  Physical UART pins are intentionally NOT enabled in this flashable bundle until real hardware wiring is validated."
+            echo "  Production UART2 enabled."
+            echo "  GPIO47 = T-Deck RX from XBee DOUT/TX."
+            echo "  GPIO48 = T-Deck TX to XBee DIN/RX."
+            echo "  Factory AP=0/9600 modules are auto-provisioned to AP=1, AO=0, 115200 and saved."
+            echo "  Missing XBee hardware degrades safely; LoRa + ESP-NOW remain operational."
             echo
             echo "LoRa/Meshtastic: preserved"
             echo "XR ESP-NOW sidecar: enabled"
@@ -258,6 +274,7 @@ jobs:
             /tmp/stock-build.log
             /tmp/ultra-build.log
             /tmp/xbee-build.log
+            /tmp/buildfs.log
           if-no-files-found: ignore
           retention-days: 7
 
