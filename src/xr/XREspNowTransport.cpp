@@ -653,13 +653,14 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
     const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, packet.id);
 
     CachedOutbound *cached = findCachedOutbound(packet.to, packet.id);
-    if (cached && packet.want_ack) {
+    if (fromDeferredQueue && cached && packet.want_ack) {
+        // Only recovery after authoritative LoRa failure can attribute a later
+        // end-to-end ACK strongly to this sidecar. Normal assist runs in
+        // parallel with LoRa, so an ACK there is causally ambiguous.
         cached->adaptivePlan = plan;
         cached->adaptivePlanValid = true;
         cached->adaptiveAttemptMs = nowMs;
 
-        // A local carrier failure is definitive enough to learn immediately.
-        // A local success is not: wait for the real end-to-end Meshtastic ACK.
         if (!accepted) {
             XRAdaptiveOutcome outcome{};
             outcome.transportFailed = true;
@@ -671,6 +672,8 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
         outcome.transportAccepted = accepted;
         outcome.transportFailed = !accepted;
         coordinator_.report(plan, outcome, nowMs);
+        if (cached)
+            cached->adaptivePlanValid = false;
     }
     return accepted;
 }
