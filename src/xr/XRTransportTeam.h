@@ -65,8 +65,8 @@ class XRTransportTeam
                               uint32_t nowMs);
 
     // End-to-end Meshtastic result. ACK/NAK is authoritative for every transport.
-    void markDelivered(uint32_t destination, uint32_t packetId);
-    void markCancelled(uint32_t destination, uint32_t packetId);
+    void markDelivered(uint32_t destination, uint32_t packetId, uint32_t nowMs);
+    void markCancelled(uint32_t destination, uint32_t packetId, uint32_t nowMs);
 
     XRTeamTransport preferredTransport(uint32_t destination, uint32_t nowMs);
 
