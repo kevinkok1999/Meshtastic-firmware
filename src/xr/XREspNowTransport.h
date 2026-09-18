@@ -172,6 +172,7 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
     bool sendFrame(const uint8_t *mac, FrameHeader header, const uint8_t *payload, size_t payloadLength);
     Peer *findPeer(uint32_t nodeNum);
     const Peer *findPeer(uint32_t nodeNum) const;
+    Peer *selectRecoveryPeer(uint32_t destination, uint32_t nowMs, bool allowBridge);
     Peer &rememberPeer(uint32_t nodeNum, const uint8_t mac[6], int8_t rssi, uint32_t nowMs);
     Reassembly &getReassembly(const FrameHeader &header, const uint8_t mac[6], uint32_t nowMs);
     void expireState(uint32_t nowMs);
