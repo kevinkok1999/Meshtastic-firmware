@@ -70,7 +70,7 @@ jobs:
 
           cp artifact/XR-TDeck-Plus-FULL-FLASH.bin ./XR-TDeck-Plus-FULL-FLASH.bin
           echo "6a1db6cd47bc64051061bb0bc4e5d2eba2451a78ddd94cd636706aee8b7730c1  XR-TDeck-Plus-FULL-FLASH.bin" | sha256sum -c -
-          git add XR-TDeck-Plus-FULL-FLASH.bin
+          git add -f XR-TDeck-Plus-FULL-FLASH.bin
           if git diff --cached --quiet; then
             echo "Validated binary already present; nothing to commit."
           else
