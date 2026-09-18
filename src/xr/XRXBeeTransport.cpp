@@ -317,6 +317,7 @@ void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t n
 {
     switch (event.type) {
     case DeliveryEventType::Failed: {
+        XRTransportTeam::shared().notePrimaryFailed(event.peer, event.packetId, nowMs);
         CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
         if (!cached) {
             // Reliable-LoRa failure can be published from a different task a
