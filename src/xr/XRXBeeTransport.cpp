@@ -1,4 +1,5 @@
 #include "XRXBeeTransport.h"
+#include "XRTransportTeam.h"
 
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR) && defined(MESHOFFGRID_ENABLE_XBEE_XR868) && \
     defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
@@ -283,6 +284,10 @@ void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t n
     }
     case DeliveryEventType::Acked:
     case DeliveryEventType::Naked:
+        if (event.type == DeliveryEventType::Acked)
+            XRTransportTeam::shared().markDelivered(event.peer, event.packetId);
+        else
+            XRTransportTeam::shared().markCancelled(event.peer, event.packetId);
         deferred_.markDelivered(event.packetId, event.peer);
         clearCachedOutbound(event.peer, event.packetId);
         if (activeTx_.used && activeTx_.packetId == event.packetId && activeTx_.nodeNum == event.peer)
@@ -378,10 +383,16 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
         if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
             continue;
 
+        auto &team = XRTransportTeam::shared();
+        team.reportRoute(XRTeamTransport::XBee, peer->nodeNum, linkScoreFor(peer->nodeNum), true, nowMs);
+        if (!team.allowAssist(XRTeamTransport::XBee, immediate.packet.to, immediate.packet.id, nowMs))
+            continue;
+
         if (prepareActiveTx(immediate.packet, nowMs, false)) {
             sendNextFragment(nowMs);
             return;
         }
+        team.reportAssistResult(XRTeamTransport::XBee, immediate.packet.to, immediate.packet.id, false, nowMs);
     }
 
     // Recovery path: only packets whose normal reliable LoRa delivery actually
@@ -399,11 +410,17 @@ void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
         if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
             continue;
 
+        auto &team = XRTransportTeam::shared();
+        team.reportRoute(XRTeamTransport::XBee, peer->nodeNum, linkScoreFor(peer->nodeNum), true, nowMs);
+        if (!team.claimRecovery(XRTeamTransport::XBee, queued->packet.to, queued->packet.id, nowMs))
+            continue;
+
         if (prepareActiveTx(queued->packet, nowMs, true)) {
             sendNextFragment(nowMs);
             return;
         }
 
+        team.reportRecoveryResult(XRTeamTransport::XBee, queued->packet.to, queued->packet.id, false, nowMs);
         deferred_.markFailure(queued->packet.id, queued->packet.to, nowMs);
     }
 }
@@ -498,6 +515,9 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
             deferred_.markTransportAccepted(packetId, nodeNum, nowMs);
         else
             deferred_.markFailure(packetId, nodeNum, nowMs);
+        XRTransportTeam::shared().reportRecoveryResult(XRTeamTransport::XBee, nodeNum, packetId, success, nowMs);
+    } else {
+        XRTransportTeam::shared().reportAssistResult(XRTeamTransport::XBee, nodeNum, packetId, success, nowMs);
     }
 
     activeTx_ = {};
@@ -646,12 +666,14 @@ XRXBeeTransport::Peer &XRXBeeTransport::rememberPeer(uint32_t nodeNum, uint64_t 
     if (Peer *existing = findPeer(nodeNum)) {
         existing->address64 = address64;
         existing->lastSeenMs = nowMs;
+        XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, nodeNum, linkScoreFor(nodeNum), true, nowMs);
         return *existing;
     }
 
     if (Peer *sameAddress = findPeerByAddress(address64)) {
         sameAddress->nodeNum = nodeNum;
         sameAddress->lastSeenMs = nowMs;
+        XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, nodeNum, linkScoreFor(nodeNum), true, nowMs);
         return *sameAddress;
     }
 
@@ -670,6 +692,7 @@ XRXBeeTransport::Peer &XRXBeeTransport::rememberPeer(uint32_t nodeNum, uint64_t 
     slot->nodeNum = nodeNum;
     slot->address64 = address64;
     slot->lastSeenMs = nowMs;
+    XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, nodeNum, linkScoreFor(nodeNum), true, nowMs);
     return *slot;
 }
 
@@ -711,8 +734,10 @@ void XRXBeeTransport::expireState(uint32_t nowMs)
     }
 
     for (auto &peer : peers_) {
-        if (peer.used && nowMs - peer.lastSeenMs > 24u * 60u * 60u * 1000u)
+        if (peer.used && nowMs - peer.lastSeenMs > 24u * 60u * 60u * 1000u) {
+            XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, peer.nodeNum, 0, false, nowMs);
             peer = {};
+        }
     }
 }
 
