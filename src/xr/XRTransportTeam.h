@@ -27,6 +27,7 @@ class XRTransportTeam
 
     static constexpr uint32_t ROUTE_REPORT_TTL_MS = 70000u;
     static constexpr uint32_t ASSIST_RESERVATION_MS = 30000u;
+    static constexpr uint32_t RECOVERY_ARBITRATION_MS = 150u;
     static constexpr uint32_t RECOVERY_LEASE_MS = 8000u;
     static constexpr uint32_t ACK_WAIT_MS = 60000u;
     static constexpr uint32_t FAILED_TRANSPORT_COOLDOWN_MS = 5000u;
@@ -77,6 +78,8 @@ class XRTransportTeam
         XRTeamTransport assistOwner = XRTeamTransport::None;
         uint32_t assistUntilMs = 0;
 
+        bool recoveryArbitrated = false;
+        uint32_t recoveryArbitrationUntilMs = 0;
         XRTeamTransport recoveryOwner = XRTeamTransport::None;
         uint32_t recoveryLeaseUntilMs = 0;
 
