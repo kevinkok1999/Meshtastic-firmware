@@ -12,6 +12,10 @@
 #endif
 #include "NodeDB.h"
 
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XBEE_XR868)
+#include "xr/XRXBeeTransport.h"
+#endif
+
 #if USERPREFS_EVENT_MODE
 static void capEventRelayHops(meshtastic_MeshPacket *packet)
 {
@@ -473,6 +477,18 @@ int32_t NextHopRouter::doRetransmissions()
                           p.packet->id, p.numRetransmissions);
 
                 if (!isBroadcast(p.packet->to)) {
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XBEE_XR868)
+                    // After the initial transmission plus multiple unacknowledged
+                    // LoRa retries (ESP-NOW has also had its sidecar opportunities),
+                    // admit XBee as the next fallback route. queueFallback() is
+                    // de-duplicated and only succeeds when a fresh XBee peer/gateway
+                    // is actually available.
+                    if (p.numRetransmissions == 2 && isFromUs(p.packet) && p.packet->want_ack &&
+                        meshoffgrid::xr::xrXBeeTransport) {
+                        if (meshoffgrid::xr::xrXBeeTransport->queueFallback(*p.packet))
+                            LOG_INFO("Escalated 0x%08x to XR XBee bridge after LoRa/ESP-NOW delivery failures", p.packet->id);
+                    }
+#endif
                     if (p.numRetransmissions == 1) {
                         // Last retransmission: this directed delivery went un-ACKed. Record the failure
                         // (M3 - accumulates across DMs to age out a flapping/dead route) and reset
