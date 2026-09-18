@@ -5,8 +5,10 @@
     defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
 
 #include "NodeDB.h"
+#include "PowerStatus.h"
 #include "Router.h"
 #include "UptimeClock.h"
+#include "airtime.h"
 #include "configuration.h"
 
 #include <algorithm>
@@ -20,6 +22,31 @@ XRXBeeTransport *XRXBeeTransport::instance_ = nullptr;
 XRXBeeTransport *xrXBeeTransport = nullptr;
 
 namespace {
+void reportHiddenRfEnvironment(uint32_t nowMs)
+{
+    static uint32_t lastReportMs = 0;
+    if (lastReportMs != 0 && nowMs - lastReportMs < 1000u)
+        return;
+    lastReportMs = nowMs;
+
+    uint8_t batteryPercent = 100;
+    if (powerStatus && powerStatus->getHasBattery())
+        batteryPercent = powerStatus->getBatteryChargePercent();
+
+    float utilization = airTime ? airTime->smoothedChannelUtilizationPercent() : 0.0f;
+    if (utilization < 0.0f)
+        utilization = 0.0f;
+    if (utilization > 100.0f)
+        utilization = 100.0f;
+
+    int16_t noiseFloorDbm = -120;
+    if (router && router->getRadioIface())
+        noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getNoiseFloor());
+
+    XRTransportTeam::shared().reportEnvironment(
+        batteryPercent, static_cast<uint8_t>(utilization + 0.5f), noiseFloorDbm, nowMs);
+}
+
 constexpr UBaseType_t TX_QUEUE_DEPTH = 6;
 constexpr uint8_t XBEE_DELIVERY_SUCCESS = 0x00;
 }
@@ -105,6 +132,7 @@ int32_t XRXBeeTransport::runOnce()
         return 5000;
 
     const uint32_t nowMs = Time::getMillis();
+    reportHiddenRfEnvironment(nowMs);
     link_.poll();
     drainDeliveryEvents(nowMs);
 
