@@ -11,10 +11,59 @@ permissions:
   actions: write
 
 concurrency:
-  group: xr-flash-candidate-${{ github.ref }}
+  group: xr-flash-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  xr-standalone-tests:
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout firmware branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+
+      - name: Compile standalone XBee codec tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xbee_codec/standalone.cpp \
+            src/mesh/xbee/XBeeApiCodec.cpp \
+            src/xr/XRDeliveryEvents.cpp \
+            -o /tmp/xbee-codec-test
+          /tmp/xbee-codec-test
+
+      - name: Compile XR delivery lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xr_delivery_state/standalone.cpp \
+            src/xr/XRDeliveryStateMachine.cpp \
+            -o /tmp/xr-delivery-state-test
+          /tmp/xr-delivery-state-test
+
+      - name: Compile XR team delivery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xr_transport_team/standalone.cpp \
+            src/xr/XRTransportTeam.cpp \
+            src/xr/XRDeliveryStateMachine.cpp \
+            -o /tmp/xr-team-delivery-test
+          /tmp/xr-team-delivery-test
+
+      - name: Document native-test host limitation
+        shell: bash
+        run: |
+          echo "Native Portduino tests are Linux-only in this repository (macOS lacks argp.h)."
+          echo "Flash-candidate gating continues with standalone XR tests plus the real ESP32-S3 production build."
+
+
   build-tdeck-plus:
     runs-on: macos-15
     timeout-minutes: 55
@@ -60,44 +109,6 @@ jobs:
           platform_py.write_text(text, encoding="utf-8")
           print(f"Patched {platform_py}: PlatformIO Core now owns tool-scons")
           PY
-
-      - name: Compile standalone XBee codec tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
-            test/test_xbee_codec/standalone.cpp \
-            src/mesh/xbee/XBeeApiCodec.cpp \
-            src/xr/XRDeliveryEvents.cpp \
-            -o /tmp/xbee-codec-test
-          /tmp/xbee-codec-test
-
-      - name: Compile XR delivery lifecycle tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
-            test/test_xr_delivery_state/standalone.cpp \
-            src/xr/XRDeliveryStateMachine.cpp \
-            -o /tmp/xr-delivery-state-test
-          /tmp/xr-delivery-state-test
-
-      - name: Compile XR team delivery tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
-            test/test_xr_transport_team/standalone.cpp \
-            src/xr/XRTransportTeam.cpp \
-            src/xr/XRDeliveryStateMachine.cpp \
-            -o /tmp/xr-team-delivery-test
-          /tmp/xr-team-delivery-test
-
-      - name: Document native-test host limitation
-        shell: bash
-        run: |
-          echo "Native Portduino tests are Linux-only in this repository (macOS lacks argp.h)."
-          echo "Flash-candidate gating continues with standalone XR tests plus the real ESP32-S3 production build."
 
       - name: Build canonical production target (LoRa + ESP-NOW + XBee + LittleFS)
         shell: bash
@@ -308,3 +319,28 @@ jobs:
           path: xr-ultra-release/
           if-no-files-found: error
           retention-days: 30
+
+  flash-ready-gate:
+    name: Flash-ready candidate gate
+    if: always()
+    needs:
+      - xr-standalone-tests
+      - build-tdeck-plus
+    runs-on: macos-15
+    timeout-minutes: 5
+
+    steps:
+      - name: Require tests and production artifact build
+        shell: bash
+        env:
+          TEST_RESULT: ${{ needs.xr-standalone-tests.result }}
+          BUILD_RESULT: ${{ needs.build-tdeck-plus.result }}
+        run: |
+          set -euo pipefail
+          echo "XR standalone tests: $TEST_RESULT"
+          echo "T-Deck Plus production build: $BUILD_RESULT"
+          if [ "$TEST_RESULT" != "success" ] || [ "$BUILD_RESULT" != "success" ]; then
+            echo "Flash-ready gate failed: all lanes must be green." >&2
+            exit 1
+          fi
+          echo "Flash-ready gate passed: tests + production build + release validation are green."
