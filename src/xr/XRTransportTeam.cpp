@@ -31,6 +31,11 @@ uint32_t &XRTransportTeam::cooldownFor(PacketState &packet, XRTeamTransport tran
     return transport == XRTeamTransport::XBee ? packet.xbeeCooldownUntilMs : packet.espNowCooldownUntilMs;
 }
 
+int XRTransportTeam::clampScore(int value, int minValue, int maxValue)
+{
+    return std::max(minValue, std::min(maxValue, value));
+}
+
 XRTransportTeam::RouteState *XRTransportTeam::findRoute(XRTeamTransport transport, uint32_t destination)
 {
     for (auto &route : routes_) {
@@ -92,8 +97,99 @@ XRTransportTeam::PacketState *XRTransportTeam::allocatePacket(uint32_t destinati
     return slot;
 }
 
+XRTransportTeam::DestinationMemory *XRTransportTeam::findDestination(uint32_t destination)
+{
+    for (auto &memory : destinations_) {
+        if (memory.used && memory.destination == destination)
+            return &memory;
+    }
+    return nullptr;
+}
+
+const XRTransportTeam::DestinationMemory *XRTransportTeam::findDestination(uint32_t destination) const
+{
+    for (const auto &memory : destinations_) {
+        if (memory.used && memory.destination == destination)
+            return &memory;
+    }
+    return nullptr;
+}
+
+XRTransportTeam::DestinationMemory *XRTransportTeam::allocateDestination(uint32_t destination, uint32_t nowMs)
+{
+    if (DestinationMemory *existing = findDestination(destination)) {
+        existing->lastTouchedMs = nowMs;
+        return existing;
+    }
+
+    DestinationMemory *slot = nullptr;
+    for (auto &memory : destinations_) {
+        if (!memory.used) {
+            slot = &memory;
+            break;
+        }
+        if (!slot || (nowMs - memory.lastTouchedMs) > (nowMs - slot->lastTouchedMs))
+            slot = &memory;
+    }
+
+    if (!slot)
+        return nullptr;
+
+    *slot = {};
+    slot->used = true;
+    slot->destination = destination;
+    slot->espNowQuality = 50;
+    slot->xbeeQuality = 50;
+    slot->lastTouchedMs = nowMs;
+    return slot;
+}
+
+void XRTransportTeam::updateQualityUnlocked(uint32_t destination, XRTeamTransport transport, uint8_t sample,
+                                            uint32_t nowMs)
+{
+    if (transport == XRTeamTransport::None)
+        return;
+
+    DestinationMemory *memory = allocateDestination(destination, nowMs);
+    if (!memory)
+        return;
+
+    int16_t *quality = transport == XRTeamTransport::XBee ? &memory->xbeeQuality : &memory->espNowQuality;
+    uint16_t *samples = transport == XRTeamTransport::XBee ? &memory->xbeeSamples : &memory->espNowSamples;
+    const int target = clampScore(sample, 0, 100);
+
+    if (*samples == 0)
+        *quality = static_cast<int16_t>(target);
+    else
+        *quality = static_cast<int16_t>((*quality * 7 + target) / 8);
+
+    if (*samples != UINT16_MAX)
+        ++(*samples);
+    memory->lastTouchedMs = nowMs;
+}
+
+int16_t XRTransportTeam::qualityForUnlocked(uint32_t destination, XRTeamTransport transport) const
+{
+    const DestinationMemory *memory = findDestination(destination);
+    if (!memory || transport == XRTeamTransport::None)
+        return 50;
+    return transport == XRTeamTransport::XBee ? memory->xbeeQuality : memory->espNowQuality;
+}
+
+void XRTransportTeam::reportEnvironment(uint8_t batteryPercent, uint8_t channelUtilizationPercent,
+                                        int16_t noiseFloorDbm, uint32_t nowMs)
+{
+    lock();
+    environment_.batteryPercent = static_cast<uint8_t>(clampScore(batteryPercent, 0, 100));
+    environment_.channelUtilizationPercent =
+        static_cast<uint8_t>(clampScore(channelUtilizationPercent, 0, 100));
+    environment_.noiseFloorDbm = static_cast<int16_t>(clampScore(noiseFloorDbm, -127, -20));
+    environment_.reportedAtMs = nowMs;
+    unlock();
+}
+
 void XRTransportTeam::reportRoute(XRTeamTransport transport, uint32_t destination, uint8_t score, bool available,
-                                  uint32_t nowMs)
+                                  uint32_t nowMs, XRTeamRouteKind kind)
 {
     if (transport == XRTeamTransport::None || destination == 0)
         return;
@@ -107,6 +203,7 @@ void XRTransportTeam::reportRoute(XRTeamTransport transport, uint32_t destinatio
         *route = {};
         route->used = true;
         route->transport = transport;
+        route->kind = kind;
         route->destination = destination;
         route->score = score;
         route->available = available && score != 0;
@@ -133,12 +230,43 @@ XRTeamTransport XRTransportTeam::selectBestUnlocked(uint32_t destination, uint32
                 continue;
         }
 
-        // Tiny tie-break in favor of ESP-NOW because a good direct 2.4 GHz path
-        // is generally lower-latency/lower-energy than waking a second 868 MHz
-        // radio. A clearly stronger XBee score still wins.
+        // Raw radio score is only one signal. Add bounded, per-destination
+        // experience plus hysteresis so rapidly changing RF does not make the
+        // device thrash between transports.
         int effective = static_cast<int>(route.score);
+        effective += (static_cast<int>(qualityForUnlocked(destination, route.transport)) - 50) / 5;
+
         if (route.transport == XRTeamTransport::EspNow)
-            effective += 2;
+            effective += 2; // lower-cost tie-break for a strong local direct path
+        if (route.kind == XRTeamRouteKind::Direct)
+            effective += 3;
+        else
+            effective -= 1;
+
+        const DestinationMemory *memory = findDestination(destination);
+        if (memory && memory->preferred == route.transport && deadlinePending(nowMs, memory->preferredUntilMs))
+            effective += 7;
+
+        // Ambient RF is never reused as a carrier. It only informs how cautious
+        // we should be. Bridge routes eventually depend on LoRa again, so heavy
+        // 868 MHz congestion/noise makes a direct sidecar route comparatively
+        // more attractive.
+        if (environment_.reportedAtMs != 0 && (nowMs - environment_.reportedAtMs) <= ENVIRONMENT_TTL_MS) {
+            if (environment_.batteryPercent < 15)
+                effective -= route.transport == XRTeamTransport::XBee ? 10 : 5;
+
+            if (route.kind == XRTeamRouteKind::Bridge) {
+                if (environment_.channelUtilizationPercent >= 35)
+                    effective -= 6;
+                if (environment_.noiseFloorDbm > -92)
+                    effective -= 5;
+            } else {
+                if (environment_.channelUtilizationPercent >= 35)
+                    effective += 3;
+            }
+        }
+
+        effective = clampScore(effective, 0, 120);
 
         if (effective > bestScore ||
             (effective == bestScore && static_cast<uint8_t>(route.transport) < static_cast<uint8_t>(best))) {
@@ -198,6 +326,7 @@ void XRTransportTeam::reportAssistResult(XRTeamTransport transport, uint32_t des
     PacketState *packet = findPacket(destination, packetId);
     if (packet && packet->assistOwner == transport) {
         packet->lastTouchedMs = nowMs;
+        updateQualityUnlocked(destination, transport, accepted ? 56 : 18, nowMs);
         if (!accepted) {
             packet->assistOwner = XRTeamTransport::None;
             packet->assistUntilMs = 0;
@@ -241,9 +370,13 @@ bool XRTransportTeam::claimRecovery(XRTeamTransport transport, uint32_t destinat
         // The previous carrier transfer completed but no end-to-end ACK arrived.
         // Give the other transport a short first chance before retrying the same
         // path, creating diversity without transmitting both at once.
-        if (packet->lastAccepted != XRTeamTransport::None)
+        if (packet->lastAccepted != XRTeamTransport::None) {
             cooldownFor(*packet, packet->lastAccepted) = nowMs + POST_ACCEPT_SWITCH_MS;
+            if (packet->lastAcceptedWasRecovery)
+                updateQualityUnlocked(destination, packet->lastAccepted, 15, nowMs);
+        }
         packet->lastAccepted = XRTeamTransport::None;
+        packet->lastAcceptedWasRecovery = false;
         packet->ackWaitUntilMs = 0;
     }
 
@@ -284,8 +417,10 @@ void XRTransportTeam::reportRecoveryResult(XRTeamTransport transport, uint32_t d
     }
 
     packet->lastTouchedMs = nowMs;
+    updateQualityUnlocked(destination, transport, accepted ? 62 : 10, nowMs);
     if (accepted) {
         packet->lastAccepted = transport;
+        packet->lastAcceptedWasRecovery = true;
         packet->ackWaitUntilMs = nowMs + ACK_WAIT_MS;
     } else {
         cooldownFor(*packet, transport) = nowMs + FAILED_TRANSPORT_COOLDOWN_MS;
@@ -296,14 +431,28 @@ void XRTransportTeam::reportRecoveryResult(XRTeamTransport transport, uint32_t d
 void XRTransportTeam::markDelivered(uint32_t destination, uint32_t packetId)
 {
     lock();
-    if (PacketState *packet = findPacket(destination, packetId))
+    if (PacketState *packet = findPacket(destination, packetId)) {
+        if (packet->lastAcceptedWasRecovery && packet->lastAccepted != XRTeamTransport::None) {
+            updateQualityUnlocked(destination, packet->lastAccepted, 100, packet->lastTouchedMs);
+            if (DestinationMemory *memory = findDestination(destination)) {
+                memory->preferred = packet->lastAccepted;
+                memory->preferredUntilMs = packet->lastTouchedMs + PREFERRED_PATH_HOLD_MS;
+            }
+        }
         *packet = {};
+    }
     unlock();
 }
 
 void XRTransportTeam::markCancelled(uint32_t destination, uint32_t packetId)
 {
-    markDelivered(destination, packetId);
+    lock();
+    if (PacketState *packet = findPacket(destination, packetId)) {
+        if (packet->lastAcceptedWasRecovery && packet->lastAccepted != XRTeamTransport::None)
+            updateQualityUnlocked(destination, packet->lastAccepted, 5, packet->lastTouchedMs);
+        *packet = {};
+    }
+    unlock();
 }
 
 void XRTransportTeam::reset()
@@ -311,6 +460,10 @@ void XRTransportTeam::reset()
     lock();
     routes_ = {};
     packets_ = {};
+    destinations_ = {};
+    environment_ = {};
+    environment_.batteryPercent = 100;
+    environment_.noiseFloorDbm = -120;
     unlock();
 }
 
