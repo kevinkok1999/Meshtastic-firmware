@@ -28,13 +28,13 @@ jobs:
           echo "RUNNER_OS=$RUNNER_OS"
           echo "RUNNER_ARCH=$RUNNER_ARCH"
 
-      - name: Cancel superseded XR run 200
+      - name: Cancel pending CI-only XR run 201
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for run_id in 35374653728; do
+          for run_id in 35374689520; do
             echo "Cancelling known stale XR run $run_id"
             gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
           done
