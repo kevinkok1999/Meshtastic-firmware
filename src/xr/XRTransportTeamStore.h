@@ -31,7 +31,7 @@ class XRTransportTeamStore
     bool loaded_ = false;
     uint32_t lastPersistMs_ = 0;
 
-    void lock();
+    bool tryLock();
     void unlock();
 };
 
