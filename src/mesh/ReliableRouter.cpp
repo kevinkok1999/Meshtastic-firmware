@@ -9,6 +9,10 @@
 #include "modules/NodeInfoModule.h"
 #include "modules/RoutingModule.h"
 
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XBEE_XR868)
+#include "xr/XRXBeeTransport.h"
+#endif
+
 // ReliableRouter::ReliableRouter() {}
 
 /**
@@ -47,6 +51,19 @@ ErrorCode ReliableRouter::send(meshtastic_MeshPacket *p)
     }
 
     ErrorCode result = isBroadcast(p->to) ? FloodingRouter::send(p) : NextHopRouter::send(p);
+
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XBEE_XR868)
+    // If the primary LoRa path fails synchronously, do not make the user wait
+    // for a retransmission deadline. The reliable copy is still available in
+    // pending here, so immediately hand it to the XBee fallback route.
+    if (retransmitting && result != ERRNO_OK && meshoffgrid::xr::xrXBeeTransport) {
+        if (auto *fallback = findPendingPacket(key)) {
+            if (meshoffgrid::xr::xrXBeeTransport->queueFallback(*fallback->packet))
+                LOG_INFO("Immediate XR XBee failover after LoRa send error for id=0x%08x", fallback->packet->id);
+        }
+    }
+#endif
+
     // Duty-cycle rejections may clear before the scheduled retry.
     if (retransmitting && result != ERRNO_OK && result != meshtastic_Routing_Error_DUTY_CYCLE_LIMIT)
         stopRetransmission(key);
