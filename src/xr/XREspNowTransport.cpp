@@ -612,8 +612,11 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
         team.reportAssistResult(XRTeamTransport::EspNow, packet.to, packet.id, accepted, nowMs);
     }
 
+    const HiddenRfSnapshot rf = readHiddenRfSnapshot();
     XRAdaptiveContext context{};
     context.espNowLinkScore = linkScoreFor(peer->nodeNum);
+    context.channelHealthScore = rf.channelHealthScore;
+    context.batteryPercent = rf.batteryPercent;
     context.peerSeenRecently = true;
     context.directMessage = true;
     context.privatePayload = true;
