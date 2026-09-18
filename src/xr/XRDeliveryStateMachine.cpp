@@ -116,6 +116,15 @@ bool XRDeliveryStateMachine::markPrimaryFailed(uint32_t destination, uint32_t pa
     if (!entry || terminal(entry->phase))
         return false;
 
+    // XRDeliveryEvents fans the same reliable-LoRa failure out to multiple
+    // sidecars. Count/transition that primary failure once, not once per sink.
+    if (entry->phase == XRDeliveryPhase::RecoveryQueued ||
+        entry->phase == XRDeliveryPhase::SecondaryActive ||
+        entry->phase == XRDeliveryPhase::CarrierAccepted) {
+        entry->updatedAtMs = nowMs;
+        return true;
+    }
+
     entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
     entry->phase = XRDeliveryPhase::RecoveryQueued;
     entry->activePath = XRDeliveryPath::None;
