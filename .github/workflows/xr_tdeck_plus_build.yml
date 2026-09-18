@@ -128,6 +128,18 @@ jobs:
 
           cp "$factory" xr-release/XR-TDeck-Plus-factory.bin
           cp "$littlefs" xr-release/XR-TDeck-Plus-littlefs.bin
+
+          python - <<'PY'
+          from pathlib import Path
+          out = Path("xr-release")
+          factory = (out / "XR-TDeck-Plus-factory.bin").read_bytes()
+          littlefs = (out / "XR-TDeck-Plus-littlefs.bin").read_bytes()
+          littlefs_offset = 0xC90000
+          image = bytearray(b"\xff") * (littlefs_offset + len(littlefs))
+          image[:len(factory)] = factory
+          image[littlefs_offset:] = littlefs
+          (out / "XR-TDeck-Plus-FULL-FLASH.bin").write_bytes(image)
+          PY
           [ -z "$metadata" ] || cp "$metadata" xr-release/XR-TDeck-Plus.mt.json
           [ -z "$bootapp" ] || cp "$bootapp" xr-release/boot_app0.bin
 
@@ -140,11 +152,13 @@ jobs:
           cat > xr-release/FLASHING.txt <<'EOF'
           XR T-Deck Plus — first-test flash package
 
-          Full first installation (ESP32-S3, 16 MB layout):
+          Easiest clean first installation (ESP32-S3, 16 MB layout):
           1. Optional clean start (ERASES settings): esptool.py --chip esp32s3 erase_flash
-          2. Flash the merged application image:
+          2. Flash the single complete image:
+             esptool.py --chip esp32s3 write_flash 0x000000 XR-TDeck-Plus-FULL-FLASH.bin
+
+          Alternative first installation using separate images:
              esptool.py --chip esp32s3 write_flash 0x000000 XR-TDeck-Plus-factory.bin
-          3. Flash the filesystem image:
              esptool.py --chip esp32s3 write_flash 0xC90000 XR-TDeck-Plus-littlefs.bin
 
           Firmware-only update on a device already using this 16 MB partition layout:
@@ -165,8 +179,12 @@ jobs:
           EOF
 
           find xr-release -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-          sha256sum xr-release/*.bin > xr-release/SHA256SUMS.txt
-          cat xr-release/SHA256SUMS.txt
+          (
+            cd xr-release
+            sha256sum *.bin > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          )
 
       - name: Upload XR T-Deck Plus artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
