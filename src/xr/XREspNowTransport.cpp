@@ -361,8 +361,8 @@ void XREspNowTransport::serviceDeferred(uint32_t nowMs)
         if (static_cast<int32_t>(nowMs - entry->nextAttemptMs) < 0)
             continue;
 
-        Peer *peer = findPeer(entry->packet.to);
-        if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+        Peer *peer = selectRecoveryPeer(entry->packet.to, nowMs, entry->packet.hop_limit > 0);
+        if (!peer)
             continue;
 
         (void)attemptPacket(entry->packet, nowMs, true);
@@ -522,13 +522,20 @@ void XREspNowTransport::processTx(const TxPacket &queued, uint32_t nowMs)
 
 bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue)
 {
-    Peer *peer = findPeer(packet.to);
-    if (!peer || !shouldMirror(packet, *peer, nowMs))
+    Peer *peer = fromDeferredQueue ? selectRecoveryPeer(packet.to, nowMs, packet.hop_limit > 0) : findPeer(packet.to);
+    if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+        return false;
+    if (!fromDeferredQueue && !shouldMirror(packet, *peer, nowMs))
+        return false;
+    if (packet.which_payload_variant != meshtastic_MeshPacket_encrypted_tag || !isFromUs(&packet) ||
+        isBroadcast(packet.to) || packet.via_mqtt)
         return false;
 
     auto &team = XRTransportTeam::shared();
     const uint8_t score = linkScoreFor(peer->nodeNum);
-    team.reportRoute(XRTeamTransport::EspNow, peer->nodeNum, score, true, nowMs);
+    // The scored route belongs to the final packet destination even when the
+    // selected sidecar peer is only a bridge that will re-inject into LoRa.
+    team.reportRoute(XRTeamTransport::EspNow, packet.to, score, true, nowMs);
 
     if (fromDeferredQueue) {
         if (!team.claimRecovery(XRTeamTransport::EspNow, packet.to, packet.id, nowMs))
@@ -654,6 +661,30 @@ const XREspNowTransport::Peer *XREspNowTransport::findPeer(uint32_t nodeNum) con
         if (peer.used && peer.nodeNum == nodeNum)
             return &peer;
     return nullptr;
+}
+
+XREspNowTransport::Peer *XREspNowTransport::selectRecoveryPeer(uint32_t destination, uint32_t nowMs, bool allowBridge)
+{
+    if (Peer *direct = findPeer(destination)) {
+        if (direct->used && nowMs - direct->lastSeenMs <= PEER_FRESH_MS)
+            return direct;
+    }
+
+    if (!allowBridge)
+        return nullptr;
+
+    Peer *best = nullptr;
+    uint8_t bestScore = 0;
+    for (auto &peer : peers_) {
+        if (!peer.used || nowMs - peer.lastSeenMs > PEER_FRESH_MS)
+            continue;
+        const uint8_t score = linkScoreFor(peer.nodeNum);
+        if (!best || score > bestScore) {
+            best = &peer;
+            bestScore = score;
+        }
+    }
+    return best;
 }
 
 XREspNowTransport::Peer &XREspNowTransport::rememberPeer(uint32_t nodeNum, const uint8_t mac[6], int8_t rssi, uint32_t nowMs)
