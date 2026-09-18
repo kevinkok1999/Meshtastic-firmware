@@ -224,6 +224,19 @@ bool XRTransportTeam::claimRecovery(XRTeamTransport transport, uint32_t destinat
         return false;
     }
 
+    // Give all healthy sidecars a tiny window to publish their current route
+    // score before choosing a recovery owner. Without this, scheduler order
+    // could make the first task win even when the other radio has a better path.
+    if (!packet->recoveryArbitrated) {
+        if (packet->recoveryArbitrationUntilMs == 0)
+            packet->recoveryArbitrationUntilMs = nowMs + RECOVERY_ARBITRATION_MS;
+        if (deadlinePending(nowMs, packet->recoveryArbitrationUntilMs)) {
+            unlock();
+            return false;
+        }
+        packet->recoveryArbitrated = true;
+    }
+
     if (packet->ackWaitUntilMs != 0) {
         // The previous carrier transfer completed but no end-to-end ACK arrived.
         // Give the other transport a short first chance before retrying the same
