@@ -44,6 +44,39 @@ XRDeliveryPath XRTransportTeam::deliveryPathFor(XRTeamTransport transport)
     return XRDeliveryPath::None;
 }
 
+uint32_t XRTransportTeam::checksumLearningSnapshot(const LearningSnapshot &snapshot)
+{
+    constexpr uint32_t FNV_OFFSET = 2166136261u;
+    constexpr uint32_t FNV_PRIME = 16777619u;
+    uint32_t hash = FNV_OFFSET;
+
+    auto feed8 = [&hash](uint8_t value) {
+        hash ^= value;
+        hash *= FNV_PRIME;
+    };
+    auto feed16 = [&feed8](uint16_t value) {
+        feed8(static_cast<uint8_t>(value & 0xffu));
+        feed8(static_cast<uint8_t>((value >> 8) & 0xffu));
+    };
+    auto feed32 = [&feed8](uint32_t value) {
+        for (uint8_t shift = 0; shift < 32; shift += 8)
+            feed8(static_cast<uint8_t>((value >> shift) & 0xffu));
+    };
+
+    feed32(snapshot.magic);
+    feed16(snapshot.version);
+    feed16(snapshot.recordCount);
+    for (const auto &record : snapshot.records) {
+        feed8(record.used ? 1u : 0u);
+        feed32(record.destination);
+        feed16(static_cast<uint16_t>(record.espNowQuality));
+        feed16(static_cast<uint16_t>(record.xbeeQuality));
+        feed16(record.espNowSamples);
+        feed16(record.xbeeSamples);
+    }
+    return hash;
+}
+
 int XRTransportTeam::clampScore(int value, int minValue, int maxValue)
 {
     return std::max(minValue, std::min(maxValue, value));
@@ -179,6 +212,7 @@ void XRTransportTeam::updateQualityUnlocked(uint32_t destination, XRTeamTranspor
     if (*samples != UINT16_MAX)
         ++(*samples);
     memory->lastTouchedMs = nowMs;
+    learningDirty_ = true;
 }
 
 int16_t XRTransportTeam::qualityForUnlocked(uint32_t destination, XRTeamTransport transport) const
@@ -522,6 +556,70 @@ void XRTransportTeam::markCancelled(uint32_t destination, uint32_t packetId, uin
     unlock();
 }
 
+XRTransportTeam::LearningSnapshot XRTransportTeam::learningSnapshot()
+{
+    lock();
+    LearningSnapshot snapshot{};
+    for (size_t i = 0; i < destinations_.size(); ++i) {
+        const auto &memory = destinations_[i];
+        auto &record = snapshot.records[i];
+        record.used = memory.used;
+        record.destination = memory.destination;
+        record.espNowQuality = memory.espNowQuality;
+        record.xbeeQuality = memory.xbeeQuality;
+        record.espNowSamples = memory.espNowSamples;
+        record.xbeeSamples = memory.xbeeSamples;
+    }
+    snapshot.checksum = checksumLearningSnapshot(snapshot);
+    unlock();
+    return snapshot;
+}
+
+bool XRTransportTeam::restoreLearning(const LearningSnapshot &snapshot, uint32_t nowMs)
+{
+    if (snapshot.magic != 0x5852544c || snapshot.version != 1 ||
+        snapshot.recordCount != MAX_DESTINATIONS ||
+        snapshot.checksum != checksumLearningSnapshot(snapshot))
+        return false;
+
+    lock();
+    destinations_ = {};
+    for (size_t i = 0; i < destinations_.size(); ++i) {
+        const auto &record = snapshot.records[i];
+        if (!record.used || record.destination == 0)
+            continue;
+
+        auto &memory = destinations_[i];
+        memory.used = true;
+        memory.destination = record.destination;
+        memory.espNowQuality = static_cast<int16_t>(clampScore(record.espNowQuality, 0, 100));
+        memory.xbeeQuality = static_cast<int16_t>(clampScore(record.xbeeQuality, 0, 100));
+        memory.espNowSamples = record.espNowSamples;
+        memory.xbeeSamples = record.xbeeSamples;
+        memory.preferred = XRTeamTransport::None;
+        memory.preferredUntilMs = 0;
+        memory.lastTouchedMs = nowMs;
+    }
+    learningDirty_ = false;
+    unlock();
+    return true;
+}
+
+bool XRTransportTeam::learningDirty()
+{
+    lock();
+    const bool dirty = learningDirty_;
+    unlock();
+    return dirty;
+}
+
+void XRTransportTeam::markLearningPersisted()
+{
+    lock();
+    learningDirty_ = false;
+    unlock();
+}
+
 void XRTransportTeam::reset()
 {
     lock();
@@ -530,6 +628,7 @@ void XRTransportTeam::reset()
     destinations_ = {};
     delivery_.reset();
     environment_ = {};
+    learningDirty_ = false;
     environment_.batteryPercent = 100;
     environment_.noiseFloorDbm = -120;
     unlock();
