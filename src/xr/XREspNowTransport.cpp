@@ -293,9 +293,9 @@ void XREspNowTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t
     case DeliveryEventType::Acked:
     case DeliveryEventType::Naked:
         if (event.type == DeliveryEventType::Acked)
-            XRTransportTeam::shared().markDelivered(event.peer, event.packetId);
+            XRTransportTeam::shared().markDelivered(event.peer, event.packetId, nowMs);
         else
-            XRTransportTeam::shared().markCancelled(event.peer, event.packetId);
+            XRTransportTeam::shared().markCancelled(event.peer, event.packetId, nowMs);
         deferred_.markDelivered(event.packetId, event.peer);
         clearCachedOutbound(event.peer, event.packetId);
         (void)deferredStore_.service(deferred_, nowMs, true);
