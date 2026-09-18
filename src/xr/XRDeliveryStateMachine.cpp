@@ -116,19 +116,21 @@ bool XRDeliveryStateMachine::markPrimaryFailed(uint32_t destination, uint32_t pa
     if (!entry || terminal(entry->phase))
         return false;
 
-    // XRDeliveryEvents fans the same authoritative LoRa failure out to every
-    // installed sidecar. Treat duplicate sink notifications idempotently.
-    if (entry->phase == XRDeliveryPhase::RecoveryQueued ||
-        entry->phase == XRDeliveryPhase::SecondaryActive) {
-        entry->updatedAtMs = nowMs;
-        return true;
+    // XRDeliveryEvents fans one authoritative LoRa failure out to every
+    // installed sidecar. Count it exactly once.
+    if (!entry->primaryFailed) {
+        entry->primaryFailed = true;
+        entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
     }
 
-    // A best-effort carrier acceptance is not end-to-end delivery. If normal
-    // reliable LoRa later fails and no ACK arrived, recovery must be allowed.
-    entry->primaryFailures = saturatingIncrement(entry->primaryFailures);
-    entry->phase = XRDeliveryPhase::RecoveryQueued;
-    entry->activePath = XRDeliveryPath::None;
+    // If a sidecar assist is still in flight, let that one finish first. The
+    // team coordinator holds new recovery until its reservation ends. With no
+    // in-flight assist, transition directly into persistent recovery.
+    if (entry->phase != XRDeliveryPhase::SecondaryActive) {
+        entry->phase = XRDeliveryPhase::RecoveryQueued;
+        entry->activePath = XRDeliveryPath::None;
+    }
+
     entry->updatedAtMs = nowMs;
     return true;
 }
@@ -187,13 +189,17 @@ bool XRDeliveryStateMachine::startSecondary(uint32_t destination, uint32_t packe
     return true;
 }
 
-bool XRDeliveryStateMachine::markCarrierResult(uint32_t destination, uint32_t packetId, XRDeliveryPath path, bool accepted,
-                                               uint32_t nowMs)
+bool XRDeliveryStateMachine::markCarrierResult(uint32_t destination, uint32_t packetId,
+                                               XRDeliveryPath path, bool accepted, uint32_t nowMs)
 {
     Entry *entry = find(destination, packetId);
     if (!entry || terminal(entry->phase))
         return false;
-    if (entry->activePath != path && entry->phase == XRDeliveryPhase::SecondaryActive)
+
+    // Ignore stale carrier callbacks that no longer own the active secondary
+    // attempt. This keeps a late ESP-NOW/XBee status from overwriting a newer
+    // recovery decision.
+    if (entry->phase != XRDeliveryPhase::SecondaryActive || entry->activePath != path)
         return false;
 
     entry->updatedAtMs = nowMs;
@@ -203,7 +209,7 @@ bool XRDeliveryStateMachine::markCarrierResult(uint32_t destination, uint32_t pa
         entry->acceptedMask |= pathMask(path);
         entry->phase = XRDeliveryPhase::CarrierAccepted;
     } else {
-        entry->phase = XRDeliveryPhase::RecoveryQueued;
+        entry->phase = entry->primaryFailed ? XRDeliveryPhase::RecoveryQueued : XRDeliveryPhase::PrimaryActive;
     }
     return true;
 }
