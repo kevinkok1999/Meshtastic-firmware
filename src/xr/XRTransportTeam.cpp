@@ -445,6 +445,19 @@ bool XRTransportTeam::claimRecovery(XRTeamTransport transport, uint32_t destinat
         return false;
     }
 
+    // If the primary LoRa path failed while an immediate assist was still in
+    // flight, do not launch a second sidecar concurrently. Once that assist
+    // reservation expires without an authoritative ACK, move into recovery.
+    if (deadlinePending(nowMs, packet->assistUntilMs)) {
+        unlock();
+        return false;
+    }
+    if (packet->assistUntilMs != 0) {
+        packet->assistOwner = XRTeamTransport::None;
+        packet->assistUntilMs = 0;
+        (void)delivery_.queueRecovery(destination, packetId, nowMs);
+    }
+
     // Give all healthy sidecars a tiny window to publish their current route
     // score before choosing a recovery owner. Without this, scheduler order
     // could make the first task win even when the other radio has a better path.
