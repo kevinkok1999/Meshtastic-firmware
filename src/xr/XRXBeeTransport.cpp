@@ -335,7 +335,22 @@ void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t n
         break;
     }
     case DeliveryEventType::Acked:
-    case DeliveryEventType::Naked:
+    case DeliveryEventType::Naked: {
+        CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
+        if (cached && cached->adaptivePlanValid) {
+            XRAdaptiveOutcome finalOutcome{};
+            if (event.type == DeliveryEventType::Acked) {
+                finalOutcome.delivered = true;
+                finalOutcome.acked = true;
+            } else {
+                finalOutcome.transportFailed = true;
+            }
+            const uint32_t elapsed = nowMs - cached->adaptiveAttemptMs;
+            finalOutcome.latencyMs = static_cast<uint16_t>(std::min<uint32_t>(elapsed, UINT16_MAX));
+            coordinator_.report(cached->adaptivePlan, finalOutcome, nowMs);
+            cached->adaptivePlanValid = false;
+        }
+
         if (event.type == DeliveryEventType::Acked)
             XRTransportTeam::shared().markDelivered(event.peer, event.packetId, nowMs);
         else
@@ -346,6 +361,7 @@ void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t n
             activeTx_ = {};
         (void)deferredStore_.service(deferred_, nowMs, true);
         break;
+    }
     }
 }
 
@@ -582,6 +598,7 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
     const HiddenRfSnapshot rf = readHiddenRfSnapshot();
     XRAdaptiveContext context{};
     context.xbeeLinkScore = linkScoreFor(carrierNodeNum);
+    context.rfLinkScore = context.xbeeLinkScore;
     context.channelHealthScore = rf.channelHealthScore;
     context.batteryPercent = rf.batteryPercent;
     context.peerSeenRecently = true;
@@ -594,10 +611,25 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
     capabilities.xbeePrivacyApproved = true;
 
     const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, packetId);
-    XRAdaptiveOutcome outcome{};
-    outcome.transportAccepted = success;
-    outcome.transportFailed = !success;
-    coordinator_.report(plan, outcome, nowMs);
+
+    CachedOutbound *cached = findCachedOutbound(nodeNum, packetId);
+    if (cached && cached->packet.want_ack) {
+        cached->adaptivePlan = plan;
+        cached->adaptivePlanValid = true;
+        cached->adaptiveAttemptMs = nowMs;
+
+        if (!success) {
+            XRAdaptiveOutcome outcome{};
+            outcome.transportFailed = true;
+            coordinator_.report(plan, outcome, nowMs);
+            cached->adaptivePlanValid = false;
+        }
+    } else {
+        XRAdaptiveOutcome outcome{};
+        outcome.transportAccepted = success;
+        outcome.transportFailed = !success;
+        coordinator_.report(plan, outcome, nowMs);
+    }
 }
 
 void XRXBeeTransport::processRx(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint8_t, uint32_t nowMs)
