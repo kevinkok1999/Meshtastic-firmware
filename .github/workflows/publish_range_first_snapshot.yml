@@ -1,0 +1,53 @@
+name: Publish Range-First Snapshot
+
+on:
+  push:
+    branches:
+      - publish/range-first-v2
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout helper branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download validated Version 2 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MeshOffGrid-XR-Ultra-TDeck-Plus-d1bb0e1238b3672fa188617285f53216cd27b810
+          path: release
+          run-id: 35387972751
+          github-token: ${{ github.token }}
+
+      - name: Verify snapshot identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release/manifest.json
+          test -s release/XR-TDeck-Plus-FULL-FLASH.bin
+          grep -q '"sourceCommit": "d1bb0e1238b3672fa188617285f53216cd27b810"' release/manifest.json
+          sha256sum -c release/SHA256SUMS.txt --ignore-missing
+
+      - name: Publish immutable Version 2 release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          cp -R release/. "$tmp/"
+          git config user.name "MeshOffGridNL Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout --orphan __publish_range_v2
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx >/dev/null 2>&1 || true
+          cp -R "$tmp"/. .
+          git add -A
+          git commit -m "release(version-2): d1bb0e1"
+          git push origin HEAD:refs/heads/xr-range-first --force
