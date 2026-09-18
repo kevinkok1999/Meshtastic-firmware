@@ -789,8 +789,9 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
     const uint32_t nodeNum = activeTx_.nodeNum;
     const uint32_t carrierNodeNum = activeTx_.carrierNodeNum;
     const uint32_t packetId = activeTx_.packetId;
+    const bool fromRecovery = activeTx_.fromDeferredQueue;
 
-    if (activeTx_.fromDeferredQueue) {
+    if (fromRecovery) {
         if (success)
             deferred_.markTransportAccepted(packetId, nodeNum, nowMs);
         else
@@ -820,7 +821,9 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
     const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, packetId);
 
     CachedOutbound *cached = findCachedOutbound(nodeNum, packetId);
-    if (cached && cached->packet.want_ack) {
+    if (fromRecovery && cached && cached->packet.want_ack) {
+        // Recovery follows an authoritative LoRa failure, so a later ACK can
+        // be learned as an end-to-end success for this XBee path.
         cached->adaptivePlan = plan;
         cached->adaptivePlanValid = true;
         cached->adaptiveAttemptMs = nowMs;
@@ -836,6 +839,8 @@ void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
         outcome.transportAccepted = success;
         outcome.transportFailed = !success;
         coordinator_.report(plan, outcome, nowMs);
+        if (cached)
+            cached->adaptivePlanValid = false;
     }
 }
 
