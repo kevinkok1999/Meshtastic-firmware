@@ -34,7 +34,7 @@ jobs:
           test -s release/manifest.json
           test -s release/XR-TDeck-Plus-FULL-FLASH.bin
           grep -q '"sourceCommit": "d1bb0e1238b3672fa188617285f53216cd27b810"' release/manifest.json
-          sha256sum -c release/SHA256SUMS.txt --ignore-missing
+          (cd release && sha256sum -c SHA256SUMS.txt)
 
       - name: Publish immutable Version 2 release branch
         shell: bash
