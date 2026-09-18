@@ -848,19 +848,34 @@ void XRXBeeTransport::onTxStatus(uint8_t frameId, uint8_t deliveryStatus, uint8_
     self.activeTx_ = ActiveTx{};
 }
 
-void XRXBeeTransport::onModemStatus(uint8_t)
+void XRXBeeTransport::onModemStatus(uint8_t status)
 {
     if (!instance_)
         return;
 
-    // A modem-status frame can indicate a reset/rejoin. Re-validate the
-    // runtime payload limit before XBee is admitted as an active route again.
+    // XR868 emits 0x8A for both disruptive and informational events. Only
+    // reset/sleep/fault states invalidate an in-flight RF transaction.
+    const bool disruptive =
+        status == 0x00 || // hardware reset / power-up
+        status == 0x01 || // watchdog reset
+        status == 0x0C || // network went to sleep
+        status == 0x0D || // supply limit exceeded
+        status == 0x13 || // fatal error (generic XBee status)
+        status == 0x42 || // network watchdog timeout
+        status >= 0x80;   // stack error range
+
+    if (!disruptive) {
+        LOG_DEBUG("XR XBee modem status 0x%02x (informational)", status);
+        return;
+    }
+
     if (instance_->activeTx_.active) {
         ++instance_->txFailures_;
-        LOG_WARN("XR XBee modem reset/rejoin aborted active packet fr=0x%08x,id=0x%08x", instance_->activeTx_.packetFrom,
-                 instance_->activeTx_.packetId);
+        LOG_WARN("XR XBee disruptive modem status 0x%02x aborted active packet fr=0x%08x,id=0x%08x", status,
+                 instance_->activeTx_.packetFrom, instance_->activeTx_.packetId);
         instance_->activeTx_ = ActiveTx{};
     }
+
     instance_->online_ = false;
     instance_->lastProbeMs_ = 0;
 }
