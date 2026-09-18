@@ -113,6 +113,9 @@ class XREspNowTransport final : public concurrency::OSThread, public RadioTxHook
         bool used = false;
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
         uint32_t cachedAtMs = 0;
+        bool adaptivePlanValid = false;
+        XRAdaptivePlan adaptivePlan{};
+        uint32_t adaptiveAttemptMs = 0;
     };
 
     struct Peer {
