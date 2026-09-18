@@ -1,9 +1,9 @@
 name: XR T-Deck Plus Build
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - xr/hybrid-delivery-autopilot
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ permissions:
 # Only the newest XR revision matters. Rapid firmware iteration used to leave
 # obsolete T-Deck builds queued ahead of the current commit.
 concurrency:
-  group: xr-tdeck-plus-${{ github.event.pull_request.number || github.ref }}
+  group: xr-tdeck-plus-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -80,7 +80,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: XR-TDeck-Plus-compiler-log-${{ github.event.pull_request.head.sha || github.sha }}
+          name: XR-TDeck-Plus-compiler-log-${{ github.sha }}
           path: /tmp/xr-build.log
           if-no-files-found: error
           retention-days: 7
@@ -131,7 +131,7 @@ jobs:
       - name: Upload XR T-Deck Plus artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: XR-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
+          name: XR-TDeck-Plus-${{ github.sha }}
           path: xr-release/
           if-no-files-found: error
           retention-days: 30
