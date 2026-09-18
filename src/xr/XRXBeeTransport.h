@@ -110,6 +110,9 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
         bool used = false;
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
         uint32_t cachedAtMs = 0;
+        bool adaptivePlanValid = false;
+        XRAdaptivePlan adaptivePlan{};
+        uint32_t adaptiveAttemptMs = 0;
     };
 
     struct Peer {
@@ -149,6 +152,9 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook, 
         uint32_t waitingSinceMs = 0;
         uint16_t fragmentPayloadBytes = 0;
         bool fromDeferredQueue = false;
+        bool adaptivePlanValid = false;
+        XRAdaptivePlan adaptivePlan{};
+        uint32_t adaptiveAttemptMs = 0;
         std::array<uint8_t, meshtastic_MeshPacket_size> encoded{};
     };
 
