@@ -1,6 +1,9 @@
 name: XR T-Deck Plus Build
 
 on:
+  push:
+    branches:
+      - feature/xr-team-delivery
   pull_request:
     branches:
       - main
@@ -11,7 +14,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: xr-tdeck-plus-${{ github.event.pull_request.number || github.ref }}
+  group: xr-tdeck-plus-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
