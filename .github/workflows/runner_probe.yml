@@ -1,0 +1,28 @@
+name: Runner Probe
+
+on:
+  push:
+    branches:
+      - runner-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prove GitHub-hosted runner assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner probe started"
+          uname -a
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ARCH=$RUNNER_ARCH"
