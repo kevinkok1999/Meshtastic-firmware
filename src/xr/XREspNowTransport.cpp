@@ -1,4 +1,5 @@
 #include "XREspNowTransport.h"
+#include "XRInternetMode.h"
 #include "XRTransportTeam.h"
 #include "XRTransportTeamStore.h"
 
@@ -287,6 +288,13 @@ void XREspNowTransport::shutdown()
 
 int32_t XREspNowTransport::runOnce()
 {
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+    if (internetModeActive()) {
+        if (initialized_)
+            shutdown();
+        return 5000;
+    }
+#endif
     if (!initAttempted_) {
         initAttempted_ = true;
         if (!initialize())
@@ -331,6 +339,12 @@ int32_t XREspNowTransport::runOnce()
 
 RadioTxHook::PreTxAction XREspNowTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
+#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+    if (internetModeActive()) {
+        mirrorCandidate_ = {};
+        return PRETX_SEND;
+    }
+#endif
     // Another hook may still hold/drop the LoRa TX. Keep only a bounded
     // encrypted candidate here and hand it to the ESP-NOW task after
     // packetReleased() confirms the radio path consumed the packet.
