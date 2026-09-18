@@ -122,6 +122,7 @@ int main()
     primary_failure_waits_for_inflight_assist();
     failed_secondary_returns_to_recovery();
     second_sidecar_cannot_race_active_one();
+    duplicate_primary_failure_is_idempotent();
     expiry_is_terminal();
     return 0;
 }
