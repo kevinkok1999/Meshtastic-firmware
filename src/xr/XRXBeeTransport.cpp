@@ -143,6 +143,36 @@ bool XRXBeeTransport::queueFallback(const meshtastic_MeshPacket &packet)
     return true;
 }
 
+void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *packet)
+{
+    if (!ready() || !txQueue_ || !packet || isBroadcast(packet->to) || packet->via_mqtt)
+        return;
+
+    const uint32_t nowMs = Time::getMillis();
+    const Peer *peer = findPeer(packet->to);
+    if (!peer || !peer->lastIngressMs || nowMs - peer->lastIngressMs > RETURN_ROUTE_MS)
+        return;
+
+    uint32_t packetFrom = packet->from;
+    if (!packetFrom && router)
+        packetFrom = router->getNodeNum();
+
+    // A recent DATA ingress from this destination establishes a temporary
+    // reverse path. Mirror replies/ACKs once over XBee so an XBee bridge is
+    // bidirectional even when the original LoRa gap still exists.
+    if (!packetFrom || fallbackWasQueued(packetFrom, packet->id, nowMs) ||
+        wasRecentIngress(packetFrom, packet->id, nowMs))
+        return;
+
+    TxPacket queued{};
+    queued.packet = *packet;
+    queued.packet.from = packetFrom;
+    if (xQueueSend(txQueue_, &queued, 0) == pdTRUE) {
+        markFallbackQueued(packetFrom, packet->id, nowMs);
+        LOG_INFO("XR XBee return path queued fr=0x%08x,to=0x%08x,id=0x%08x", packetFrom, packet->to, packet->id);
+    }
+}
+
 uint8_t XRXBeeTransport::peerCount() const
 {
     uint8_t count = 0;
@@ -325,6 +355,13 @@ void XRXBeeTransport::processData(uint64_t source64, const FrameHeader &header, 
         return;
     }
 
+    // Remember the actual packet origin behind this XBee carrier. This creates
+    // a short-lived reverse path for ACKs/replies without turning XBee into a
+    // permanent parallel sender.
+    rememberPeer(packet->from, source64, nowMs);
+    if (Peer *returnPeer = findPeer(packet->from))
+        returnPeer->lastIngressMs = nowMs;
+
     markIngress(packet->from, packet->id, nowMs);
     packet->via_mqtt = false;
     if (router)
@@ -392,6 +429,9 @@ void XRXBeeTransport::rememberPeer(uint32_t nodeNum, uint64_t address64, uint32_
             if (peer.lastSeenMs < slot->lastSeenMs)
                 slot = &peer;
     }
+
+    if (!slot->used || slot->nodeNum != nodeNum)
+        *slot = Peer{};
 
     slot->used = true;
     slot->nodeNum = nodeNum;
@@ -495,7 +535,7 @@ void XRXBeeTransport::expireState(uint32_t nowMs)
 {
     for (auto &peer : peers_)
         if (peer.used && nowMs - peer.lastSeenMs > PEER_FRESH_MS)
-            peer.used = false;
+            peer = Peer{};
 
     for (auto &item : reassembly_)
         if (item.used && nowMs - item.updatedMs > REASSEMBLY_TIMEOUT_MS)

@@ -118,11 +118,46 @@ jobs:
           mkdir -p xr-release
           cp "${{ steps.firmware.outputs.firmware }}" xr-release/XR-TDeck-Plus-firmware.bin
 
-          for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
+          factory=$(find "$BUILD_DIR" -maxdepth 1 -type f -name '*factory.bin' -size +0c | head -n1 || true)
+          littlefs=$(find "$BUILD_DIR" -maxdepth 1 -type f -name 'littlefs*.bin' -size +0c | head -n1 || true)
+          metadata=$(find "$BUILD_DIR" -maxdepth 1 -type f -name '*.mt.json' -size +0c | head -n1 || true)
+          bootapp=$(find "$HOME/.platformio/packages/framework-arduinoespressif32" -type f -name 'boot_app0.bin' -size +0c | head -n1 || true)
+
+          test -n "$factory" && test -s "$factory" || { echo "Factory image missing" >&2; exit 1; }
+          test -n "$littlefs" && test -s "$littlefs" || { echo "LittleFS image missing" >&2; exit 1; }
+
+          cp "$factory" xr-release/XR-TDeck-Plus-factory.bin
+          cp "$littlefs" xr-release/XR-TDeck-Plus-littlefs.bin
+          [ -z "$metadata" ] || cp "$metadata" xr-release/XR-TDeck-Plus.mt.json
+          [ -z "$bootapp" ] || cp "$bootapp" xr-release/boot_app0.bin
+
+          for file in partitions.bin bootloader.bin; do
             if [ -s "$BUILD_DIR/$file" ]; then
               cp "$BUILD_DIR/$file" "xr-release/$file"
             fi
           done
+
+          cat > xr-release/FLASHING.txt <<'EOF'
+          XR T-Deck Plus — first-test flash package
+
+          Full first installation (ESP32-S3, 16 MB layout):
+          1. Optional clean start (ERASES settings): esptool.py --chip esp32s3 erase_flash
+          2. Flash the merged application image:
+             esptool.py --chip esp32s3 write_flash 0x000000 XR-TDeck-Plus-factory.bin
+          3. Flash the filesystem image:
+             esptool.py --chip esp32s3 write_flash 0xC90000 XR-TDeck-Plus-littlefs.bin
+
+          Firmware-only update on a device already using this 16 MB partition layout:
+             esptool.py --chip esp32s3 write_flash 0x010000 XR-TDeck-Plus-firmware.bin
+
+          XBee XR868 profile in this build:
+          - UART2
+          - T-Deck GPIO48 (TX) -> XBee DIN/RX
+          - T-Deck GPIO47 (RX) <- XBee DOUT/TX
+          - Common GND
+          - XBee must use a compatible 3.3 V supply and API mode.
+          - If no XBee answers the API probe, LoRa/ESP-NOW continue without XBee.
+          EOF
 
           find xr-release -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
           sha256sum xr-release/*.bin > xr-release/SHA256SUMS.txt

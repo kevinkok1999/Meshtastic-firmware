@@ -69,6 +69,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     static constexpr uint32_t REASSEMBLY_TIMEOUT_MS = 12u * 1000u;
     static constexpr uint32_t INGRESS_SUPPRESS_MS = 2u * 60u * 1000u;
     static constexpr uint32_t FALLBACK_SUPPRESS_MS = 5u * 60u * 1000u;
+    static constexpr uint32_t RETURN_ROUTE_MS = 2u * 60u * 1000u;
     static constexpr uint32_t PROBE_INTERVAL_MS = 10u * 1000u;
     static constexpr size_t MAX_PACKET_BYTES = meshtastic_MeshPacket_size;
 
@@ -102,6 +103,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
         uint32_t nodeNum = 0;
         uint64_t address64 = 0;
         uint32_t lastSeenMs = 0;
+        uint32_t lastIngressMs = 0;
     };
 
     struct Reassembly {
