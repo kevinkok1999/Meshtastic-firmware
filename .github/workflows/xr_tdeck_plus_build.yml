@@ -188,7 +188,7 @@ jobs:
             fi
           done
 
-          cat > xr-release/FLASHING.txt <<'EOF'
+          cat > xr-release/FLASHING.txt <<EOF
           XR T-Deck Plus — first-test flash package
 
           Easiest clean first installation (ESP32-S3, 16 MB layout):
