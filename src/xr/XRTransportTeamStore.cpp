@@ -16,10 +16,9 @@ XRTransportTeamStore &XRTransportTeamStore::shared()
     return store;
 }
 
-void XRTransportTeamStore::lock()
+bool XRTransportTeamStore::tryLock()
 {
-    while (operationLock_.test_and_set(std::memory_order_acquire)) {
-    }
+    return !operationLock_.test_and_set(std::memory_order_acquire);
 }
 
 void XRTransportTeamStore::unlock()
@@ -29,7 +28,8 @@ void XRTransportTeamStore::unlock()
 
 bool XRTransportTeamStore::loadOnce(XRTransportTeam &team, uint32_t nowMs)
 {
-    lock();
+    if (!tryLock())
+        return false;
     if (loaded_) {
         unlock();
         return true;
@@ -120,10 +120,11 @@ bool XRTransportTeamStore::service(XRTransportTeam &team, uint32_t nowMs, bool f
     if (!loaded_ && !loadOnce(team, nowMs))
         return false;
 
-    // Serialize both snapshot capture and the following write. This prevents a
-    // slower caller from writing an older generation after another sidecar has
-    // already persisted newer learning.
-    lock();
+    // Never spin-wait in an XR radio task while another sidecar is writing
+    // flash. Skipping one service pass is safe because dirty generations remain
+    // pending and will be checkpointed on a later pass.
+    if (!tryLock())
+        return true;
 
     if (!team.learningDirty()) {
         unlock();
