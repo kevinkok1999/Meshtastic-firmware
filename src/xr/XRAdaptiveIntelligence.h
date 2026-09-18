@@ -105,7 +105,7 @@ struct XRAdaptivePolicy {
     uint32_t knowledgeFreshMs = 24u * 60u * 60u * 1000u;
 
     // Persistence is rate-limited by the coordinator to avoid flash wear.
-    uint32_t minimumPersistIntervalMs = 15u * 60u * 1000u;
+    uint32_t minimumPersistIntervalMs = 60u * 60u * 1000u;
 };
 
 struct XRAdaptiveDecision {
