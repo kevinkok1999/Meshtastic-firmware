@@ -153,7 +153,14 @@ jobs:
           flash_map="$BUILD_DIR/xr-flash-map.json"
 
           shopt -s nullglob
-          app_candidates=("$BUILD_DIR"/firmware-t-deck-ultra-xbee-*.bin)
+          app_candidates=()
+          for candidate in "$BUILD_DIR"/firmware-t-deck-ultra-xbee-*.bin; do
+            [ -e "$candidate" ] || continue
+            case "$candidate" in
+              *.factory.bin) continue ;;
+            esac
+            app_candidates+=("$candidate")
+          done
           fs_candidates=("$BUILD_DIR"/littlefs-t-deck-ultra-xbee-*.bin)
           shopt -u nullglob
 
