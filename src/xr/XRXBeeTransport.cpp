@@ -829,7 +829,36 @@ void XRXBeeTransport::onTxStatus(uint8_t frameId, uint8_t deliveryStatus, uint8_
 
 void XRXBeeTransport::onModemStatus(uint8_t status)
 {
-    LOG_DEBUG("XR XBee modem status: 0x%02x", status);
+    // XR868 reports both informational and disruptive modem events. Only
+    // reset/sleep/power/fault states invalidate the shared team route.
+    const bool disruptive =
+        status == 0x00 || // hardware reset / power-up
+        status == 0x01 || // watchdog reset
+        status == 0x0C || // network went to sleep
+        status == 0x0D || // supply limit exceeded
+        status == 0x13 || // fatal error
+        status == 0x42 || // network watchdog timeout
+        status >= 0x80;   // stack error range
+
+    if (!disruptive) {
+        LOG_DEBUG("XR XBee modem status: 0x%02x", status);
+        return;
+    }
+
+    const uint32_t nowMs = Time::getMillis();
+    LOG_WARN("XR XBee disruptive modem status: 0x%02x", status);
+
+    if (activeTx_.used)
+        finishActiveTx(false, nowMs);
+
+    for (auto &peer : peers_) {
+        if (peer.used)
+            XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, peer.nodeNum, 0, false, nowMs);
+    }
+
+    // Force the normal service loop to refresh module identity/configuration
+    // on its next pass instead of waiting for the periodic five-minute probe.
+    lastInfoQueryMs_ = nowMs - 5u * 60u * 1000u;
 }
 
 void XRXBeeTransport::onAtResponse(uint8_t, char command0, char command1, uint8_t status, const uint8_t *value,
