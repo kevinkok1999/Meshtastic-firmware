@@ -75,10 +75,18 @@ jobs:
             exit "$status"
           fi
 
-      - name: Build MeshOffGrid XR Ultra firmware
+      - name: Build MeshOffGrid XR Ultra no-XBee compatibility target
         shell: bash
         run: |
           set -o pipefail
+          pio run -e t-deck-ultra -t buildfs 2>&1 | tee /tmp/ultra-buildfs.log
+          fs_status=${PIPESTATUS[0]}
+          if [ "$fs_status" -ne 0 ]; then
+            echo "::group::XR Ultra LittleFS diagnostics"
+            tail -n 120 /tmp/ultra-buildfs.log || true
+            echo "::endgroup::"
+            exit "$fs_status"
+          fi
           pio run -e t-deck-ultra 2>&1 | tee /tmp/ultra-build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
@@ -128,28 +136,24 @@ jobs:
           pio test -e native -f test_xr_adaptive_intelligence
 
 
-      - name: Build canonical production target (LoRa + ESP-NOW + XBee)
+      - name: Build canonical production target (LoRa + ESP-NOW + XBee + LittleFS)
         shell: bash
         run: |
           set -o pipefail
-          pio run -e t-deck-ultra-xbee 2>&1 | tee /tmp/xbee-build.log
+          pio run -e t-deck-ultra-xbee -t buildfs 2>&1 | tee /tmp/production-buildfs.log
+          fs_status=${PIPESTATUS[0]}
+          if [ "$fs_status" -ne 0 ]; then
+            echo "::group::Production LittleFS diagnostics"
+            tail -n 160 /tmp/production-buildfs.log || true
+            echo "::endgroup::"
+            exit "$fs_status"
+          fi
+
+          pio run -e t-deck-ultra-xbee 2>&1 | tee /tmp/production-build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             echo "::group::Production compiler diagnostics"
-            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xbee-build.log | tail -n 160 || true
-            echo "::endgroup::"
-            exit "$status"
-          fi
-
-      - name: Build production LittleFS image
-        shell: bash
-        run: |
-          set -o pipefail
-          pio run -e t-deck-ultra-xbee -t buildfs 2>&1 | tee /tmp/buildfs.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo "::group::LittleFS diagnostics"
-            tail -n 160 /tmp/buildfs.log || true
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/production-build.log | tail -n 160 || true
             echo "::endgroup::"
             exit "$status"
           fi
@@ -305,8 +309,9 @@ jobs:
           path: |
             /tmp/stock-build.log
             /tmp/ultra-build.log
-            /tmp/xbee-build.log
-            /tmp/buildfs.log
+            /tmp/ultra-buildfs.log
+            /tmp/production-build.log
+            /tmp/production-buildfs.log
           if-no-files-found: ignore
           retention-days: 7
 
