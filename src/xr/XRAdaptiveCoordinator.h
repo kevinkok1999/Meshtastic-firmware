@@ -30,7 +30,7 @@ class XRAdaptiveCoordinator {
     void begin()
     {
         if (modelPath_ != nullptr)
-            XRAdaptiveStore::loadAt(intelligence_, modelPath_);
+            XRAdaptiveStore::loadAt(intelligence_, modelPath_, tempPath_);
         else
             XRAdaptiveStore::load(intelligence_);
     }
