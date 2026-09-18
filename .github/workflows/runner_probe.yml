@@ -19,32 +19,22 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
-      - name: Prove GitHub-hosted runner assignment
+      - name: Prove cleanup runner assignment
         shell: bash
         run: |
           set -euo pipefail
-          echo "runner probe started"
+          echo "cleanup runner started"
           uname -a
           echo "RUNNER_OS=$RUNNER_OS"
           echo "RUNNER_ARCH=$RUNNER_ARCH"
 
-      - name: Cancel stale XR branch runs but keep newest
+      - name: Cancel only known stale XR runs
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_BRANCH: feature/xr-team-delivery
         run: |
           set -euo pipefail
-          echo "Keeping newest active XR run; cancelling older queued/in-progress runs."
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=$TARGET_BRANCH&per_page=100" \
-            --jq '.workflow_runs
-              | map(select(.status == "queued" or .status == "pending" or .status == "in_progress"))
-              | sort_by(.created_at)
-              | reverse
-              | .[1:]
-              | .[].id' \
-            | while read -r run_id; do
-                [ -n "$run_id" ] || continue
-                echo "Cancelling stale XR run $run_id"
-                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
-              done
+          for run_id in 35373843498 35374342220; do
+            echo "Cancelling known stale XR run $run_id"
+            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
+          done
