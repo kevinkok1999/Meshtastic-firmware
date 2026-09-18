@@ -1,9 +1,9 @@
-name: XR T-Deck Plus Build
+name: XR V5 Dual-Mode T-Deck Plus Build
 
 on:
   push:
     branches:
-      - feature/xr-team-delivery
+      - xr-v5-internet-manual
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: xr-flash-v2-${{ github.ref }}
+  group: xr-flash-v5-${{ github.ref }}
   # Priority flash-candidate branch: when a proven-bad older run exists, the newest fixed candidate replaces it.
   cancel-in-progress: true
 
@@ -101,7 +101,7 @@ jobs:
 
       - name: Install production target packages
         run: |
-          pio pkg install -e t-deck-ultra-xbee
+          pio pkg install -e t-deck-ultra-xbee-internet
 
       - name: Apply pioarduino SCons compatibility fix
         run: |
@@ -125,7 +125,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          pio run -e t-deck-ultra-xbee -t buildfs 2>&1 | tee /tmp/production-buildfs.log
+          pio run -e t-deck-ultra-xbee-internet -t buildfs 2>&1 | tee /tmp/production-buildfs.log
           fs_status=${PIPESTATUS[0]}
           if [ "$fs_status" -ne 0 ]; then
             echo "::group::Production LittleFS diagnostics"
@@ -134,7 +134,7 @@ jobs:
             exit "$fs_status"
           fi
 
-          pio run -e t-deck-ultra-xbee 2>&1 | tee /tmp/production-build.log
+          pio run -e t-deck-ultra-xbee-internet 2>&1 | tee /tmp/production-build.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             echo "::group::Production compiler diagnostics"
@@ -148,20 +148,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BUILD_DIR=.pio/build/t-deck-ultra-xbee
+          BUILD_DIR=.pio/build/t-deck-ultra-xbee-internet
           full="$BUILD_DIR/xr-full-flash.bin"
           flash_map="$BUILD_DIR/xr-flash-map.json"
 
           shopt -s nullglob
           app_candidates=()
-          for candidate in "$BUILD_DIR"/firmware-t-deck-ultra-xbee-*.bin; do
+          for candidate in "$BUILD_DIR"/firmware-t-deck-ultra-xbee-internet-*.bin; do
             [ -e "$candidate" ] || continue
             case "$candidate" in
               *.factory.bin) continue ;;
             esac
             app_candidates+=("$candidate")
           done
-          fs_candidates=("$BUILD_DIR"/littlefs-t-deck-ultra-xbee-*.bin)
+          fs_candidates=("$BUILD_DIR"/littlefs-t-deck-ultra-xbee-internet-*.bin)
           shopt -u nullglob
 
           if [ "${#app_candidates[@]}" -ne 1 ]; then
@@ -196,7 +196,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BUILD_DIR=.pio/build/t-deck-ultra-xbee
+          BUILD_DIR=.pio/build/t-deck-ultra-xbee-internet
           RELEASE_DIR=xr-ultra-release
           mkdir -p "$RELEASE_DIR"
 
@@ -224,7 +224,7 @@ jobs:
           )"
           SOURCE_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-          VERSION="$BASE_VERSION-xr.$SHORT_SHA"
+          VERSION="$BASE_VERSION-xr5.$SHORT_SHA"
           FULL_SHA="$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$RELEASE_DIR/$FULL_NAME")"
           python - "$RELEASE_DIR" "$FULL_NAME" "$VERSION" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
           import json
@@ -239,7 +239,7 @@ jobs:
           source_sha = sys.argv[5]
 
           esp_web_tools = {
-              "name": "MeshOffGrid XR Ultra - LILYGO T-Deck Plus",
+              "name": "MeshOffGrid XR V5 Dual Mode - LILYGO T-Deck Plus",
               "version": version,
               "new_install_prompt_erase": True,
               "builds": [
@@ -256,7 +256,7 @@ jobs:
           product_manifest = {
               "schema": 1,
               "channel": "candidate",
-              "product": "MeshOffGridNL T-Deck Plus",
+              "product": "MeshOffGridNL T-Deck Plus V5 Dual Mode",
               "board": "lilygo-t-deck-plus",
               "chip": "ESP32-S3",
               "flashSizeBytes": 16777216,
@@ -275,9 +275,9 @@ jobs:
           PY
 
           {
-            echo "MeshOffGrid XR Ultra"
+            echo "MeshOffGrid XR V5 Dual Mode"
             echo "Target: LILYGO T-Deck Plus / ESP32-S3"
-            echo "Profile: t-deck-ultra-xbee"
+            echo "Profile: t-deck-ultra-xbee-internet"
             echo "Commit: $(git rev-parse HEAD)"
             echo
             echo "Files:"
@@ -296,9 +296,9 @@ jobs:
             echo "  Missing XBee hardware degrades safely; LoRa + ESP-NOW remain operational."
             echo
             echo "LoRa/Meshtastic: preserved"
-            echo "XR ESP-NOW sidecar: enabled"
+            echo "XR ESP-NOW sidecar: enabled in Off-grid mode"
             echo "Encrypted recovery/store-carry-forward: enabled"
-            echo "Adaptive delivery intelligence: enabled"
+            echo "Adaptive delivery intelligence: enabled in Off-grid mode"\n            echo "Manual Internet mode: Wi-Fi + encrypted MQTT; no automatic fallback"
           } > "$RELEASE_DIR/BUILD_INFO.txt"
 
           {
@@ -353,7 +353,7 @@ jobs:
       - name: Upload MeshOffGrid XR Ultra artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: MeshOffGrid-XR-Ultra-TDeck-Plus-${{ github.sha }}
+          name: MeshOffGrid-XR-V5-Dual-Mode-TDeck-Plus-${{ github.sha }}
           path: xr-ultra-release/
           if-no-files-found: error
           retention-days: 30
