@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build-tdeck-plus:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
