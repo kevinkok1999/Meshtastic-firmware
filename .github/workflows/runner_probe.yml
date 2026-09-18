@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: runner-probe-${{ github.ref }}
@@ -26,3 +27,17 @@ jobs:
           uname -a
           echo "RUNNER_OS=$RUNNER_OS"
           echo "RUNNER_ARCH=$RUNNER_ARCH"
+
+      - name: Cancel stale XR branch queue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_BRANCH: feature/xr-team-delivery
+        run: |
+          set -euo pipefail
+          echo "Cancelling stale queued runs for $TARGET_BRANCH"
+          gh api --paginate             "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&branch=$TARGET_BRANCH&per_page=100"             --jq '.workflow_runs[].id'           | sort -u           | while read -r run_id; do
+              [ -n "$run_id" ] || continue
+              echo "Cancelling queued run $run_id"
+              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
+            done
