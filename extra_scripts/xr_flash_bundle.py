@@ -78,14 +78,14 @@ def _role_for(path, offset, app_path):
 
 
 def _partition_table_path(build_env):
-    board = env.BoardConfig()
+    board = build_env.BoardConfig()
     configured = board.get("build.partitions", None)
     if not configured:
         raise RuntimeError("Board partition CSV is unavailable; refusing to guess flash layout")
 
     candidate = Path(str(configured))
     if not candidate.is_absolute():
-        candidate = Path(env.subst("$PROJECT_DIR")) / candidate
+        candidate = Path(build_env.subst("$PROJECT_DIR")) / candidate
     candidate = candidate.resolve()
 
     if not candidate.is_file():
@@ -93,7 +93,7 @@ def _partition_table_path(build_env):
     return candidate
 
 
-def _read_partitions(env):
+def _read_partitions(build_env):
     path = _partition_table_path(build_env)
     partitions = []
 
