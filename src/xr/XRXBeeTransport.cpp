@@ -954,23 +954,32 @@ const XRXBeeTransport::Peer *XRXBeeTransport::findPeer(uint32_t nodeNum) const
 
 XRXBeeTransport::Peer *XRXBeeTransport::selectRecoveryPeer(uint32_t destination, uint32_t nowMs, bool allowBridge)
 {
+    // Direct is preferable because it avoids another mesh hop, but it must not
+    // be absolute. A substantially stronger bridge can provide a better real
+    // delivery path when the direct sidecar link is marginal.
+    constexpr int DIRECT_ROUTE_BONUS = 6;
+
+    Peer *best = nullptr;
+    int bestEffectiveScore = -1;
+
     if (Peer *direct = findPeer(destination)) {
-        if (direct->used && nowMs - direct->lastSeenMs <= PEER_FRESH_MS)
-            return direct;
+        if (direct->used && nowMs - direct->lastSeenMs <= PEER_FRESH_MS) {
+            best = direct;
+            bestEffectiveScore = static_cast<int>(linkScoreFor(direct->nodeNum)) + DIRECT_ROUTE_BONUS;
+        }
     }
 
     if (!allowBridge)
-        return nullptr;
+        return best;
 
-    Peer *best = nullptr;
-    uint8_t bestScore = 0;
     for (auto &peer : peers_) {
-        if (!peer.used || nowMs - peer.lastSeenMs > PEER_FRESH_MS)
+        if (!peer.used || peer.nodeNum == destination || nowMs - peer.lastSeenMs > PEER_FRESH_MS)
             continue;
-        const uint8_t score = linkScoreFor(peer.nodeNum);
-        if (!best || score > bestScore) {
+
+        const int effectiveScore = static_cast<int>(linkScoreFor(peer.nodeNum));
+        if (!best || effectiveScore > bestEffectiveScore) {
             best = &peer;
-            bestScore = score;
+            bestEffectiveScore = effectiveScore;
         }
     }
     return best;
