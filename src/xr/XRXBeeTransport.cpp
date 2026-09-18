@@ -285,9 +285,9 @@ void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t n
     case DeliveryEventType::Acked:
     case DeliveryEventType::Naked:
         if (event.type == DeliveryEventType::Acked)
-            XRTransportTeam::shared().markDelivered(event.peer, event.packetId);
+            XRTransportTeam::shared().markDelivered(event.peer, event.packetId, nowMs);
         else
-            XRTransportTeam::shared().markCancelled(event.peer, event.packetId);
+            XRTransportTeam::shared().markCancelled(event.peer, event.packetId, nowMs);
         deferred_.markDelivered(event.packetId, event.peer);
         clearCachedOutbound(event.peer, event.packetId);
         if (activeTx_.used && activeTx_.packetId == event.packetId && activeTx_.nodeNum == event.peer)
