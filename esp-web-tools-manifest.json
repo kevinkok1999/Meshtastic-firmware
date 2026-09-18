@@ -1,0 +1,16 @@
+{
+  "name": "MeshOffGrid XR Ultra - LILYGO T-Deck Plus",
+  "version": "2.8.1-xr.d1bb0e1",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "XR-TDeck-Plus-FULL-FLASH.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

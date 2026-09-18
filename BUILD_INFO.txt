@@ -1,0 +1,24 @@
+MeshOffGrid XR Ultra
+Target: LILYGO T-Deck Plus / ESP32-S3
+Profile: t-deck-ultra-xbee
+Commit: d1bb0e1238b3672fa188617285f53216cd27b810
+
+Files:
+  XR-TDeck-Plus-FULL-FLASH.bin  = complete first-install image at offset 0x0
+  XR-TDeck-Plus-firmware.bin   = application-only image for compatible update flows
+  esp-web-tools-manifest.json = ESP Web Tools-compatible single-image manifest
+  manifest.json = canonical MeshOffGridNL installer candidate manifest
+  meshoffgrid-manifest.json = identical compatibility copy
+  xr-flash-map.json = exact PlatformIO-resolved source flash map
+
+XBee XR 868:
+  Production UART2 enabled.
+  GPIO47 = T-Deck RX from XBee DOUT/TX.
+  GPIO48 = T-Deck TX to XBee DIN/RX.
+  Factory AP=0/9600 modules are auto-provisioned to AP=1, AO=0, 115200 and saved.
+  Missing XBee hardware degrades safely; LoRa + ESP-NOW remain operational.
+
+LoRa/Meshtastic: preserved
+XR ESP-NOW sidecar: enabled
+Encrypted recovery/store-carry-forward: enabled
+Adaptive delivery intelligence: enabled

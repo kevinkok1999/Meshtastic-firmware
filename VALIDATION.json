@@ -1,0 +1,10 @@
+{
+  "validated": true,
+  "fullImage": "XR-TDeck-Plus-FULL-FLASH.bin",
+  "fullSize": 16711680,
+  "fullSha256": "6a1db6cd47bc64051061bb0bc4e5d2eba2451a78ddd94cd636706aee8b7730c1",
+  "applicationSize": 3972576,
+  "filesystemSize": 3538944,
+  "flashCapacity": 16777216,
+  "unusedCoredumpBytes": 65536
+}
