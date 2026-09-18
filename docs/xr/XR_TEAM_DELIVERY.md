@@ -11,11 +11,12 @@ The user sends one message once. The firmware decides which available radios hel
 1. LoRa/Meshtastic remains the primary send and the authority for end-to-end ACK/NAK.
 2. At most one secondary transport may make an immediate best-effort assist copy for the same packet.
 3. If reliable LoRa exhausts its retries, both sidecars may retain the same already-encrypted MeshPacket in bounded store/carry/forward storage.
-4. The shared XRTransportTeam chooses only one recovery transport at a time from fresh route reports and link scores.
-5. A local carrier success is not considered final delivery. The team waits for the real Meshtastic end-to-end ACK.
-6. If that ACK does not arrive, the last accepted path gets a short cooldown so another healthy transport gets the next opportunity.
-7. An ACK or explicit remote NAK cancels recovery state across the team.
-8. Sidecar ingress is re-injected into the normal Meshtastic Router, so a packet can cross one transport and continue over LoRa without changing message identity.
+4. For recovery, a sidecar may target the final destination directly or a known XR-capable bridge peer. A bridge re-injects the unchanged encrypted MeshPacket into its normal Meshtastic Router so LoRa can continue toward the final destination.
+5. The shared XRTransportTeam gives ESP-NOW and XBee a short scoring window, then chooses only one recovery transport at a time from fresh route reports and link scores.
+6. A local carrier success is not considered final delivery. The team waits for the real Meshtastic end-to-end ACK.
+7. If that ACK does not arrive, the last accepted path gets a short cooldown so another healthy transport gets the next opportunity.
+8. An ACK or explicit remote NAK cancels recovery state across the team.
+9. Sidecar ingress is re-injected into the normal Meshtastic Router, so a packet can cross one transport and continue over LoRa without changing message identity.
 
 ## Why this is not a fixed LoRa -> ESP-NOW -> XBee chain
 
