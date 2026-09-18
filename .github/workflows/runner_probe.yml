@@ -15,12 +15,14 @@ concurrency:
 
 jobs:
   probe:
-    runs-on: windows-latest
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - name: Prove GitHub-hosted runner assignment
-        shell: pwsh
+        shell: bash
         run: |
-          Write-Output "runner probe started"
-          Write-Output "RUNNER_OS=$env:RUNNER_OS"
-          Write-Output "RUNNER_ARCH=$env:RUNNER_ARCH"
+          set -euo pipefail
+          echo "runner probe started"
+          uname -a
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ARCH=$RUNNER_ARCH"
