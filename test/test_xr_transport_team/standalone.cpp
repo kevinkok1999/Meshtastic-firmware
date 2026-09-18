@@ -88,6 +88,30 @@ static void test_ambient_rf_penalizes_bridge_not_direct_carriers()
     assert(team.preferredTransport(0x77, 1002) == XRTeamTransport::XBee);
 }
 
+
+static void test_low_battery_never_overrides_clearly_better_quality()
+{
+    XRTransportTeam team;
+    team.reportEnvironment(8, 10, -118, 1000);
+    team.reportRoute(XRTeamTransport::EspNow, 0x88, 68, true, 1001, XRTeamRouteKind::Direct);
+    team.reportRoute(XRTeamTransport::XBee, 0x88, 86, true, 1001, XRTeamRouteKind::Direct);
+
+    // Delivery quality dominates battery savings.
+    assert(team.preferredTransport(0x88, 1002) == XRTeamTransport::XBee);
+}
+
+static void test_low_battery_only_breaks_near_equal_quality_ties()
+{
+    XRTransportTeam team;
+    team.reportEnvironment(8, 10, -118, 1000);
+    team.reportRoute(XRTeamTransport::EspNow, 0x89, 80, true, 1001, XRTeamRouteKind::Direct);
+    team.reportRoute(XRTeamTransport::XBee, 0x89, 82, true, 1001, XRTeamRouteKind::Direct);
+
+    // Inside the tiny equivalence band the lower-energy integrated radio may
+    // win because predicted delivery quality is effectively the same.
+    assert(team.preferredTransport(0x89, 1002) == XRTeamTransport::EspNow);
+}
+
 static void test_stale_routes_are_ignored()
 {
     XRTransportTeam team;
@@ -104,6 +128,8 @@ int main()
     test_carrier_acceptance_waits_for_end_to_end_ack();
     test_end_to_end_ack_creates_path_hysteresis();
     test_ambient_rf_penalizes_bridge_not_direct_carriers();
+    test_low_battery_never_overrides_clearly_better_quality();
+    test_low_battery_only_breaks_near_equal_quality_ties();
     test_stale_routes_are_ignored();
     return 0;
 }
