@@ -19,22 +19,8 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
-      - name: Prove cleanup runner assignment
+      - name: Cleanup disabled
         shell: bash
         run: |
           set -euo pipefail
-          echo "cleanup runner started"
-          uname -a
-          echo "RUNNER_OS=$RUNNER_OS"
-          echo "RUNNER_ARCH=$RUNNER_ARCH"
-
-      - name: Cancel pending CI-only XR run 201
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for run_id in 35374689520; do
-            echo "Cancelling known stale XR run $run_id"
-            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
-          done
+          echo "No XR runs will be cancelled by this probe."
