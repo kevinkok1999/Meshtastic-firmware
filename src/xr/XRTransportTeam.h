@@ -1,5 +1,7 @@
 #pragma once
 
+#include "XRDeliveryStateMachine.h"
+
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -60,6 +62,10 @@ class XRTransportTeam
     bool allowAssist(XRTeamTransport transport, uint32_t destination, uint32_t packetId, uint32_t nowMs);
     void reportAssistResult(XRTeamTransport transport, uint32_t destination, uint32_t packetId, bool accepted,
                             uint32_t nowMs);
+
+    // Publish exhaustion of the normal reliable LoRa path into the shared
+    // delivery lifecycle before sidecars begin persistent recovery.
+    void notePrimaryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs);
 
     // Called for persistent recovery after reliable LoRa has exhausted retries.
     // A short lease prevents ESP-NOW and XBee from transmitting the same packet
@@ -131,6 +137,7 @@ class XRTransportTeam
 
     std::array<RouteState, MAX_ROUTES> routes_{};
     std::array<PacketState, MAX_PACKETS> packets_{};
+    XRDeliveryStateMachine delivery_{};
     std::array<DestinationMemory, MAX_DESTINATIONS> destinations_{};
     EnvironmentState environment_{};
     std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
@@ -151,6 +158,7 @@ class XRTransportTeam
     XRTeamTransport selectBestUnlocked(uint32_t destination, uint32_t nowMs, const PacketState *packet) const;
     static bool deadlinePending(uint32_t nowMs, uint32_t deadlineMs);
     static uint32_t &cooldownFor(PacketState &packet, XRTeamTransport transport);
+    static XRDeliveryPath deliveryPathFor(XRTeamTransport transport);
     static int clampScore(int value, int minValue, int maxValue);
 };
 
