@@ -1,0 +1,112 @@
+name: Publish XR Stable
+
+on:
+  push:
+    branches:
+      - xr/hybrid-delivery-autopilot
+    paths:
+      - stable-release.json
+      - .github/workflows/publish_xr_stable.yml
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: xr-stable-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout release controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate approved source build
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id=$(jq -r '.sourceRunId' stable-release.json)
+          source_commit=$(jq -r '.sourceCommit' stable-release.json)
+          artifact_name=$(jq -r '.artifactName' stable-release.json)
+          version=$(jq -r '.version' stable-release.json)
+          channel=$(jq -r '.channel' stable-release.json)
+
+          test "$channel" = "stable"
+          run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")
+          test "$(jq -r '.status' <<<"$run_json")" = "completed"
+          test "$(jq -r '.conclusion' <<<"$run_json")" = "success"
+          test "$(jq -r '.head_sha' <<<"$run_json")" = "$source_commit"
+
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download approved artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/xr-stable
+          gh run download "${{ steps.release.outputs.run_id }}"             --repo "$GITHUB_REPOSITORY"             --name "${{ steps.release.outputs.artifact_name }}"             --dir /tmp/xr-stable
+
+          cd /tmp/xr-stable
+          test -s XR-TDeck-Plus-FULL-FLASH.bin
+          test -s SHA256SUMS.txt
+          test -s BUILD_INFO.txt
+          sha256sum -c SHA256SUMS.txt
+          grep -qx "source_commit=${{ steps.release.outputs.source_commit }}" BUILD_INFO.txt
+
+      - name: Create signed-by-CI release manifest
+        run: |
+          set -euo pipefail
+          cd /tmp/xr-stable
+          firmware_sha=$(sha256sum XR-TDeck-Plus-FULL-FLASH.bin | awk '{print $1}')
+          firmware_size=$(stat -c %s XR-TDeck-Plus-FULL-FLASH.bin)
+          cat > manifest.json <<EOF
+          {
+            "schema": 1,
+            "channel": "stable",
+            "product": "MeshOffGridNL T-Deck Plus",
+            "board": "lilygo-t-deck-plus",
+            "chip": "ESP32-S3",
+            "flashSizeBytes": 16777216,
+            "version": "${{ steps.release.outputs.version }}",
+            "sourceCommit": "${{ steps.release.outputs.source_commit }}",
+            "sourceRunId": ${{ steps.release.outputs.run_id }},
+            "file": "XR-TDeck-Plus-FULL-FLASH.bin",
+            "offset": 0,
+            "sha256": "${firmware_sha}",
+            "size": ${firmware_size},
+            "filesystemOffset": 13172736
+          }
+          EOF
+          cat manifest.json
+
+      - name: Publish immutable approved contents to xr-stable
+        run: |
+          set -euo pipefail
+          git config user.name "MeshOffGridNL Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+
+          rm -rf /tmp/xr-publish
+          git worktree add --detach /tmp/xr-publish HEAD
+          cd /tmp/xr-publish
+          git checkout --orphan xr-stable-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx >/dev/null 2>&1 || true
+
+          cp /tmp/xr-stable/XR-TDeck-Plus-FULL-FLASH.bin .
+          cp /tmp/xr-stable/SHA256SUMS.txt .
+          cp /tmp/xr-stable/BUILD_INFO.txt .
+          cp /tmp/xr-stable/FLASHING.txt .
+          cp /tmp/xr-stable/manifest.json .
+
+          git add XR-TDeck-Plus-FULL-FLASH.bin SHA256SUMS.txt BUILD_INFO.txt FLASHING.txt manifest.json
+          git commit -m "stable: ${{ steps.release.outputs.version }}"
+          git push origin HEAD:refs/heads/xr-stable --force
