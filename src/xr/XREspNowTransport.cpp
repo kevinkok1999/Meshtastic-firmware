@@ -4,8 +4,10 @@
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 
 #include "NodeDB.h"
+#include "PowerStatus.h"
 #include "Router.h"
 #include "UptimeClock.h"
+#include "airtime.h"
 #include "configuration.h"
 
 #include <WiFi.h>
@@ -20,6 +22,31 @@ XREspNowTransport *XREspNowTransport::instance_ = nullptr;
 XREspNowTransport *xrEspNowTransport = nullptr;
 
 namespace {
+void reportHiddenRfEnvironment(uint32_t nowMs)
+{
+    static uint32_t lastReportMs = 0;
+    if (lastReportMs != 0 && nowMs - lastReportMs < 1000u)
+        return;
+    lastReportMs = nowMs;
+
+    uint8_t batteryPercent = 100;
+    if (powerStatus && powerStatus->getHasBattery())
+        batteryPercent = powerStatus->getBatteryChargePercent();
+
+    float utilization = airTime ? airTime->smoothedChannelUtilizationPercent() : 0.0f;
+    if (utilization < 0.0f)
+        utilization = 0.0f;
+    if (utilization > 100.0f)
+        utilization = 100.0f;
+
+    int16_t noiseFloorDbm = -120;
+    if (router && router->getRadioIface())
+        noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getNoiseFloor());
+
+    XRTransportTeam::shared().reportEnvironment(
+        batteryPercent, static_cast<uint8_t>(utilization + 0.5f), noiseFloorDbm, nowMs);
+}
+
 constexpr uint8_t BROADCAST_MAC[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 constexpr UBaseType_t RX_QUEUE_DEPTH = 8;
 constexpr UBaseType_t TX_QUEUE_DEPTH = 4;
@@ -122,6 +149,7 @@ bool XREspNowTransport::initialize()
 
     coordinator_.begin();
     const uint32_t nowMs = Time::getMillis();
+    reportHiddenRfEnvironment(nowMs);
     (void)deferredStore_.load(deferred_, nowMs);
     initialized_ = true;
     lastHelloMs_ = 0;
