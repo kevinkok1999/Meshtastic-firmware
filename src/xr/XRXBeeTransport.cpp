@@ -876,7 +876,7 @@ void XRXBeeTransport::onAtResponse(uint8_t, char command0, char command1, uint8_
         np = (np << 8) | value[i];
 
     if (np > sizeof(FrameHeader)) {
-        instance_->npLimit_ = static_cast<uint8_t>(std::min<uint32_t>(np, meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD));
+        instance_->npLimit_ = static_cast<uint16_t>(std::min<uint32_t>(np, meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD));
         instance_->online_ = true;
         LOG_INFO("XR XBee XR868 online, NP=%u", static_cast<unsigned>(instance_->npLimit_));
     }

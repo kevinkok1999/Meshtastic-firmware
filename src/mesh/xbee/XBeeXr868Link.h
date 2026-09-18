@@ -13,7 +13,9 @@ namespace meshoffgrid::xbee {
 class XBeeXr868Link
 {
   public:
-    static constexpr size_t MAX_TX_PAYLOAD = 73;
+    // XR/SX Sub-GHz supports up to 256 bytes of RF payload. The transport
+    // still queries NP at runtime and never exceeds the module's current limit.
+    static constexpr size_t MAX_TX_PAYLOAD = 256;
     static constexpr size_t MAX_FRAME_DATA = 512;
 
     using ReceiveCallback = void (*)(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint8_t receiveOptions);

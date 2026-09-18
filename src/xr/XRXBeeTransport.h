@@ -56,7 +56,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
   private:
     static constexpr uint16_t WIRE_MAGIC = 0x5842; // "XB"
     static constexpr uint8_t WIRE_VERSION = 1;
-    static constexpr uint8_t MAX_FRAGMENT_BYTES = 36; // 27-byte header + 36 = 63, safe below encrypted XR868 NP=65
+    static constexpr uint8_t MAX_FRAGMENT_BYTES = 229; // 27-byte carrier header + 229 = 256-byte XR868 payload
     static constexpr uint8_t MAX_FRAGMENTS = 32;
     static constexpr uint8_t MAX_PEERS = 24;
     static constexpr uint8_t MAX_REASSEMBLY = 4;
@@ -110,7 +110,8 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     };
 #pragma pack(pop)
 
-    static_assert(sizeof(FrameHeader) + MAX_FRAGMENT_BYTES <= 65, "XR XBee carrier must fit encrypted XR868 payload");
+    static_assert(sizeof(FrameHeader) + MAX_FRAGMENT_BYTES <= meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD,
+                  "XR XBee carrier must fit the XR868 payload cap");
 
     struct TxPacket {
         meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_zero;
@@ -179,7 +180,7 @@ class XRXBeeTransport final : public concurrency::OSThread, public RadioTxHook
     bool initialized_ = false;
     bool initAttempted_ = false;
     bool online_ = false;
-    uint8_t npLimit_ = 65;
+    uint16_t npLimit_ = 65; // Conservative until the XR868 answers the runtime NP probe.
     uint32_t lastHelloMs_ = 0;
     uint32_t lastProbeMs_ = 0;
     uint32_t txSuccess_ = 0;
