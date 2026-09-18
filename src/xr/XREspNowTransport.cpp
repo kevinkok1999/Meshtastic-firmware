@@ -1,5 +1,6 @@
 #include "XREspNowTransport.h"
 #include "XRTransportTeam.h"
+#include "XRTransportTeamStore.h"
 
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 
