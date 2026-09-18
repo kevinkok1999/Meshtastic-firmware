@@ -1,0 +1,1222 @@
+#include "XRXBeeTransport.h"
+#include "mesh/xbee/XBeeApiCodec.h"
+#include "XRTransportTeam.h"
+#include "XRTransportTeamStore.h"
+
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR) && defined(MESHOFFGRID_ENABLE_XBEE_XR868) && \
+    defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
+
+#include "NodeDB.h"
+#include "PowerStatus.h"
+#include "Router.h"
+#include "UptimeClock.h"
+#include "airtime.h"
+#include "configuration.h"
+
+#include <algorithm>
+#include <cstring>
+#include <pb_decode.h>
+#include <pb_encode.h>
+
+// GPIO47/48 are the T-Deck Plus ES7210 microphone clock pins according to
+// LILYGO's hardware documentation. Production firmware may intentionally reuse
+// them for XR868 UART only when that trade-off is made explicit in the build.
+#if defined(MESHOFFGRID_XBEE_REUSES_ES7210_PINS)
+static_assert(MESHOFFGRID_XBEE_RX_PIN == 47 && MESHOFFGRID_XBEE_TX_PIN == 48,
+              "XR868 ES7210 pin-reuse profile must remain RX=47/TX=48");
+#else
+static_assert((MESHOFFGRID_XBEE_RX_PIN != 47 && MESHOFFGRID_XBEE_RX_PIN != 48 &&
+               MESHOFFGRID_XBEE_TX_PIN != 47 && MESHOFFGRID_XBEE_TX_PIN != 48),
+              "GPIO47/48 are ES7210 microphone clock pins; define MESHOFFGRID_XBEE_REUSES_ES7210_PINS only for an intentional profile");
+#endif
+
+namespace meshoffgrid::xr {
+
+XRXBeeTransport *XRXBeeTransport::instance_ = nullptr;
+XRXBeeTransport *xrXBeeTransport = nullptr;
+
+namespace {
+struct HiddenRfSnapshot {
+    uint8_t batteryPercent = 100;
+    uint8_t channelUtilizationPercent = 0;
+    uint8_t channelHealthScore = 100;
+    int16_t noiseFloorDbm = -120;
+};
+
+HiddenRfSnapshot readHiddenRfSnapshot()
+{
+    HiddenRfSnapshot snapshot{};
+
+    if (powerStatus && powerStatus->getHasBattery())
+        snapshot.batteryPercent = powerStatus->getBatteryChargePercent();
+
+    float utilization = airTime ? airTime->smoothedChannelUtilizationPercent() : 0.0f;
+    if (utilization < 0.0f)
+        utilization = 0.0f;
+    if (utilization > 100.0f)
+        utilization = 100.0f;
+    snapshot.channelUtilizationPercent = static_cast<uint8_t>(utilization + 0.5f);
+
+    if (router && router->getRadioIface())
+        snapshot.noiseFloorDbm = static_cast<int16_t>(router->getRadioIface()->getAmbientNoiseFloorDbm());
+
+    // Unknown RF is treated as interference evidence only. A busy channel and
+    // raised ambient noise lower the health score; neither can become a carrier.
+    int health = 100 - static_cast<int>(snapshot.channelUtilizationPercent);
+    if (snapshot.noiseFloorDbm > -100)
+        health -= (snapshot.noiseFloorDbm + 100) * 2;
+    if (health < 0)
+        health = 0;
+    if (health > 100)
+        health = 100;
+    snapshot.channelHealthScore = static_cast<uint8_t>(health);
+    return snapshot;
+}
+
+void reportHiddenRfEnvironment(uint32_t nowMs)
+{
+    static uint32_t lastReportMs = 0;
+    if (lastReportMs != 0 && nowMs - lastReportMs < 1000u)
+        return;
+    lastReportMs = nowMs;
+
+    const HiddenRfSnapshot snapshot = readHiddenRfSnapshot();
+    XRTransportTeam::shared().reportEnvironment(snapshot.batteryPercent, snapshot.channelUtilizationPercent,
+                                                snapshot.noiseFloorDbm, nowMs);
+}
+
+constexpr UBaseType_t TX_QUEUE_DEPTH = 6;
+constexpr uint8_t XBEE_DELIVERY_SUCCESS = 0x00;
+}
+
+XRXBeeTransport::XRXBeeTransport() : concurrency::OSThread("xr-xbee", SERVICE_INTERVAL_MS)
+{
+    instance_ = this;
+    (void)XRDeliveryEvents::addSink(this);
+}
+
+XRXBeeTransport::~XRXBeeTransport()
+{
+    XRDeliveryEvents::removeSink(this);
+    shutdown();
+    if (instance_ == this)
+        instance_ = nullptr;
+}
+
+bool XRXBeeTransport::initialize()
+{
+    if (initialized_)
+        return true;
+
+    if (MESHOFFGRID_XBEE_RX_PIN < 0 || MESHOFFGRID_XBEE_TX_PIN < 0 ||
+        MESHOFFGRID_XBEE_RX_PIN == MESHOFFGRID_XBEE_TX_PIN) {
+        LOG_INFO("XR XBee compiled but inactive: configure dedicated RX/TX pins");
+        return false;
+    }
+
+    if (!txQueue_)
+        txQueue_ = xQueueCreate(TX_QUEUE_DEPTH, sizeof(TxPacket));
+    if (!deliveryEventQueue_)
+        deliveryEventQueue_ = xQueueCreate(DELIVERY_EVENT_QUEUE_DEPTH, sizeof(DeliveryEvent));
+    if (!txQueue_ || !deliveryEventQueue_) {
+        LOG_ERROR("XR XBee queue allocation failed");
+        return false;
+    }
+
+    link_.onReceive(&XRXBeeTransport::onReceiveStatic);
+    link_.onTxStatus(&XRXBeeTransport::onTxStatusStatic);
+    link_.onModemStatus(&XRXBeeTransport::onModemStatusStatic);
+    link_.onAtResponse(&XRXBeeTransport::onAtResponseStatic);
+
+    if (!link_.begin(serial_, XBEE_BAUD, MESHOFFGRID_XBEE_RX_PIN, MESHOFFGRID_XBEE_TX_PIN)) {
+        LOG_ERROR("XR XBee UART initialization failed");
+        return false;
+    }
+
+    initialized_ = true;
+    online_ = false;
+    provisionState_ = ProvisionState::Idle;
+    lastProbeMs_ = 0;
+    lastProvisionAttemptMs_ = 0;
+
+    const uint32_t nowMs = Time::getMillis();
+    probeModule(nowMs);
+    lastInfoQueryMs_ = nowMs;
+    coordinator_.begin();
+
+    if (!deferredStore_.load(deferred_, lastInfoQueryMs_))
+        LOG_WARN("XR XBee deferred queue could not be restored; starting with current RAM state");
+    (void)XRTransportTeamStore::shared().loadOnce(XRTransportTeam::shared(), lastInfoQueryMs_);
+
+    LOG_INFO("XR XBee UART ready; probing XR868 API mode while LoRa/ESP-NOW remain available");
+    return true;
+}
+
+void XRXBeeTransport::shutdown()
+{
+    if (initialized_) {
+        const uint32_t nowMs = Time::getMillis();
+        (void)deferredStore_.service(deferred_, nowMs, true);
+        (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, true);
+        if (provisionState_ != ProvisionState::Idle)
+            serial_.end();
+        else
+            link_.end();
+        initialized_ = false;
+    }
+    online_ = false;
+    provisionState_ = ProvisionState::Idle;
+    if (txQueue_) {
+        vQueueDelete(txQueue_);
+        txQueue_ = nullptr;
+    }
+    if (deliveryEventQueue_) {
+        vQueueDelete(deliveryEventQueue_);
+        deliveryEventQueue_ = nullptr;
+    }
+    activeTx_ = {};
+    mirrorCandidate_ = {};
+    deferred_.clear();
+}
+
+void XRXBeeTransport::probeModule(uint32_t nowMs)
+{
+    if (!initialized_ || provisionState_ != ProvisionState::Idle)
+        return;
+
+    link_.queryModuleInfo();
+    lastProbeMs_ = nowMs;
+    lastInfoQueryMs_ = nowMs;
+}
+
+void XRXBeeTransport::startFactoryProvisioning(uint32_t nowMs)
+{
+    // Factory XR868 modules can arrive in transparent AP=0 at 9600 baud.
+    // Only enter this fallback after the normal AP=1/115200 probe timed out,
+    // so an already configured module is never disturbed.
+    online_ = false;
+    link_.end();
+    serial_.begin(FACTORY_BAUD, SERIAL_8N1, MESHOFFGRID_XBEE_RX_PIN, MESHOFFGRID_XBEE_TX_PIN);
+    while (serial_.available() > 0)
+        (void)serial_.read();
+
+    provisionState_ = ProvisionState::GuardBefore;
+    provisionDeadlineMs_ = nowMs + FACTORY_GUARD_MS;
+    lastProvisionAttemptMs_ = nowMs;
+    commandOkMatch_ = 0;
+    LOG_INFO("XR XBee: probing factory defaults at 9600 baud");
+}
+
+bool XRXBeeTransport::consumeCommandOk()
+{
+    while (serial_.available() > 0) {
+        const int value = serial_.read();
+        if (value < 0)
+            continue;
+
+        const char ch = static_cast<char>(value);
+        if (commandOkMatch_ == 0)
+            commandOkMatch_ = (ch == 'O') ? 1 : 0;
+        else if (commandOkMatch_ == 1)
+            commandOkMatch_ = (ch == 'K') ? 2 : ((ch == 'O') ? 1 : 0);
+        else {
+            if (ch == '\r') {
+                commandOkMatch_ = 0;
+                return true;
+            }
+            commandOkMatch_ = (ch == 'O') ? 1 : 0;
+        }
+    }
+    return false;
+}
+
+void XRXBeeTransport::sendFactoryCommand(const char *command, ProvisionState waitState, uint32_t nowMs)
+{
+    commandOkMatch_ = 0;
+    serial_.print(command);
+    provisionState_ = waitState;
+    provisionDeadlineMs_ = nowMs + FACTORY_COMMAND_TIMEOUT_MS;
+}
+
+void XRXBeeTransport::finishFactoryProvisioning(uint32_t nowMs, bool configured)
+{
+    serial_.end();
+    delay(5);
+
+    if (!link_.begin(serial_, XBEE_BAUD, MESHOFFGRID_XBEE_RX_PIN, MESHOFFGRID_XBEE_TX_PIN)) {
+        LOG_WARN("XR XBee: UART reopen failed after provisioning attempt");
+        initialized_ = false;
+        online_ = false;
+        provisionState_ = ProvisionState::Idle;
+        return;
+    }
+
+    provisionState_ = ProvisionState::Idle;
+    online_ = false;
+    lastProbeMs_ = 0;
+    commandOkMatch_ = 0;
+
+    if (configured)
+        LOG_INFO("XR XBee: factory module configured AP=1 AO=0 115200 and saved");
+    else
+        LOG_DEBUG("XR XBee: no factory-default module detected");
+
+    probeModule(nowMs);
+}
+
+void XRXBeeTransport::serviceFactoryProvisioning(uint32_t nowMs)
+{
+    const auto expired = [nowMs](uint32_t deadline) {
+        return static_cast<int32_t>(nowMs - deadline) >= 0;
+    };
+
+    switch (provisionState_) {
+    case ProvisionState::Idle:
+        return;
+
+    case ProvisionState::GuardBefore:
+        if (expired(provisionDeadlineMs_)) {
+            serial_.print("+++");
+            commandOkMatch_ = 0;
+            provisionState_ = ProvisionState::GuardAfter;
+            provisionDeadlineMs_ = nowMs + FACTORY_GUARD_MS;
+        }
+        return;
+
+    case ProvisionState::GuardAfter:
+        if (expired(provisionDeadlineMs_)) {
+            provisionState_ = ProvisionState::WaitEnter;
+            provisionDeadlineMs_ = nowMs + FACTORY_COMMAND_TIMEOUT_MS;
+        }
+        return;
+
+    case ProvisionState::WaitEnter:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATAP1\r", ProvisionState::WaitAp, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitAp:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATAO0\r", ProvisionState::WaitAo, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitAo:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATBD7\r", ProvisionState::WaitBd, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitBd:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATWR\r", ProvisionState::WaitWr, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitWr:
+        if (consumeCommandOk()) {
+            // CN applies API mode and the new UART speed. Do not wait for a
+            // reply because the module can switch mode/baud immediately.
+            serial_.print("ATCN\r");
+            provisionState_ = ProvisionState::ReopenDelay;
+            provisionDeadlineMs_ = nowMs + 250u;
+            return;
+        }
+        break;
+
+    case ProvisionState::ReopenDelay:
+        if (expired(provisionDeadlineMs_))
+            finishFactoryProvisioning(nowMs, true);
+        return;
+    }
+
+    if (expired(provisionDeadlineMs_))
+        finishFactoryProvisioning(nowMs, false);
+}
+
+int32_t XRXBeeTransport::runOnce()
+{
+    if (!initAttempted_) {
+        initAttempted_ = true;
+        if (!initialize())
+            return 5000;
+    }
+    if (!initialized_)
+        return 5000;
+
+    const uint32_t nowMs = Time::getMillis();
+    reportHiddenRfEnvironment(nowMs);
+
+    if (provisionState_ != ProvisionState::Idle) {
+        serviceFactoryProvisioning(nowMs);
+        expireState(nowMs);
+        (void)deferredStore_.service(deferred_, nowMs);
+        (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, false);
+        coordinator_.service(nowMs);
+        return SERVICE_INTERVAL_MS;
+    }
+
+    link_.poll();
+    drainDeliveryEvents(nowMs);
+
+    if (!online_) {
+        const bool apiProbeTimedOut =
+            lastProbeMs_ && (nowMs - lastProbeMs_ >= FACTORY_PROVISION_AFTER_MS);
+        const bool provisionRetryDue =
+            !lastProvisionAttemptMs_ || (nowMs - lastProvisionAttemptMs_ >= FACTORY_PROVISION_RETRY_MS);
+
+        if (apiProbeTimedOut && provisionRetryDue)
+            startFactoryProvisioning(nowMs);
+        else if (!lastProbeMs_ || nowMs - lastProbeMs_ >= PROBE_INTERVAL_MS)
+            probeModule(nowMs);
+    }
+
+    deferred_.expire(nowMs);
+    expireOutboundCache(nowMs);
+
+    if (nowMs - lastInfoQueryMs_ >= 5u * 60u * 1000u) {
+        link_.queryModuleInfo();
+        lastInfoQueryMs_ = nowMs;
+    }
+
+    if (online_) {
+        serviceOutgoing(nowMs);
+
+        if (!activeTx_.used && coexistence_.canUseSecondary(nowMs) &&
+            (!lastHelloMs_ || nowMs - lastHelloMs_ >= HELLO_INTERVAL_MS)) {
+            sendHello(nowMs);
+        }
+    }
+
+    expireState(nowMs);
+    (void)deferredStore_.service(deferred_, nowMs);
+    (void)XRTransportTeamStore::shared().service(XRTransportTeam::shared(), nowMs, false);
+    coordinator_.service(nowMs);
+    return SERVICE_INTERVAL_MS;
+}
+
+bool XRXBeeTransport::eligibleForMirror(const meshtastic_MeshPacket &packet) const
+{
+    return packet.which_payload_variant == meshtastic_MeshPacket_encrypted_tag && isFromUs(&packet) &&
+           !isBroadcast(packet.to) && packet.to != 0;
+}
+
+RadioTxHook::PreTxAction XRXBeeTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
+{
+    const uint32_t nowMs = Time::getMillis();
+    coexistence_.onLoRaTxStart(nowMs);
+
+    mirrorCandidate_ = {};
+    if (ready() && packet && eligibleForMirror(*packet)) {
+        // Only copy into the bounded handoff record here. Cache/store mutations
+        // are performed by the XBee OSThread after packetReleased() queues it.
+        mirrorCandidate_.valid = true;
+        mirrorCandidate_.packet = *packet;
+        mirrorCandidate_.ackExpected = packet->want_ack;
+    }
+    return PRETX_SEND;
+}
+
+void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *packet)
+{
+    const uint32_t nowMs = Time::getMillis();
+    const bool ackExpected = packet ? packet->want_ack : false;
+    coexistence_.onLoRaTxEnd(nowMs, ackExpected);
+
+    if (!txQueue_ || !packet || !mirrorCandidate_.valid || mirrorCandidate_.packet.id != packet->id) {
+        mirrorCandidate_ = {};
+        return;
+    }
+
+    TxPacket queued{};
+    queued.packet = mirrorCandidate_.packet;
+    queued.ackExpected = mirrorCandidate_.ackExpected;
+    (void)xQueueSend(txQueue_, &queued, 0);
+    mirrorCandidate_ = {};
+}
+
+void XRXBeeTransport::rememberOutbound(const meshtastic_MeshPacket &packet, uint32_t nowMs)
+{
+    CachedOutbound *slot = findCachedOutbound(packet.to, packet.id);
+    if (!slot) {
+        for (auto &candidate : outboundCache_) {
+            if (!candidate.used) {
+                slot = &candidate;
+                break;
+            }
+        }
+    }
+
+    if (!slot) {
+        slot = &outboundCache_[0];
+        for (auto &candidate : outboundCache_) {
+            if ((nowMs - candidate.cachedAtMs) > (nowMs - slot->cachedAtMs))
+                slot = &candidate;
+        }
+    }
+
+    *slot = {};
+    slot->used = true;
+    slot->packet = packet;
+    slot->cachedAtMs = nowMs;
+}
+
+XRXBeeTransport::CachedOutbound *XRXBeeTransport::findCachedOutbound(uint32_t destination, uint32_t packetId)
+{
+    for (auto &entry : outboundCache_) {
+        if (entry.used && entry.packet.to == destination && entry.packet.id == packetId)
+            return &entry;
+    }
+    return nullptr;
+}
+
+void XRXBeeTransport::clearCachedOutbound(uint32_t destination, uint32_t packetId)
+{
+    if (CachedOutbound *entry = findCachedOutbound(destination, packetId))
+        *entry = {};
+}
+
+void XRXBeeTransport::expireOutboundCache(uint32_t nowMs)
+{
+    for (auto &entry : outboundCache_) {
+        if (entry.used && (nowMs - entry.cachedAtMs) > OUTBOUND_CACHE_TTL_MS)
+            entry = {};
+    }
+}
+
+bool XRXBeeTransport::enqueueDeliveryEvent(DeliveryEventType type, uint32_t peer, uint32_t packetId,
+                                              uint32_t whenMs)
+{
+    if (!deliveryEventQueue_ || peer == 0 || packetId == 0)
+        return false;
+
+    DeliveryEvent event{};
+    event.type = type;
+    event.peer = peer;
+    event.packetId = packetId;
+    event.whenMs = whenMs;
+    return xQueueSend(deliveryEventQueue_, &event, 0) == pdTRUE;
+}
+
+void XRXBeeTransport::onReliableDeliveryFailed(uint32_t destination, uint32_t packetId, uint32_t nowMs)
+{
+    (void)enqueueDeliveryEvent(DeliveryEventType::Failed, destination, packetId, nowMs);
+}
+
+void XRXBeeTransport::onReliableDeliveryAcked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
+{
+    (void)enqueueDeliveryEvent(DeliveryEventType::Acked, peer, packetId, nowMs);
+}
+
+void XRXBeeTransport::onReliableDeliveryNaked(uint32_t peer, uint32_t packetId, uint32_t nowMs)
+{
+    (void)enqueueDeliveryEvent(DeliveryEventType::Naked, peer, packetId, nowMs);
+}
+
+void XRXBeeTransport::drainDeliveryEvents(uint32_t nowMs)
+{
+    if (!deliveryEventQueue_)
+        return;
+
+    // Snapshot the current depth so a failure event re-queued while its
+    // ciphertext handoff is still crossing threads is retried on the next
+    // service pass instead of spinning in this one.
+    UBaseType_t remaining = uxQueueMessagesWaiting(deliveryEventQueue_);
+    DeliveryEvent event{};
+    while (remaining-- > 0 && xQueueReceive(deliveryEventQueue_, &event, 0) == pdTRUE)
+        handleDeliveryEvent(event, nowMs);
+}
+
+void XRXBeeTransport::handleDeliveryEvent(const DeliveryEvent &event, uint32_t nowMs)
+{
+    switch (event.type) {
+    case DeliveryEventType::Failed: {
+        XRTransportTeam::shared().notePrimaryFailed(event.peer, event.packetId, nowMs);
+        CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
+        if (!cached) {
+            // Reliable-LoRa failure can be published from a different task a
+            // few milliseconds before the sidecar has consumed packetReleased.
+            // Give that encrypted handoff a short bounded grace window.
+            if (nowMs - event.whenMs < 5000u)
+                (void)xQueueSend(deliveryEventQueue_, &event, 0);
+            return;
+        }
+
+        if (deferred_.enqueue(cached->packet, nowMs)) {
+            deferred_.makeDue(event.packetId, event.peer, nowMs);
+            LOG_INFO("XR XBee recovery queued encrypted packet id=0x%08x to=0x%08x", event.packetId, event.peer);
+            (void)deferredStore_.service(deferred_, nowMs, true);
+        }
+        break;
+    }
+    case DeliveryEventType::Acked:
+    case DeliveryEventType::Naked: {
+        CachedOutbound *cached = findCachedOutbound(event.peer, event.packetId);
+        if (cached && cached->adaptivePlanValid) {
+            XRAdaptiveOutcome finalOutcome{};
+            if (event.type == DeliveryEventType::Acked) {
+                finalOutcome.delivered = true;
+                finalOutcome.acked = true;
+            } else {
+                finalOutcome.transportFailed = true;
+            }
+            const uint32_t elapsed = nowMs - cached->adaptiveAttemptMs;
+            finalOutcome.latencyMs = static_cast<uint16_t>(std::min<uint32_t>(elapsed, UINT16_MAX));
+            coordinator_.report(cached->adaptivePlan, finalOutcome, nowMs);
+            cached->adaptivePlanValid = false;
+        }
+
+        if (event.type == DeliveryEventType::Acked)
+            XRTransportTeam::shared().markDelivered(event.peer, event.packetId, nowMs);
+        else
+            XRTransportTeam::shared().markCancelled(event.peer, event.packetId, nowMs);
+        deferred_.markDelivered(event.packetId, event.peer);
+        clearCachedOutbound(event.peer, event.packetId);
+        if (activeTx_.used && activeTx_.packetId == event.packetId && activeTx_.nodeNum == event.peer)
+            activeTx_ = {};
+        (void)deferredStore_.service(deferred_, nowMs, true);
+        break;
+    }
+    }
+}
+
+uint8_t XRXBeeTransport::peerCount() const
+{
+    uint8_t count = 0;
+    for (const auto &peer : peers_) {
+        if (peer.used)
+            ++count;
+    }
+    return count;
+}
+
+uint8_t XRXBeeTransport::linkScoreFor(uint32_t nodeNum) const
+{
+    const Peer *peer = findPeer(nodeNum);
+    if (!peer)
+        return 0;
+
+    const uint32_t nowMs = Time::getMillis();
+    if (nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+        return 0;
+
+    uint32_t attempts = static_cast<uint32_t>(peer->fragmentsOk) + peer->fragmentsFailed;
+    int score = 65;
+    if (attempts != 0) {
+        const int successPct = static_cast<int>((100u * peer->fragmentsOk) / attempts);
+        score = 25 + successPct * 3 / 4;
+    }
+    if (nowMs - peer->lastSeenMs < 30000u)
+        score += 10;
+
+    return static_cast<uint8_t>(std::clamp(score, 0, 100));
+}
+
+void XRXBeeTransport::sendHello(uint32_t nowMs)
+{
+    if (!router)
+        return;
+
+    FrameHeader header{};
+    header.type = FrameType::HELLO;
+    header.fromNode = router->getNodeNum();
+    if (!header.fromNode)
+        return;
+
+    const uint8_t frameId = link_.send(meshoffgrid::xbee::BROADCAST_64, reinterpret_cast<const uint8_t *>(&header),
+                                       sizeof(header));
+    if (frameId != 0)
+        lastHelloMs_ = nowMs;
+}
+
+uint16_t XRXBeeTransport::fragmentBudget() const
+{
+    const size_t np = link_.maxTxPayload();
+    if (np <= sizeof(FrameHeader))
+        return 0;
+    return static_cast<uint16_t>(np - sizeof(FrameHeader));
+}
+
+void XRXBeeTransport::serviceOutgoing(uint32_t nowMs)
+{
+    if (activeTx_.used) {
+        if (activeTx_.waitingFrameId != 0) {
+            if (nowMs - activeTx_.waitingSinceMs > TX_STATUS_TIMEOUT_MS)
+                finishActiveTx(false, nowMs);
+            return;
+        }
+        if (coexistence_.canUseSecondary(nowMs))
+            sendNextFragment(nowMs);
+        return;
+    }
+
+    if (!coexistence_.canUseSecondary(nowMs))
+        return;
+
+    // First, try a one-shot mirror of the packet that just went over LoRa.
+    // If the XBee peer is not currently reachable, discard this immediate
+    // mirror request. It is NOT persisted yet; only a later reliable-LoRa
+    // failure event is allowed to promote the cached ciphertext into the
+    // store/carry/forward queue. This prevents delayed duplicate messages after
+    // a normal LoRa delivery succeeded.
+    TxPacket immediate{};
+    while (txQueue_ && xQueueReceive(txQueue_, &immediate, 0) == pdTRUE) {
+        rememberOutbound(immediate.packet, nowMs);
+        Peer *peer = findPeer(immediate.packet.to);
+        if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+            continue;
+
+        auto &team = XRTransportTeam::shared();
+        team.reportRoute(XRTeamTransport::XBee, immediate.packet.to, linkScoreFor(peer->nodeNum), true, nowMs,
+                         XRTeamRouteKind::Direct);
+        if (!team.allowAssist(XRTeamTransport::XBee, immediate.packet.to, immediate.packet.id, nowMs))
+            continue;
+
+        if (prepareActiveTx(immediate.packet, nowMs, false, false)) {
+            sendNextFragment(nowMs);
+            return;
+        }
+        team.reportAssistResult(XRTeamTransport::XBee, immediate.packet.to, immediate.packet.id, false, nowMs);
+    }
+
+    // Recovery path: only packets whose normal reliable LoRa delivery actually
+    // exhausted its retries enter this persistent queue. A later XBee HELLO can
+    // therefore carry them opportunistically without creating background
+    // duplicates for packets that were already ACKed normally.
+    for (size_t i = 0; i < XRDeferredPacketQueue::MAX_ENTRIES; ++i) {
+        auto *queued = deferred_.entry(i);
+        if (!queued || !queued->used)
+            continue;
+        if (static_cast<int32_t>(nowMs - queued->nextAttemptMs) < 0)
+            continue;
+
+        Peer *peer = selectRecoveryPeer(queued->packet.to, nowMs, queued->packet.hop_limit > 0);
+        if (!peer)
+            continue;
+
+        auto &team = XRTransportTeam::shared();
+        team.reportRoute(XRTeamTransport::XBee, queued->packet.to, linkScoreFor(peer->nodeNum), true, nowMs,
+                         peer->nodeNum == queued->packet.to ? XRTeamRouteKind::Direct : XRTeamRouteKind::Bridge);
+        if (!team.claimRecovery(XRTeamTransport::XBee, queued->packet.to, queued->packet.id, nowMs))
+            continue;
+
+        if (prepareActiveTx(queued->packet, nowMs, true, queued->packet.hop_limit > 0)) {
+            sendNextFragment(nowMs);
+            return;
+        }
+
+        team.reportRecoveryResult(XRTeamTransport::XBee, queued->packet.to, queued->packet.id, false, nowMs);
+        deferred_.markFailure(queued->packet.id, queued->packet.to, nowMs);
+    }
+}
+
+bool XRXBeeTransport::prepareActiveTx(const meshtastic_MeshPacket &packet, uint32_t nowMs, bool fromDeferredQueue,
+                                      bool allowBridge)
+{
+    Peer *peer = allowBridge ? selectRecoveryPeer(packet.to, nowMs, true) : findPeer(packet.to);
+    if (!peer || nowMs - peer->lastSeenMs > PEER_FRESH_MS)
+        return false;
+
+    const uint16_t budget = fragmentBudget();
+    if (budget == 0)
+        return false;
+
+    std::array<uint8_t, meshtastic_MeshPacket_size> encoded{};
+    pb_ostream_t stream = pb_ostream_from_buffer(encoded.data(), encoded.size());
+    if (!pb_encode(&stream, meshtastic_MeshPacket_fields, &packet) || stream.bytes_written == 0)
+        return false;
+
+    const size_t count = (stream.bytes_written + budget - 1u) / budget;
+    if (count == 0 || count > MAX_FRAGMENTS)
+        return false;
+
+    activeTx_ = {};
+    activeTx_.used = true;
+    activeTx_.nodeNum = packet.to;
+    activeTx_.carrierNodeNum = peer->nodeNum;
+    activeTx_.destination64 = peer->address64;
+    activeTx_.packetId = packet.id;
+    activeTx_.totalLength = static_cast<uint16_t>(stream.bytes_written);
+    activeTx_.checksum = checksum32(encoded.data(), stream.bytes_written);
+    activeTx_.fragmentCount = static_cast<uint8_t>(count);
+    activeTx_.fragmentPayloadBytes = budget;
+    activeTx_.fromDeferredQueue = fromDeferredQueue;
+    std::memcpy(activeTx_.encoded.data(), encoded.data(), stream.bytes_written);
+
+    if (peer->packetsStarted != UINT16_MAX)
+        ++peer->packetsStarted;
+
+    return true;
+}
+
+void XRXBeeTransport::sendNextFragment(uint32_t nowMs)
+{
+    if (!activeTx_.used)
+        return;
+
+    if (activeTx_.nextFragment >= activeTx_.fragmentCount) {
+        finishActiveTx(true, nowMs);
+        return;
+    }
+
+    const size_t offset = static_cast<size_t>(activeTx_.nextFragment) * activeTx_.fragmentPayloadBytes;
+    const size_t remaining = activeTx_.totalLength - offset;
+    const size_t length = std::min<size_t>(activeTx_.fragmentPayloadBytes, remaining);
+    if (length > UINT8_MAX) {
+        finishActiveTx(false, nowMs);
+        return;
+    }
+
+    FrameHeader header{};
+    header.type = FrameType::DATA;
+    header.fromNode = router ? router->getNodeNum() : 0;
+    header.packetId = activeTx_.packetId;
+    header.totalLength = activeTx_.totalLength;
+    header.fragmentOffset = static_cast<uint16_t>(offset);
+    header.fragmentIndex = activeTx_.nextFragment;
+    header.fragmentCount = activeTx_.fragmentCount;
+    header.fragmentLength = static_cast<uint8_t>(length);
+    header.checksum = activeTx_.checksum;
+
+    std::array<uint8_t, meshoffgrid::xbee::XBeeXr868Link::MAX_TX_PAYLOAD_HARD> frame{};
+    std::memcpy(frame.data(), &header, sizeof(header));
+    std::memcpy(frame.data() + sizeof(header), activeTx_.encoded.data() + offset, length);
+
+    const uint8_t frameId = link_.send(activeTx_.destination64, frame.data(), sizeof(header) + length);
+    if (frameId == 0) {
+        finishActiveTx(false, nowMs);
+        return;
+    }
+
+    activeTx_.waitingFrameId = frameId;
+    activeTx_.waitingSinceMs = nowMs;
+}
+
+void XRXBeeTransport::finishActiveTx(bool success, uint32_t nowMs)
+{
+    const uint32_t nodeNum = activeTx_.nodeNum;
+    const uint32_t carrierNodeNum = activeTx_.carrierNodeNum;
+    const uint32_t packetId = activeTx_.packetId;
+    const bool fromRecovery = activeTx_.fromDeferredQueue;
+
+    if (fromRecovery) {
+        if (success)
+            deferred_.markTransportAccepted(packetId, nodeNum, nowMs);
+        else
+            deferred_.markFailure(packetId, nodeNum, nowMs);
+        XRTransportTeam::shared().reportRecoveryResult(XRTeamTransport::XBee, nodeNum, packetId, success, nowMs);
+    } else {
+        XRTransportTeam::shared().reportAssistResult(XRTeamTransport::XBee, nodeNum, packetId, success, nowMs);
+    }
+
+    activeTx_ = {};
+
+    const HiddenRfSnapshot rf = readHiddenRfSnapshot();
+    XRAdaptiveContext context{};
+    context.xbeeLinkScore = linkScoreFor(carrierNodeNum);
+    context.rfLinkScore = context.xbeeLinkScore;
+    context.channelHealthScore = rf.channelHealthScore;
+    context.batteryPercent = rf.batteryPercent;
+    context.peerSeenRecently = true;
+    context.directMessage = true;
+    context.privatePayload = true;
+
+    XRAdaptiveCapabilities capabilities{};
+    capabilities.loraAvailable = true;
+    capabilities.xbeeAvailable = true;
+    capabilities.xbeePrivacyApproved = true;
+
+    const XRAdaptivePlan plan = coordinator_.plan(context, capabilities, nowMs, packetId);
+
+    CachedOutbound *cached = findCachedOutbound(nodeNum, packetId);
+    if (fromRecovery && cached && cached->packet.want_ack) {
+        // Recovery follows an authoritative LoRa failure, so a later ACK can
+        // be learned as an end-to-end success for this XBee path.
+        cached->adaptivePlan = plan;
+        cached->adaptivePlanValid = true;
+        cached->adaptiveAttemptMs = nowMs;
+
+        if (!success) {
+            XRAdaptiveOutcome outcome{};
+            outcome.transportFailed = true;
+            coordinator_.report(plan, outcome, nowMs);
+            cached->adaptivePlanValid = false;
+        }
+    } else {
+        XRAdaptiveOutcome outcome{};
+        outcome.transportAccepted = success;
+        outcome.transportFailed = !success;
+        coordinator_.report(plan, outcome, nowMs);
+        if (cached)
+            cached->adaptivePlanValid = false;
+    }
+}
+
+void XRXBeeTransport::processRx(uint64_t source64, const uint8_t *payload, size_t payloadLength, uint8_t, uint32_t nowMs)
+{
+    if (!payload || payloadLength < sizeof(FrameHeader))
+        return;
+
+    FrameHeader header{};
+    std::memcpy(&header, payload, sizeof(header));
+    if (header.magic != WIRE_MAGIC || header.version != WIRE_VERSION || header.fromNode == 0)
+        return;
+    if (router && header.fromNode == router->getNodeNum())
+        return;
+
+    if (header.type == FrameType::HELLO)
+        processHello(header, source64, nowMs);
+    else if (header.type == FrameType::DATA)
+        processData(header, source64, payload + sizeof(FrameHeader), payloadLength - sizeof(FrameHeader), nowMs);
+}
+
+void XRXBeeTransport::processHello(const FrameHeader &header, uint64_t source64, uint32_t nowMs)
+{
+    // XBee addresses are transport identifiers, not Meshtastic identities.
+    // Only bind a sidecar address to a node already known by the normal mesh.
+    if (!nodeDB || nodeDB->getMeshNode(header.fromNode) == nullptr)
+        return;
+
+    if (Peer *existing = findPeer(header.fromNode)) {
+        if (existing->address64 != source64 && nowMs - existing->lastSeenMs <= PEER_FRESH_MS)
+            return;
+    }
+
+    rememberPeer(header.fromNode, source64, nowMs);
+}
+
+void XRXBeeTransport::processData(const FrameHeader &header, uint64_t source64, const uint8_t *payload,
+                                  size_t payloadLength, uint32_t nowMs)
+{
+    if (header.fragmentCount == 0 || header.fragmentCount > MAX_FRAGMENTS ||
+        header.fragmentIndex >= header.fragmentCount || header.totalLength == 0 ||
+        header.totalLength > meshtastic_MeshPacket_size || header.fragmentLength != payloadLength ||
+        static_cast<size_t>(header.fragmentOffset) + payloadLength > header.totalLength)
+        return;
+
+    Reassembly &assembly = getReassembly(header, source64, nowMs);
+    if (!assembly.used || assembly.totalLength != header.totalLength || assembly.fragmentCount != header.fragmentCount ||
+        assembly.checksum != header.checksum)
+        return;
+
+    std::memcpy(assembly.data.data() + header.fragmentOffset, payload, payloadLength);
+    assembly.receivedMask |= static_cast<uint16_t>(1u << header.fragmentIndex);
+    assembly.updatedMs = nowMs;
+
+    const uint16_t completeMask =
+        header.fragmentCount == 16 ? 0xffffu : static_cast<uint16_t>((1u << header.fragmentCount) - 1u);
+    if (assembly.receivedMask != completeMask)
+        return;
+
+    if (checksum32(assembly.data.data(), assembly.totalLength) != assembly.checksum) {
+        assembly.used = false;
+        return;
+    }
+
+    meshtastic_MeshPacket *packet = packetPool.allocZeroed();
+    if (!packet) {
+        assembly.used = false;
+        return;
+    }
+
+    pb_istream_t stream = pb_istream_from_buffer(assembly.data.data(), assembly.totalLength);
+    const bool decoded = pb_decode(&stream, meshtastic_MeshPacket_fields, packet);
+    assembly.used = false;
+
+    if (!decoded || packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag ||
+        packet->from != header.fromNode || packet->id != header.packetId || isBroadcast(packet->from) || !nodeDB ||
+        nodeDB->getMeshNode(packet->from) == nullptr) {
+        packetPool.release(packet);
+        return;
+    }
+
+    if (Peer *existing = findPeer(packet->from)) {
+        if (existing->address64 != source64 && nowMs - existing->lastSeenMs <= PEER_FRESH_MS) {
+            packetPool.release(packet);
+            return;
+        }
+    }
+    rememberPeer(packet->from, source64, nowMs);
+
+    packet->via_mqtt = false;
+    // Meshtastic currently has no generic sidecar transport enum. Mark this
+    // as the first secondary-radio path so it is never mistaken for an
+    // internally generated packet or for primary-LoRa RF metadata.
+    packet->transport_mechanism = meshtastic_MeshPacket_TransportMechanism_TRANSPORT_LORA_ALT1;
+    if (router)
+        router->enqueueReceivedMessage(packet);
+    else
+        packetPool.release(packet);
+}
+
+XRXBeeTransport::Peer *XRXBeeTransport::findPeer(uint32_t nodeNum)
+{
+    for (auto &peer : peers_)
+        if (peer.used && peer.nodeNum == nodeNum)
+            return &peer;
+    return nullptr;
+}
+
+const XRXBeeTransport::Peer *XRXBeeTransport::findPeer(uint32_t nodeNum) const
+{
+    for (const auto &peer : peers_)
+        if (peer.used && peer.nodeNum == nodeNum)
+            return &peer;
+    return nullptr;
+}
+
+XRXBeeTransport::Peer *XRXBeeTransport::selectRecoveryPeer(uint32_t destination, uint32_t nowMs, bool allowBridge)
+{
+    // Direct is preferable because it avoids another mesh hop, but it must not
+    // be absolute. A substantially stronger bridge can provide a better real
+    // delivery path when the direct sidecar link is marginal.
+    constexpr int DIRECT_ROUTE_BONUS = 6;
+
+    Peer *best = nullptr;
+    int bestEffectiveScore = -1;
+
+    if (Peer *direct = findPeer(destination)) {
+        if (direct->used && nowMs - direct->lastSeenMs <= PEER_FRESH_MS) {
+            best = direct;
+            bestEffectiveScore = static_cast<int>(linkScoreFor(direct->nodeNum)) + DIRECT_ROUTE_BONUS;
+        }
+    }
+
+    if (!allowBridge)
+        return best;
+
+    for (auto &peer : peers_) {
+        if (!peer.used || peer.nodeNum == destination || nowMs - peer.lastSeenMs > PEER_FRESH_MS)
+            continue;
+
+        const int effectiveScore = static_cast<int>(linkScoreFor(peer.nodeNum));
+        if (!best || effectiveScore > bestEffectiveScore) {
+            best = &peer;
+            bestEffectiveScore = effectiveScore;
+        }
+    }
+    return best;
+}
+
+XRXBeeTransport::Peer *XRXBeeTransport::findPeerByAddress(uint64_t address64)
+{
+    for (auto &peer : peers_)
+        if (peer.used && peer.address64 == address64)
+            return &peer;
+    return nullptr;
+}
+
+XRXBeeTransport::Peer &XRXBeeTransport::rememberPeer(uint32_t nodeNum, uint64_t address64, uint32_t nowMs)
+{
+    if (Peer *existing = findPeer(nodeNum)) {
+        existing->address64 = address64;
+        existing->lastSeenMs = nowMs;
+        XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, nodeNum, linkScoreFor(nodeNum), true, nowMs);
+        return *existing;
+    }
+
+    if (Peer *sameAddress = findPeerByAddress(address64)) {
+        sameAddress->nodeNum = nodeNum;
+        sameAddress->lastSeenMs = nowMs;
+        XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, nodeNum, linkScoreFor(nodeNum), true, nowMs);
+        return *sameAddress;
+    }
+
+    Peer *slot = nullptr;
+    for (auto &peer : peers_) {
+        if (!peer.used) {
+            slot = &peer;
+            break;
+        }
+        if (!slot || peer.lastSeenMs < slot->lastSeenMs)
+            slot = &peer;
+    }
+
+    *slot = {};
+    slot->used = true;
+    slot->nodeNum = nodeNum;
+    slot->address64 = address64;
+    slot->lastSeenMs = nowMs;
+    XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, nodeNum, linkScoreFor(nodeNum), true, nowMs);
+    return *slot;
+}
+
+XRXBeeTransport::Reassembly &XRXBeeTransport::getReassembly(const FrameHeader &header, uint64_t source64, uint32_t nowMs)
+{
+    for (auto &item : reassembly_) {
+        if (item.used && item.fromNode == header.fromNode && item.packetId == header.packetId &&
+            item.source64 == source64)
+            return item;
+    }
+
+    Reassembly *slot = nullptr;
+    for (auto &item : reassembly_) {
+        if (!item.used) {
+            slot = &item;
+            break;
+        }
+        if (!slot || item.updatedMs < slot->updatedMs)
+            slot = &item;
+    }
+
+    *slot = {};
+    slot->used = true;
+    slot->fromNode = header.fromNode;
+    slot->packetId = header.packetId;
+    slot->source64 = source64;
+    slot->totalLength = header.totalLength;
+    slot->fragmentCount = header.fragmentCount;
+    slot->checksum = header.checksum;
+    slot->updatedMs = nowMs;
+    return *slot;
+}
+
+void XRXBeeTransport::expireState(uint32_t nowMs)
+{
+    for (auto &item : reassembly_) {
+        if (item.used && nowMs - item.updatedMs > REASSEMBLY_TIMEOUT_MS)
+            item = {};
+    }
+
+    for (auto &peer : peers_) {
+        if (peer.used && nowMs - peer.lastSeenMs > 24u * 60u * 60u * 1000u) {
+            XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, peer.nodeNum, 0, false, nowMs);
+            peer = {};
+        }
+    }
+}
+
+uint32_t XRXBeeTransport::checksum32(const uint8_t *data, size_t length)
+{
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < length; ++i) {
+        hash ^= data[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+void XRXBeeTransport::onReceiveStatic(uint64_t source64, const uint8_t *payload, size_t payloadLength,
+                                      uint8_t receiveOptions)
+{
+    if (instance_)
+        instance_->processRx(source64, payload, payloadLength, receiveOptions, Time::getMillis());
+}
+
+void XRXBeeTransport::onTxStatusStatic(uint8_t frameId, uint8_t deliveryStatus, uint8_t retryCount,
+                                       uint8_t discoveryStatus)
+{
+    if (instance_)
+        instance_->onTxStatus(frameId, deliveryStatus, retryCount, discoveryStatus);
+}
+
+void XRXBeeTransport::onModemStatusStatic(uint8_t status)
+{
+    if (instance_)
+        instance_->onModemStatus(status);
+}
+
+void XRXBeeTransport::onAtResponseStatic(uint8_t frameId, char command0, char command1, uint8_t status,
+                                         const uint8_t *value, size_t valueLength)
+{
+    if (instance_)
+        instance_->onAtResponse(frameId, command0, command1, status, value, valueLength);
+}
+
+void XRXBeeTransport::onTxStatus(uint8_t frameId, uint8_t deliveryStatus, uint8_t, uint8_t)
+{
+    if (!activeTx_.used || activeTx_.waitingFrameId != frameId)
+        return;
+
+    Peer *peer = findPeer(activeTx_.carrierNodeNum);
+    if (deliveryStatus == XBEE_DELIVERY_SUCCESS) {
+        if (peer && peer->fragmentsOk != UINT16_MAX)
+            ++peer->fragmentsOk;
+        activeTx_.waitingFrameId = 0;
+        activeTx_.waitingSinceMs = 0;
+        ++activeTx_.nextFragment;
+
+        if (activeTx_.nextFragment >= activeTx_.fragmentCount)
+            finishActiveTx(true, Time::getMillis());
+    } else {
+        if (peer && peer->fragmentsFailed != UINT16_MAX)
+            ++peer->fragmentsFailed;
+        finishActiveTx(false, Time::getMillis());
+    }
+}
+
+void XRXBeeTransport::onModemStatus(uint8_t status)
+{
+    // XR868 reports both informational and disruptive modem events. Only
+    // reset/sleep/power/fault states invalidate the shared team route.
+    const bool disruptive =
+        status == 0x00 || // hardware reset / power-up
+        status == 0x01 || // watchdog reset
+        status == 0x0C || // network went to sleep
+        status == 0x0D || // supply limit exceeded
+        status == 0x13 || // fatal error
+        status == 0x42 || // network watchdog timeout
+        status >= 0x80;   // stack error range
+
+    if (!disruptive) {
+        LOG_DEBUG("XR XBee modem status: 0x%02x", status);
+        return;
+    }
+
+    const uint32_t nowMs = Time::getMillis();
+    online_ = false;
+    LOG_WARN("XR XBee disruptive modem status: 0x%02x", status);
+
+    if (activeTx_.used)
+        finishActiveTx(false, nowMs);
+
+    for (auto &peer : peers_) {
+        if (peer.used)
+            XRTransportTeam::shared().reportRoute(XRTeamTransport::XBee, peer.nodeNum, 0, false, nowMs);
+    }
+
+    // Force a fresh API probe before sidecar traffic is allowed again.
+    lastProbeMs_ = 0;
+    lastInfoQueryMs_ = nowMs - 5u * 60u * 1000u;
+}
+
+void XRXBeeTransport::onAtResponse(uint8_t, char command0, char command1, uint8_t status, const uint8_t *value,
+                                   size_t valueLength)
+{
+    if (status != 0) {
+        LOG_WARN("XR XBee AT %c%c failed status=0x%02x", command0, command1, status);
+        return;
+    }
+
+    // Any valid API response proves that the XR868 is alive on the expected
+    // UART/mode. Traffic still remains peer-gated by normal route discovery.
+    online_ = true;
+
+    if (command0 == 'N' && command1 == 'P') {
+        LOG_INFO("XR XBee online, NP=%u", static_cast<unsigned>(link_.maxTxPayload()));
+        return;
+    }
+
+    if (command0 == 'A' && command1 == 'P' && valueLength && value[0] != 1) {
+        static constexpr char kAp[2] = {'A', 'P'};
+        const uint8_t apiMode = 1;
+        (void)link_.sendAt(kAp, &apiMode, 1);
+        LOG_WARN("XR XBee corrected AP=%u to AP=1", static_cast<unsigned>(value[0]));
+    }
+
+    if (command0 == 'A' && command1 == 'O' && valueLength && value[0] != 0) {
+        static constexpr char kAo[2] = {'A', 'O'};
+        const uint8_t standardFrames = 0;
+        (void)link_.sendAt(kAo, &standardFrames, 1);
+        LOG_WARN("XR XBee corrected AO=%u to AO=0", static_cast<unsigned>(value[0]));
+    }
+}
+
+} // namespace meshoffgrid::xr
+
+#endif

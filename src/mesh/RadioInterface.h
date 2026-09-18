@@ -253,6 +253,11 @@ class RadioInterface
     /// Some boards (1st gen Pinetab Lora module) have broken IRQ wires, so we need to poll via i2c registers
     virtual bool isIRQPending() { return false; }
 
+    /** Read-only ambient RF noise floor for adaptive transport selection.
+     * Keeps the low-level driver hook protected while exposing a safe metric.
+     */
+    int32_t getAmbientNoiseFloorDbm() { return getNoiseFloor(); }
+
     // Whether we use the default frequency slot given our LoRa config (region and modem preset)
     static bool uses_default_frequency_slot;
 
@@ -317,6 +322,13 @@ class RadioInterface
      * Returns 0 if not available.
      */
     virtual int16_t getCurrentRSSI() { return 0; }
+
+    /**
+     * Return the radio's learned ambient noise floor in dBm when available.
+     * A conservative -120 dBm default keeps generic/non-RadioLib interfaces
+     * compatible while XR can use richer RF-environment data on SX126x.
+     */
+    virtual int32_t getNoiseFloor() { return -120; }
 
   private:
     /**

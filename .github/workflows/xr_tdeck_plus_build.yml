@@ -1,0 +1,385 @@
+name: XR T-Deck Plus Build
+
+on:
+  push:
+    branches:
+      - feature/xr-team-delivery
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: xr-flash-v2-${{ github.ref }}
+  # Priority flash-candidate branch: when a proven-bad older run exists, the newest fixed candidate replaces it.
+  cancel-in-progress: true
+
+jobs:
+  xr-standalone-tests:
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+
+    steps:
+      - name: Ensure C++ compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v g++ >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y g++
+          fi
+          g++ --version
+
+      - name: Checkout firmware branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+
+      - name: Compile standalone XBee codec tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xbee_codec/standalone.cpp \
+            src/mesh/xbee/XBeeApiCodec.cpp \
+            src/xr/XRDeliveryEvents.cpp \
+            -o /tmp/xbee-codec-test
+          /tmp/xbee-codec-test
+
+      - name: Compile XR delivery lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xr_delivery_state/standalone.cpp \
+            src/xr/XRDeliveryStateMachine.cpp \
+            -o /tmp/xr-delivery-state-test
+          /tmp/xr-delivery-state-test
+
+      - name: Compile XR team delivery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xr_transport_team/standalone.cpp \
+            src/xr/XRTransportTeam.cpp \
+            src/xr/XRDeliveryStateMachine.cpp \
+            -o /tmp/xr-team-delivery-test
+          /tmp/xr-team-delivery-test
+
+      - name: Document native-test host limitation
+        shell: bash
+        run: |
+          echo "Native Portduino tests are Linux-only in this repository (macOS lacks argp.h)."
+          echo "Flash-candidate gating continues with standalone XR tests plus the real ESP32-S3 production build."
+
+
+  build-tdeck-plus:
+    runs-on: macos-15
+    timeout-minutes: 55
+    env:
+      PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+
+    steps:
+      - name: Checkout firmware branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install pinned PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'platformio==6.2.0'
+          pio --version
+
+      - name: Install production target packages
+        run: |
+          pio pkg install -e t-deck-ultra-xbee
+
+      - name: Apply pioarduino SCons compatibility fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          platform_py = Path.home() / ".platformio" / "platforms" / "espressif32" / "platform.py"
+          if not platform_py.exists():
+              raise SystemExit(f"pioarduino platform.py not found: {platform_py}")
+
+          text = platform_py.read_text(encoding="utf-8")
+          before = text
+          text = text.replace('    "tool-scons",\n', '')
+          if text == before:
+              raise SystemExit("Expected tool-scons entry was not found in COMMON_IDF_PACKAGES")
+          platform_py.write_text(text, encoding="utf-8")
+          print(f"Patched {platform_py}: PlatformIO Core now owns tool-scons")
+          PY
+
+      - name: Build canonical production target (LoRa + ESP-NOW + XBee + LittleFS)
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-ultra-xbee -t buildfs 2>&1 | tee /tmp/production-buildfs.log
+          fs_status=${PIPESTATUS[0]}
+          if [ "$fs_status" -ne 0 ]; then
+            echo "::group::Production LittleFS diagnostics"
+            tail -n 160 /tmp/production-buildfs.log || true
+            echo "::endgroup::"
+            exit "$fs_status"
+          fi
+
+          pio run -e t-deck-ultra-xbee 2>&1 | tee /tmp/production-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Production compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/production-build.log | tail -n 160 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Validate production firmware image
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-ultra-xbee
+          full="$BUILD_DIR/xr-full-flash.bin"
+          flash_map="$BUILD_DIR/xr-flash-map.json"
+
+          shopt -s nullglob
+          app_candidates=()
+          for candidate in "$BUILD_DIR"/firmware-t-deck-ultra-xbee-*.bin; do
+            [ -e "$candidate" ] || continue
+            case "$candidate" in
+              *.factory.bin) continue ;;
+            esac
+            app_candidates+=("$candidate")
+          done
+          fs_candidates=("$BUILD_DIR"/littlefs-t-deck-ultra-xbee-*.bin)
+          shopt -u nullglob
+
+          if [ "${#app_candidates[@]}" -ne 1 ]; then
+            echo "Expected exactly one versioned application image, found ${#app_candidates[@]}" >&2
+            find "$BUILD_DIR" -maxdepth 1 -type f -exec ls -lh {} \; || true
+            exit 1
+          fi
+          if [ "${#fs_candidates[@]}" -ne 1 ]; then
+            echo "Expected exactly one versioned LittleFS image, found ${#fs_candidates[@]}" >&2
+            find "$BUILD_DIR" -maxdepth 1 -type f -exec ls -lh {} \; || true
+            exit 1
+          fi
+
+          preferred="${app_candidates[0]}"
+          filesystem="${fs_candidates[0]}"
+
+          for required in "$preferred" "$filesystem" "$full" "$flash_map"; do
+            if [ ! -s "$required" ]; then
+              echo "Expected non-empty $required was not produced" >&2
+              find "$BUILD_DIR" -maxdepth 2 -type f -exec ls -lh {} \; || true
+              exit 1
+            fi
+          done
+
+          echo "firmware=$preferred" >> "$GITHUB_OUTPUT"
+          echo "filesystem=$filesystem" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "flash_map=$flash_map" >> "$GITHUB_OUTPUT"
+          ls -lh "$preferred" "$filesystem" "$full" "$flash_map"
+
+      - name: Package MeshOffGrid XR Ultra production flash bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-ultra-xbee
+          RELEASE_DIR=xr-ultra-release
+          mkdir -p "$RELEASE_DIR"
+
+          APP_NAME=XR-TDeck-Plus-firmware.bin
+          FULL_NAME=XR-TDeck-Plus-FULL-FLASH.bin
+
+          cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/$APP_NAME"
+          cp "${{ steps.firmware.outputs.filesystem }}" "$RELEASE_DIR/littlefs.bin"
+          cp "${{ steps.firmware.outputs.full }}" "$RELEASE_DIR/$FULL_NAME"
+          cp "${{ steps.firmware.outputs.flash_map }}" "$RELEASE_DIR/xr-flash-map.json"
+
+          for file in partitions.bin bootloader.bin boot_app0.bin; do
+            if [ -s "$BUILD_DIR/$file" ]; then
+              cp "$BUILD_DIR/$file" "$RELEASE_DIR/$file"
+            fi
+          done
+
+          BASE_VERSION="$(python - <<'PY'
+          import configparser
+          cfg = configparser.ConfigParser()
+          cfg.read("version.properties")
+          v = cfg["VERSION"]
+          print(f"{v['major']}.{v['minor']}.{v['build']}")
+          PY
+          )"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          VERSION="$BASE_VERSION-xr.$SHORT_SHA"
+          FULL_SHA="$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$RELEASE_DIR/$FULL_NAME")"
+          python - "$RELEASE_DIR" "$FULL_NAME" "$VERSION" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          release = pathlib.Path(sys.argv[1])
+          full_name = sys.argv[2]
+          version = sys.argv[3]
+          full_sha = sys.argv[4]
+          source_sha = sys.argv[5]
+
+          esp_web_tools = {
+              "name": "MeshOffGrid XR Ultra - LILYGO T-Deck Plus",
+              "version": version,
+              "new_install_prompt_erase": True,
+              "builds": [
+                  {
+                      "chipFamily": "ESP32-S3",
+                      "parts": [{"path": full_name, "offset": 0}],
+                  }
+              ],
+          }
+          (release / "esp-web-tools-manifest.json").write_text(
+              json.dumps(esp_web_tools, indent=2) + "\n", encoding="utf-8"
+          )
+
+          product_manifest = {
+              "schema": 1,
+              "channel": "candidate",
+              "product": "MeshOffGridNL T-Deck Plus",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "version": version,
+              "sourceCommit": source_sha,
+              "sourceRunId": int(os.environ.get("GITHUB_RUN_ID", "0")),
+              "file": full_name,
+              "offset": 0,
+              "sha256": full_sha,
+              "size": 16711680,
+              "filesystemOffset": 13172736,
+          }
+          product_text = json.dumps(product_manifest, indent=2) + "\n"
+          (release / "manifest.json").write_text(product_text, encoding="utf-8")
+          (release / "meshoffgrid-manifest.json").write_text(product_text, encoding="utf-8")
+          PY
+
+          {
+            echo "MeshOffGrid XR Ultra"
+            echo "Target: LILYGO T-Deck Plus / ESP32-S3"
+            echo "Profile: t-deck-ultra-xbee"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo
+            echo "Files:"
+            echo "  $FULL_NAME  = complete first-install image at offset 0x0"
+            echo "  $APP_NAME   = application-only image for compatible update flows"
+            echo "  esp-web-tools-manifest.json = ESP Web Tools-compatible single-image manifest"
+            echo "  manifest.json = canonical MeshOffGridNL installer candidate manifest"
+            echo "  meshoffgrid-manifest.json = identical compatibility copy"
+            echo "  xr-flash-map.json = exact PlatformIO-resolved source flash map"
+            echo
+            echo "XBee XR 868:"
+            echo "  Production UART2 enabled."
+            echo "  GPIO47 = T-Deck RX from XBee DOUT/TX."
+            echo "  GPIO48 = T-Deck TX to XBee DIN/RX."
+            echo "  Factory AP=0/9600 modules are auto-provisioned to AP=1, AO=0, 115200 and saved."
+            echo "  Missing XBee hardware degrades safely; LoRa + ESP-NOW remain operational."
+            echo
+            echo "LoRa/Meshtastic: preserved"
+            echo "XR ESP-NOW sidecar: enabled"
+            echo "Encrypted recovery/store-carry-forward: enabled"
+            echo "Adaptive delivery intelligence: enabled"
+          } > "$RELEASE_DIR/BUILD_INFO.txt"
+
+          {
+            echo "FIRST INSTALL / FULL RECOVERY"
+            echo "Flash $FULL_NAME at offset 0x0 using a compatible ESP32-S3 flasher."
+            echo
+            echo "BROWSER FLASHER"
+            echo "Host this directory over HTTPS and point ESP Web Tools at esp-web-tools-manifest.json."
+            echo
+            echo "APP-ONLY UPDATE"
+            echo "Use $APP_NAME only with an update method that expects the application partition image."
+            echo
+            echo "Do not flash the app-only image at offset 0x0."
+          } > "$RELEASE_DIR/FLASHING.txt"
+
+          python - "$RELEASE_DIR" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+
+          release = pathlib.Path(sys.argv[1])
+          lines = []
+          for path in sorted(release.glob("*.bin")):
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              lines.append(f"{digest}  {path.name}")
+          (release / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+          python scripts/validate_xr_release.py "$RELEASE_DIR" \
+            --full-name "$FULL_NAME" \
+            --app-name "$APP_NAME"
+
+          cat "$RELEASE_DIR/BUILD_INFO.txt"
+          cat "$RELEASE_DIR/FLASHING.txt"
+          cat "$RELEASE_DIR/SHA256SUMS.txt"
+          cat "$RELEASE_DIR/VALIDATION.json"
+
+      - name: Upload compiler diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: MeshOffGrid-XR-compiler-logs-${{ github.sha }}
+          path: |
+            /tmp/stock-build.log
+            /tmp/ultra-build.log
+            /tmp/ultra-buildfs.log
+            /tmp/production-build.log
+            /tmp/production-buildfs.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload MeshOffGrid XR Ultra artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: MeshOffGrid-XR-Ultra-TDeck-Plus-${{ github.sha }}
+          path: xr-ultra-release/
+          if-no-files-found: error
+          retention-days: 30
+
+
+  flash-ready-gate:
+    name: Flash-ready candidate gate
+    if: always()
+    needs:
+      - xr-standalone-tests
+      - build-tdeck-plus
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+
+    steps:
+      - name: Require tests and production artifact build
+        shell: bash
+        env:
+          TEST_RESULT: ${{ needs.xr-standalone-tests.result }}
+          BUILD_RESULT: ${{ needs.build-tdeck-plus.result }}
+        run: |
+          set -euo pipefail
+          echo "XR standalone tests: $TEST_RESULT"
+          echo "T-Deck Plus production build: $BUILD_RESULT"
+          if [ "$TEST_RESULT" != "success" ] || [ "$BUILD_RESULT" != "success" ]; then
+            echo "Flash-ready gate failed: all lanes must be green." >&2
+            exit 1
+          fi
+          echo "Flash-ready gate passed: tests + production build + release validation are green."
