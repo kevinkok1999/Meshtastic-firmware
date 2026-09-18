@@ -34,6 +34,10 @@ class XRTransportTeam
     static constexpr uint32_t ROUTE_REPORT_TTL_MS = 70000u;
     static constexpr uint32_t ENVIRONMENT_TTL_MS = 10000u;
     static constexpr uint32_t PREFERRED_PATH_HOLD_MS = 45000u;
+    // Battery may only break ties between routes whose predicted delivery
+    // quality is effectively equivalent. It must never override a clearly
+    // better delivery path.
+    static constexpr int QUALITY_EQUIVALENCE_MARGIN = 3;
     static constexpr uint32_t ASSIST_RESERVATION_MS = 30000u;
     static constexpr uint32_t RECOVERY_ARBITRATION_MS = 150u;
     static constexpr uint32_t RECOVERY_LEASE_MS = 8000u;
