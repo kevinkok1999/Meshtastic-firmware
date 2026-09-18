@@ -1,3 +1,5 @@
+#include "configuration.h"
+
 #if defined(ARCH_ESP32) && defined(MESHOFFGRID_ENABLE_XBEE_XR868)
 
 #include "XBeeXr868Link.h"
