@@ -16,10 +16,20 @@ concurrency:
 
 jobs:
   xr-standalone-tests:
-    runs-on: macos-15
+    runs-on: ubuntu-slim
     timeout-minutes: 10
 
     steps:
+      - name: Ensure C++ compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v g++ >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y g++
+          fi
+          g++ --version
+
       - name: Checkout firmware branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -326,7 +336,7 @@ jobs:
     needs:
       - xr-standalone-tests
       - build-tdeck-plus
-    runs-on: macos-15
+    runs-on: ubuntu-slim
     timeout-minutes: 5
 
     steps:
