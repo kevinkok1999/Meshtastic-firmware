@@ -284,13 +284,13 @@ def build_xr_flash_bundle(source, target, build_env):
         "target": "LILYGO T-Deck Plus",
         "environment": build_env.subst("$PIOENV"),
         "mcu": board.get("build.mcu", "esp32s3"),
-        "flashSizeBytes": flash_bytes,
-        "partitionCsv": str(partition_path),
-        "appOffset": app_offset,
-        "filesystemOffset": filesystem["offset"],
-        "filesystemSize": filesystem["size"],
+        "flash_size_bytes": flash_bytes,
+        "partition_csv": str(partition_path),
+        "app_offset": app_offset,
+        "filesystem_offset": filesystem["offset"],
+        "filesystem_size": filesystem["size"],
         "images": resolved,
-        "fullImage": {
+        "full_image": {
             "path": str(full_path),
             "offset": 0,
             "size": full_path.stat().st_size,
@@ -302,7 +302,7 @@ def build_xr_flash_bundle(source, target, build_env):
     print(f"XR flash map: {map_path}")
     print(
         f"XR full flash image: {full_path} "
-        f"({full_path.stat().st_size} bytes, sha256={manifest['fullImage']['sha256']})"
+        f"({full_path.stat().st_size} bytes, sha256={manifest['full_image']['sha256']})"
     )
 
 
