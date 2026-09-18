@@ -115,7 +115,7 @@ int32_t XRXBeeTransport::runOnce()
 void XRXBeeTransport::packetReleased(RadioInterface *, const meshtastic_MeshPacket *packet)
 {
     if (!ready() || !txQueue_ || !packet || packet->which_payload_variant != meshtastic_MeshPacket_encrypted_tag ||
-        packet->via_mqtt)
+        packet->via_mqtt || !isFromUs(packet))
         return;
 
     // XBee is an additional route for directed traffic. Normal mesh broadcasts remain
@@ -185,7 +185,10 @@ bool XRXBeeTransport::sendPacket(const meshtastic_MeshPacket &packet, uint32_t)
         return false;
 
     const Peer *peer = findPeer(packet.to);
-    const uint64_t destination = peer ? peer->address64 : meshoffgrid::xbee::BROADCAST_64;
+    if (!peer)
+        return false; // Never flood directed DATA just to discover a route; HELLO frames perform discovery.
+
+    const uint64_t destination = peer->address64;
     const uint32_t checksum = checksum32(encoded.data(), totalLength);
 
     for (size_t index = 0; index < fragmentCount; ++index) {
@@ -232,6 +235,9 @@ void XRXBeeTransport::processCarrier(uint64_t source64, const uint8_t *payload, 
     FrameHeader header{};
     std::memcpy(&header, payload, sizeof(header));
     if (header.magic != WIRE_MAGIC || header.version != WIRE_VERSION || !header.carrierNode)
+        return;
+
+    if (router && header.carrierNode == router->getNodeNum())
         return;
 
     online_ = true;
@@ -443,8 +449,13 @@ void XRXBeeTransport::onTxStatus(uint8_t, uint8_t deliveryStatus, uint8_t, uint8
 
 void XRXBeeTransport::onModemStatus(uint8_t)
 {
-    if (instance_)
-        instance_->online_ = true;
+    if (!instance_)
+        return;
+
+    // A modem-status frame can indicate a reset/rejoin. Re-validate the
+    // runtime payload limit before XBee is admitted as an active route again.
+    instance_->online_ = false;
+    instance_->lastProbeMs_ = 0;
 }
 
 void XRXBeeTransport::onAtResponse(uint8_t, char command0, char command1, uint8_t status, const uint8_t *value,
