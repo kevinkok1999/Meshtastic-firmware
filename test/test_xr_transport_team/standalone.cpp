@@ -112,6 +112,58 @@ static void test_low_battery_only_breaks_near_equal_quality_ties()
     assert(team.preferredTransport(0x89, 1002) == XRTeamTransport::EspNow);
 }
 
+
+static void test_learning_snapshot_roundtrip_and_corruption_rejection()
+{
+    XRTransportTeam source;
+    source.reportRoute(XRTeamTransport::XBee, 0x90, 90, true, 1000);
+    assert(!source.claimRecovery(XRTeamTransport::XBee, 0x90, 30, 1100));
+    const uint32_t claimAt = 1100 + XRTransportTeam::RECOVERY_ARBITRATION_MS + 1;
+    assert(source.claimRecovery(XRTeamTransport::XBee, 0x90, 30, claimAt));
+    source.reportRecoveryResult(XRTeamTransport::XBee, 0x90, 30, true, claimAt + 10);
+    source.markDelivered(0x90, 30, claimAt + 100);
+
+    uint32_t generation = 0;
+    const auto snapshot = source.learningSnapshot(generation);
+    assert(generation != 0);
+
+    XRTransportTeam restored;
+    assert(restored.restoreLearning(snapshot, 5000));
+    restored.reportRoute(XRTeamTransport::EspNow, 0x90, 90, true, 5001);
+    restored.reportRoute(XRTeamTransport::XBee, 0x90, 88, true, 5001);
+    assert(restored.preferredTransport(0x90, 5002) == XRTeamTransport::XBee);
+
+    auto corrupt = snapshot;
+    corrupt.records[0].destination ^= 1u;
+    XRTransportTeam rejected;
+    assert(!rejected.restoreLearning(corrupt, 5000));
+}
+
+static void test_learning_arriving_during_save_stays_dirty()
+{
+    XRTransportTeam team;
+    team.reportRoute(XRTeamTransport::EspNow, 0x91, 85, true, 1000);
+    assert(team.allowAssist(XRTeamTransport::EspNow, 0x91, 31, 1001));
+    team.reportAssistResult(XRTeamTransport::EspNow, 0x91, 31, true, 1002);
+    assert(team.learningDirty());
+
+    uint32_t capturedGeneration = 0;
+    (void)team.learningSnapshot(capturedGeneration);
+
+    team.markCancelled(0x91, 31, 1003);
+    team.reportRoute(XRTeamTransport::XBee, 0x92, 90, true, 1004);
+    assert(team.allowAssist(XRTeamTransport::XBee, 0x92, 32, 1005));
+    team.reportAssistResult(XRTeamTransport::XBee, 0x92, 32, false, 1006);
+
+    team.markLearningPersisted(capturedGeneration);
+    assert(team.learningDirty());
+
+    uint32_t newestGeneration = 0;
+    (void)team.learningSnapshot(newestGeneration);
+    team.markLearningPersisted(newestGeneration);
+    assert(!team.learningDirty());
+}
+
 static void test_stale_routes_are_ignored()
 {
     XRTransportTeam team;
@@ -130,6 +182,8 @@ int main()
     test_ambient_rf_penalizes_bridge_not_direct_carriers();
     test_low_battery_never_overrides_clearly_better_quality();
     test_low_battery_only_breaks_near_equal_quality_ties();
+    test_learning_snapshot_roundtrip_and_corruption_rejection();
+    test_learning_arriving_during_save_stays_dirty();
     test_stale_routes_are_ignored();
     return 0;
 }
