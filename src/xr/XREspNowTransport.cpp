@@ -563,7 +563,8 @@ bool XREspNowTransport::attemptPacket(const meshtastic_MeshPacket &packet, uint3
     const uint8_t score = linkScoreFor(peer->nodeNum);
     // The scored route belongs to the final packet destination even when the
     // selected sidecar peer is only a bridge that will re-inject into LoRa.
-    team.reportRoute(XRTeamTransport::EspNow, packet.to, score, true, nowMs);
+    team.reportRoute(XRTeamTransport::EspNow, packet.to, score, true, nowMs,
+                     peer->nodeNum == packet.to ? XRTeamRouteKind::Direct : XRTeamRouteKind::Bridge);
 
     if (fromDeferredQueue) {
         if (!team.claimRecovery(XRTeamTransport::EspNow, packet.to, packet.id, nowMs))
