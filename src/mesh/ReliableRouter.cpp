@@ -8,6 +8,9 @@
 #include "mesh-pb-constants.h"
 #include "modules/NodeInfoModule.h"
 #include "modules/RoutingModule.h"
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
+#include "xr/XRDeliveryEvents.h"
+#endif
 
 // ReliableRouter::ReliableRouter() {}
 
@@ -182,8 +185,18 @@ void ReliableRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtas
                 // so clear its failure count and refresh freshness (keeps a good route pinned).
                 if (!isBroadcast(getFrom(p)))
                     noteRouteSuccess(getFrom(p), Time::stampMillis());
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
+                if (!isFromUs(p) && !isBroadcast(getFrom(p)))
+                    meshoffgrid::xr::XRDeliveryEvents::notifyAcked(getFrom(p), ackId, Time::stampMillis());
+#endif
             } else {
                 stopRetransmission(p->to, nakId);
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
+                // Ignore our own local MAX_RETRANSMIT loopback. A remote NAK is an
+                // explicit rejection and should cancel sidecar store-and-forward.
+                if (!isFromUs(p) && !isBroadcast(getFrom(p)))
+                    meshoffgrid::xr::XRDeliveryEvents::notifyNaked(getFrom(p), nakId, Time::stampMillis());
+#endif
             }
         }
     }

@@ -1,0 +1,249 @@
+name: XR T-Deck Plus Build
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xr-tdeck-plus-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-tdeck-plus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+
+    steps:
+      - name: Checkout firmware branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install pinned PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'platformio==6.2.0'
+          pio --version
+
+      - name: Install target packages
+        run: |
+          pio pkg install -e t-deck-tft
+          pio pkg install -e t-deck-ultra
+          pio pkg install -e t-deck-xbee-ci
+
+      - name: Apply pioarduino SCons compatibility fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          platform_py = Path.home() / ".platformio" / "platforms" / "espressif32" / "platform.py"
+          if not platform_py.exists():
+              raise SystemExit(f"pioarduino platform.py not found: {platform_py}")
+
+          text = platform_py.read_text(encoding="utf-8")
+          before = text
+          text = text.replace('    "tool-scons",\n', '')
+          if text == before:
+              raise SystemExit("Expected tool-scons entry was not found in COMMON_IDF_PACKAGES")
+          platform_py.write_text(text, encoding="utf-8")
+          print(f"Patched {platform_py}: PlatformIO Core now owns tool-scons")
+          PY
+
+      - name: Build stock T-Deck Plus regression target
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-tft 2>&1 | tee /tmp/stock-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Stock compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/stock-build.log | tail -n 100 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Build MeshOffGrid XR Ultra firmware
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-ultra 2>&1 | tee /tmp/ultra-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::XR Ultra compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/ultra-build.log | tail -n 120 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Compile standalone XBee codec tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xbee_codec/standalone.cpp \
+            src/mesh/xbee/XBeeApiCodec.cpp \
+            src/xr/XRDeliveryEvents.cpp \
+            -o /tmp/xbee-codec-test
+          /tmp/xbee-codec-test
+
+      - name: Run XR native unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pio test -e native -f test_xr_deferred_queue
+          pio test -e native -f test_xr_adaptive_intelligence
+
+
+      - name: Compile optional XBee XR 868 integration
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-xbee-ci 2>&1 | tee /tmp/xbee-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::XBee compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/xbee-build.log | tail -n 120 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Validate Ultra firmware image
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-ultra
+          preferred="$BUILD_DIR/firmware.bin"
+          full="$BUILD_DIR/xr-full-flash.bin"
+          flash_map="$BUILD_DIR/xr-flash-map.json"
+
+          for required in "$preferred" "$full" "$flash_map"; do
+            if [ ! -s "$required" ]; then
+              echo "Expected non-empty $required was not produced" >&2
+              find "$BUILD_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+              exit 1
+            fi
+          done
+
+          echo "firmware=$preferred" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "flash_map=$flash_map" >> "$GITHUB_OUTPUT"
+          ls -lh "$preferred" "$full" "$flash_map"
+
+      - name: Package MeshOffGrid XR Ultra flash bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-ultra
+          RELEASE_DIR=xr-ultra-release
+          mkdir -p "$RELEASE_DIR"
+
+          APP_NAME=MeshOffGrid-XR-Ultra-TDeck-Plus-firmware.bin
+          FULL_NAME=MeshOffGrid-XR-Ultra-TDeck-Plus-full.bin
+
+          cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/$APP_NAME"
+          cp "${{ steps.firmware.outputs.full }}" "$RELEASE_DIR/$FULL_NAME"
+          cp "${{ steps.firmware.outputs.flash_map }}" "$RELEASE_DIR/xr-flash-map.json"
+
+          for file in partitions.bin bootloader.bin littlefs.bin boot_app0.bin; do
+            if [ -s "$BUILD_DIR/$file" ]; then
+              cp "$BUILD_DIR/$file" "$RELEASE_DIR/$file"
+            fi
+          done
+
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          python - "$RELEASE_DIR" "$FULL_NAME" "$SHORT_SHA" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          release = pathlib.Path(sys.argv[1])
+          full_name = sys.argv[2]
+          version = sys.argv[3]
+
+          manifest = {
+              "name": "MeshOffGrid XR Ultra - LILYGO T-Deck Plus",
+              "version": version,
+              "new_install_prompt_erase": True,
+              "builds": [
+                  {
+                      "chipFamily": "ESP32-S3",
+                      "parts": [{"path": full_name, "offset": 0}],
+                  }
+              ],
+          }
+          (release / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          {
+            echo "MeshOffGrid XR Ultra"
+            echo "Target: LILYGO T-Deck Plus / ESP32-S3"
+            echo "Profile: t-deck-ultra"
+            echo "Commit: $(git rev-parse HEAD)"
+            echo
+            echo "Files:"
+            echo "  $FULL_NAME  = complete first-install image at offset 0x0"
+            echo "  $APP_NAME   = application-only image for compatible update flows"
+            echo "  manifest.json = ESP Web Tools-compatible single-image manifest"
+            echo "  xr-flash-map.json = exact PlatformIO-resolved source flash map"
+            echo
+            echo "XBee XR 868:"
+            echo "  Driver is compile-tested separately in t-deck-xbee-ci."
+            echo "  Physical UART pins are intentionally NOT enabled in this flashable bundle until real hardware wiring is validated."
+            echo
+            echo "LoRa/Meshtastic: preserved"
+            echo "XR ESP-NOW sidecar: enabled"
+            echo "Encrypted recovery/store-carry-forward: enabled"
+            echo "Adaptive delivery intelligence: enabled"
+          } > "$RELEASE_DIR/BUILD_INFO.txt"
+
+          {
+            echo "FIRST INSTALL / FULL RECOVERY"
+            echo "Flash $FULL_NAME at offset 0x0 using a compatible ESP32-S3 flasher."
+            echo
+            echo "BROWSER FLASHER"
+            echo "Host this directory over HTTPS and point ESP Web Tools at manifest.json."
+            echo
+            echo "APP-ONLY UPDATE"
+            echo "Use $APP_NAME only with an update method that expects the application partition image."
+            echo
+            echo "Do not flash the app-only image at offset 0x0."
+          } > "$RELEASE_DIR/FLASHING.txt"
+
+          sha256sum "$RELEASE_DIR"/*.bin > "$RELEASE_DIR/SHA256SUMS.txt"
+          cat "$RELEASE_DIR/BUILD_INFO.txt"
+          cat "$RELEASE_DIR/FLASHING.txt"
+          cat "$RELEASE_DIR/SHA256SUMS.txt"
+
+      - name: Upload compiler diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: MeshOffGrid-XR-compiler-logs-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/stock-build.log
+            /tmp/ultra-build.log
+            /tmp/xbee-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload MeshOffGrid XR Ultra artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: MeshOffGrid-XR-Ultra-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
+          path: xr-ultra-release/
+          if-no-files-found: error
+          retention-days: 30
