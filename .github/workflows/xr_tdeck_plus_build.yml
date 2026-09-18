@@ -99,6 +99,16 @@ jobs:
             -o /tmp/xbee-codec-test
           /tmp/xbee-codec-test
 
+      - name: Compile XR team delivery tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            test/test_xr_transport_team/standalone.cpp \
+            src/xr/XRTransportTeam.cpp \
+            -o /tmp/xr-team-delivery-test
+          /tmp/xr-team-delivery-test
+
       - name: Run XR native unit tests
         shell: bash
         run: |
