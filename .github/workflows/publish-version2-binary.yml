@@ -1,0 +1,79 @@
+name: Publish validated Version 2 binary
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-version2-binary.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download exact validated artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          gh run download 35387972751             --repo "${GITHUB_REPOSITORY}"             --name "MeshOffGrid-XR-Ultra-TDeck-Plus-d1bb0e1238b3672fa188617285f53216cd27b810"             --dir artifact
+
+      - name: Validate binary before publishing
+        run: |
+          set -euo pipefail
+          test -f artifact/XR-TDeck-Plus-FULL-FLASH.bin
+          test "$(stat -c%s artifact/XR-TDeck-Plus-FULL-FLASH.bin)" = "16711680"
+          echo "6a1db6cd47bc64051061bb0bc4e5d2eba2451a78ddd94cd636706aee8b7730c1  artifact/XR-TDeck-Plus-FULL-FLASH.bin" | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("artifact/XR-TDeck-Plus-FULL-FLASH.bin").read_bytes()
+          assert len(p) == 16711680
+          assert p[0] == 0xE9
+          assert p[0x8000:0x8002] == bytes([0xAA, 0x50])
+          assert p[0x10000] == 0xE9
+          assert p[0xC90000:0xC90004] == bytes([0x01,0x00,0x00,0x00])
+          PY
+
+      - name: Publish only the validated full-flash binary
+        run: |
+          set -euo pipefail
+          git config user.name "MeshOffGridNL Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch origin xr-range-first
+          git switch xr-range-first
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m = json.loads(Path("manifest.json").read_text())
+          assert m["schema"] == 1
+          assert m["channel"] == "candidate"
+          assert m["board"] == "lilygo-t-deck-plus"
+          assert m["chip"] == "ESP32-S3"
+          assert m["flashSizeBytes"] == 16777216
+          assert m["version"] == "2.8.1-xr.d1bb0e1"
+          assert m["sourceCommit"] == "d1bb0e1238b3672fa188617285f53216cd27b810"
+          assert m["file"] == "XR-TDeck-Plus-FULL-FLASH.bin"
+          assert m["size"] == 16711680
+          assert m["sha256"] == "6a1db6cd47bc64051061bb0bc4e5d2eba2451a78ddd94cd636706aee8b7730c1"
+          assert m["filesystemOffset"] == 13172736
+          PY
+
+          cp artifact/XR-TDeck-Plus-FULL-FLASH.bin ./XR-TDeck-Plus-FULL-FLASH.bin
+          echo "6a1db6cd47bc64051061bb0bc4e5d2eba2451a78ddd94cd636706aee8b7730c1  XR-TDeck-Plus-FULL-FLASH.bin" | sha256sum -c -
+          git add XR-TDeck-Plus-FULL-FLASH.bin
+          if git diff --cached --quiet; then
+            echo "Validated binary already present; nothing to commit."
+          else
+            git commit -m "release(version-2): publish validated full-flash d1bb0e1"
+            git push origin xr-range-first
+          fi
