@@ -76,6 +76,7 @@ jobs:
 
 
   build-tdeck-plus:
+    needs: xr-standalone-tests
     runs-on: macos-15
     timeout-minutes: 55
     env:
