@@ -162,6 +162,166 @@ void XRXBeeTransport::shutdown()
     deferred_.clear();
 }
 
+void XRXBeeTransport::probeModule(uint32_t nowMs)
+{
+    if (!initialized_ || provisionState_ != ProvisionState::Idle)
+        return;
+
+    link_.queryModuleInfo();
+    lastProbeMs_ = nowMs;
+    lastInfoQueryMs_ = nowMs;
+}
+
+void XRXBeeTransport::startFactoryProvisioning(uint32_t nowMs)
+{
+    // Factory XR868 modules can arrive in transparent AP=0 at 9600 baud.
+    // Only enter this fallback after the normal AP=1/115200 probe timed out,
+    // so an already configured module is never disturbed.
+    online_ = false;
+    link_.end();
+    serial_.begin(FACTORY_BAUD, SERIAL_8N1, MESHOFFGRID_XBEE_RX_PIN, MESHOFFGRID_XBEE_TX_PIN);
+    while (serial_.available() > 0)
+        (void)serial_.read();
+
+    provisionState_ = ProvisionState::GuardBefore;
+    provisionDeadlineMs_ = nowMs + FACTORY_GUARD_MS;
+    lastProvisionAttemptMs_ = nowMs;
+    commandOkMatch_ = 0;
+    LOG_INFO("XR XBee: probing factory defaults at 9600 baud");
+}
+
+bool XRXBeeTransport::consumeCommandOk()
+{
+    while (serial_.available() > 0) {
+        const int value = serial_.read();
+        if (value < 0)
+            continue;
+
+        const char ch = static_cast<char>(value);
+        if (commandOkMatch_ == 0)
+            commandOkMatch_ = (ch == 'O') ? 1 : 0;
+        else if (commandOkMatch_ == 1)
+            commandOkMatch_ = (ch == 'K') ? 2 : ((ch == 'O') ? 1 : 0);
+        else {
+            if (ch == '\r') {
+                commandOkMatch_ = 0;
+                return true;
+            }
+            commandOkMatch_ = (ch == 'O') ? 1 : 0;
+        }
+    }
+    return false;
+}
+
+void XRXBeeTransport::sendFactoryCommand(const char *command, ProvisionState waitState, uint32_t nowMs)
+{
+    commandOkMatch_ = 0;
+    serial_.print(command);
+    provisionState_ = waitState;
+    provisionDeadlineMs_ = nowMs + FACTORY_COMMAND_TIMEOUT_MS;
+}
+
+void XRXBeeTransport::finishFactoryProvisioning(uint32_t nowMs, bool configured)
+{
+    serial_.end();
+    delay(5);
+
+    if (!link_.begin(serial_, XBEE_BAUD, MESHOFFGRID_XBEE_RX_PIN, MESHOFFGRID_XBEE_TX_PIN)) {
+        LOG_WARN("XR XBee: UART reopen failed after provisioning attempt");
+        initialized_ = false;
+        online_ = false;
+        provisionState_ = ProvisionState::Idle;
+        return;
+    }
+
+    provisionState_ = ProvisionState::Idle;
+    online_ = false;
+    lastProbeMs_ = 0;
+    commandOkMatch_ = 0;
+
+    if (configured)
+        LOG_INFO("XR XBee: factory module configured AP=1 AO=0 115200 and saved");
+    else
+        LOG_DEBUG("XR XBee: no factory-default module detected");
+
+    probeModule(nowMs);
+}
+
+void XRXBeeTransport::serviceFactoryProvisioning(uint32_t nowMs)
+{
+    const auto expired = [nowMs](uint32_t deadline) {
+        return static_cast<int32_t>(nowMs - deadline) >= 0;
+    };
+
+    switch (provisionState_) {
+    case ProvisionState::Idle:
+        return;
+
+    case ProvisionState::GuardBefore:
+        if (expired(provisionDeadlineMs_)) {
+            serial_.print("+++");
+            commandOkMatch_ = 0;
+            provisionState_ = ProvisionState::GuardAfter;
+            provisionDeadlineMs_ = nowMs + FACTORY_GUARD_MS;
+        }
+        return;
+
+    case ProvisionState::GuardAfter:
+        if (expired(provisionDeadlineMs_)) {
+            provisionState_ = ProvisionState::WaitEnter;
+            provisionDeadlineMs_ = nowMs + FACTORY_COMMAND_TIMEOUT_MS;
+        }
+        return;
+
+    case ProvisionState::WaitEnter:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATAP1\r", ProvisionState::WaitAp, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitAp:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATAO0\r", ProvisionState::WaitAo, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitAo:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATBD7\r", ProvisionState::WaitBd, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitBd:
+        if (consumeCommandOk()) {
+            sendFactoryCommand("ATWR\r", ProvisionState::WaitWr, nowMs);
+            return;
+        }
+        break;
+
+    case ProvisionState::WaitWr:
+        if (consumeCommandOk()) {
+            // CN applies API mode and the new UART speed. Do not wait for a
+            // reply because the module can switch mode/baud immediately.
+            serial_.print("ATCN\r");
+            provisionState_ = ProvisionState::ReopenDelay;
+            provisionDeadlineMs_ = nowMs + 250u;
+            return;
+        }
+        break;
+
+    case ProvisionState::ReopenDelay:
+        if (expired(provisionDeadlineMs_))
+            finishFactoryProvisioning(nowMs, true);
+        return;
+    }
+
+    if (expired(provisionDeadlineMs_))
+        finishFactoryProvisioning(nowMs, false);
+}
+
 int32_t XRXBeeTransport::runOnce()
 {
     if (!initAttempted_) {
