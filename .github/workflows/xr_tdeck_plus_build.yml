@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - feature/xr-team-delivery
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -14,7 +11,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: xr-tdeck-plus-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: xr-flash-candidate-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -25,20 +22,6 @@ jobs:
       PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
 
     steps:
-      - name: Cancel stale branch CI queue
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          echo "Cleaning stale queued CI runs for branch: $GITHUB_HEAD_REF"
-          gh api --paginate             "repos/$GITHUB_REPOSITORY/actions/runs?status=queued&branch=$GITHUB_HEAD_REF&per_page=100"             --jq '.workflow_runs[] | select(.name == "CI") | .id'           | sort -u           | while read -r run_id; do
-              [ -n "$run_id" ] || continue
-              echo "Cancelling stale CI run $run_id"
-              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" >/dev/null || true
-            done
-
       - name: Checkout firmware branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -56,10 +39,8 @@ jobs:
           python -m pip install 'platformio==6.2.0'
           pio --version
 
-      - name: Install target packages
+      - name: Install production target packages
         run: |
-          pio pkg install -e t-deck-tft
-          pio pkg install -e t-deck-ultra
           pio pkg install -e t-deck-ultra-xbee
 
       - name: Apply pioarduino SCons compatibility fix
@@ -79,40 +60,6 @@ jobs:
           platform_py.write_text(text, encoding="utf-8")
           print(f"Patched {platform_py}: PlatformIO Core now owns tool-scons")
           PY
-
-      - name: Build stock T-Deck Plus regression target
-        shell: bash
-        run: |
-          set -o pipefail
-          pio run -e t-deck-tft 2>&1 | tee /tmp/stock-build.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo "::group::Stock compiler diagnostics"
-            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/stock-build.log | tail -n 100 || true
-            echo "::endgroup::"
-            exit "$status"
-          fi
-
-      - name: Build MeshOffGrid XR Ultra no-XBee compatibility target
-        shell: bash
-        run: |
-          set -o pipefail
-          pio run -e t-deck-ultra -t buildfs 2>&1 | tee /tmp/ultra-buildfs.log
-          fs_status=${PIPESTATUS[0]}
-          if [ "$fs_status" -ne 0 ]; then
-            echo "::group::XR Ultra LittleFS diagnostics"
-            tail -n 120 /tmp/ultra-buildfs.log || true
-            echo "::endgroup::"
-            exit "$fs_status"
-          fi
-          pio run -e t-deck-ultra 2>&1 | tee /tmp/ultra-build.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo "::group::XR Ultra compiler diagnostics"
-            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/ultra-build.log | tail -n 120 || true
-            echo "::endgroup::"
-            exit "$status"
-          fi
 
       - name: Compile standalone XBee codec tests
         shell: bash
@@ -346,7 +293,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: MeshOffGrid-XR-compiler-logs-${{ github.event.pull_request.head.sha || github.sha }}
+          name: MeshOffGrid-XR-compiler-logs-${{ github.sha }}
           path: |
             /tmp/stock-build.log
             /tmp/ultra-build.log
@@ -359,7 +306,7 @@ jobs:
       - name: Upload MeshOffGrid XR Ultra artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: MeshOffGrid-XR-Ultra-TDeck-Plus-${{ github.event.pull_request.head.sha || github.sha }}
+          name: MeshOffGrid-XR-Ultra-TDeck-Plus-${{ github.sha }}
           path: xr-ultra-release/
           if-no-files-found: error
           retention-days: 30
