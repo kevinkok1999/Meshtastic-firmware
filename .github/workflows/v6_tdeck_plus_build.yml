@@ -36,7 +36,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git status --short
 
-      - name: Run standalone XR and V6 policy tests
+      - name: Run standalone XR, adaptive AI and V6 policy tests
         shell: bash
         run: |
           set -euo pipefail
@@ -55,6 +55,9 @@ jobs:
           "$CXX" -std=c++17 -Wall -Wextra -Werror -Isrc             test/test_v6_policy/standalone.cpp             src/v6/V6Policy.cpp             -o /tmp/v6-policy-test
           /tmp/v6-policy-test
 
+          "$CXX" -std=c++17 -Wall -Wextra -Werror -Isrc             test/test_xr_adaptive_intelligence/standalone.cpp             src/xr/XRAdaptiveIntelligence.cpp             -o /tmp/xr-adaptive-intelligence-test
+          /tmp/xr-adaptive-intelligence-test
+
       - name: V6 privacy source gates
         shell: bash
         run: |
@@ -65,6 +68,15 @@ jobs:
           grep -q '\[env:t-deck-v6\]' variants/esp32s3/t-deck/platformio.ini
           grep -q 'config_ok_to_mqtt = false' src/v6/V6ModeController.cpp
           grep -q 'map_reporting_enabled = false' src/v6/V6ModeController.cpp
+          grep -q 'XRAdaptiveCoordinator' src/xr/XREspNowTransport.h
+          grep -q 'XRAdaptiveCoordinator' src/xr/XRXBeeTransport.h
+          grep -q 'coordinator_.plan' src/xr/XREspNowTransport.cpp
+          grep -q 'coordinator_.report' src/xr/XREspNowTransport.cpp
+          grep -q 'coordinator_.service' src/xr/XREspNowTransport.cpp
+          grep -q 'coordinator_.plan' src/xr/XRXBeeTransport.cpp
+          grep -q 'coordinator_.report' src/xr/XRXBeeTransport.cpp
+          grep -q 'coordinator_.service' src/xr/XRXBeeTransport.cpp
+          grep -q '+<xr/>' variants/esp32s3/t-deck/platformio.ini
           if grep -R --line-number '__V6_.*PENDING__' src/v6 variants/esp32s3/t-deck scripts; then
             echo "Pending V6 placeholder found" >&2
             exit 1
@@ -316,6 +328,7 @@ jobs:
           assert m["size"] == v["fullSize"] == 16711680
           assert m["sourceCommit"] == __import__("os").environ["GITHUB_SHA"]
           assert m["features"]["mqttAuthenticatedTls"] is True
+          assert m["features"]["adaptiveDelivery"] is True
           assert m["features"]["fullVpnProvider"] is False
           print("V6 flash-ready software gate PASSED")
           PY
