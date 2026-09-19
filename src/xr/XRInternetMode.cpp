@@ -1,4 +1,7 @@
 #include "XRInternetMode.h"
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include "v6/V6ModeController.h"
+#endif
 
 #if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
 
@@ -11,12 +14,20 @@ XRInternetRadioGate xrInternetRadioGate;
 
 bool internetModeActive()
 {
+#if defined(MESHOFFGRID_ENABLE_V6)
+    return meshoffgrid::v6::V6ModeController::internetOnlyActive();
+#else
     return config.network.wifi_enabled && moduleConfig.mqtt.enabled;
+#endif
 }
 
 bool wifiCredentialsConfigured()
 {
+#if defined(MESHOFFGRID_ENABLE_V6)
+    return meshoffgrid::v6::V6ModeController::wifiCredentialsConfigured();
+#else
     return config.network.wifi_ssid[0] != '\0';
+#endif
 }
 
 XRCommunicationMode communicationMode()
@@ -39,6 +50,11 @@ static void setMqttChannelFlags(bool enabled)
 
 bool setCommunicationMode(XRCommunicationMode mode)
 {
+#if defined(MESHOFFGRID_ENABLE_V6)
+    return meshoffgrid::v6::V6ModeController::setConnectionMode(
+        mode == XRCommunicationMode::Internet ? meshoffgrid::v6::ConnectionMode::Internet
+                                              : meshoffgrid::v6::ConnectionMode::OffGrid);
+#else
     if (mode == XRCommunicationMode::Internet) {
         if (!wifiCredentialsConfigured()) {
             LOG_WARN("V5 Internet mode refused: Wi-Fi SSID is not configured");
@@ -75,12 +91,18 @@ bool setCommunicationMode(XRCommunicationMode mode)
     if (!saved)
         LOG_ERROR("V5 communication mode could not be persisted");
     return saved;
+#endif
 }
 
 RadioTxHook::PreTxAction XRInternetRadioGate::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
+#if defined(MESHOFFGRID_ENABLE_V6)
+    if (packet && !meshoffgrid::v6::V6ModeController::offGridTransportActive())
+        return PRETX_DROP;
+#else
     if (packet && internetModeActive())
         return PRETX_DROP;
+#endif
     return PRETX_SEND;
 }
 
