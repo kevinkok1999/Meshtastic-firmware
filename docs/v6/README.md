@@ -35,3 +35,5 @@ V6 is a new communication architecture above the proven T-Deck/Meshtastic hardwa
 - 09_BLIND_RELAY.md — server architecture and data minimization.
 - 10_PRE_CODING_GATE.md — decisions that must be closed before implementation begins.
 - 11_PRIVACY_TUNNEL.md — optional fail-closed privacy tunnel / internal VPN architecture.
+
+- 13_OFFGRID_PRIVACY_LAYER.md — privacy architecture for LoRa/ESP-NOW/XBee/store-forward radio paths.
