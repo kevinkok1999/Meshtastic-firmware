@@ -1,0 +1,359 @@
+name: V6 T-Deck Plus Single-Runner Build
+
+on:
+  push:
+    branches:
+      - v6-dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: v6-flash-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  v6-canonical:
+    name: V6 canonical tests build validation release
+    runs-on: macos-15
+    timeout-minutes: 70
+    env:
+      PLATFORMIO_DISABLE_UPGRADE_CHECK: "1"
+
+    steps:
+      - name: Checkout canonical V6 candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Verify one-candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Canonical V6 commit: $GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git status --short
+
+      - name: Run standalone XR and V6 policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          CXX="$(command -v clang++ || command -v c++)"
+          "$CXX" --version
+
+          "$CXX" -std=c++17 -Wall -Wextra -Werror -Isrc             test/test_xbee_codec/standalone.cpp             src/mesh/xbee/XBeeApiCodec.cpp             src/xr/XRDeliveryEvents.cpp             -o /tmp/xbee-codec-test
+          /tmp/xbee-codec-test
+
+          "$CXX" -std=c++17 -Wall -Wextra -Werror -Isrc             test/test_xr_delivery_state/standalone.cpp             src/xr/XRDeliveryStateMachine.cpp             -o /tmp/xr-delivery-state-test
+          /tmp/xr-delivery-state-test
+
+          "$CXX" -std=c++17 -Wall -Wextra -Werror -Isrc             test/test_xr_transport_team/standalone.cpp             src/xr/XRTransportTeam.cpp             src/xr/XRDeliveryStateMachine.cpp             -o /tmp/xr-team-delivery-test
+          /tmp/xr-team-delivery-test
+
+          "$CXX" -std=c++17 -Wall -Wextra -Werror -Isrc             test/test_v6_policy/standalone.cpp             src/v6/V6Policy.cpp             -o /tmp/v6-policy-test
+          /tmp/v6-policy-test
+
+      - name: V6 privacy source gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'useBuiltinCACertBundle' src/mqtt/MQTT.cpp
+          grep -q 'destination-specific PKI encryption' src/mesh/Router.cpp
+          grep -q 'MESHOFFGRID_ENABLE_V6' variants/esp32s3/t-deck/platformio.ini
+          grep -q '\[env:t-deck-v6\]' variants/esp32s3/t-deck/platformio.ini
+          grep -q 'config_ok_to_mqtt = false' src/v6/V6ModeController.cpp
+          grep -q 'map_reporting_enabled = false' src/v6/V6ModeController.cpp
+          if grep -R --line-number '__V6_.*PENDING__' src/v6 variants/esp32s3/t-deck scripts; then
+            echo "Pending V6 placeholder found" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install pinned PlatformIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install 'platformio==6.2.0'
+          pio --version
+
+      - name: Install V6 production target packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          pio pkg install -e t-deck-v6
+
+      - name: Apply pioarduino SCons compatibility fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          platform_py = Path.home() / ".platformio" / "platforms" / "espressif32" / "platform.py"
+          if not platform_py.exists():
+              raise SystemExit(f"pioarduino platform.py not found: {platform_py}")
+          text = platform_py.read_text(encoding="utf-8")
+          before = text
+          text = text.replace('    "tool-scons",\n', '')
+          if text == before:
+              raise SystemExit("Expected tool-scons entry was not found in COMMON_IDF_PACKAGES")
+          platform_py.write_text(text, encoding="utf-8")
+          print(f"Patched {platform_py}: PlatformIO Core owns tool-scons")
+          PY
+
+      - name: Build canonical V6 production target
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          pio run -e t-deck-v6 -t buildfs 2>&1 | tee /tmp/v6-buildfs.log
+          fs_status=${PIPESTATUS[0]}
+          if [ "$fs_status" -ne 0 ]; then
+            tail -n 180 /tmp/v6-buildfs.log || true
+            exit "$fs_status"
+          fi
+
+          pio run -e t-deck-v6 2>&1 | tee /tmp/v6-build.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::V6 compiler diagnostics"
+            grep -E '(^|: )(fatal error:|error:|undefined reference|collect2: error|*** \[)' /tmp/v6-build.log | tail -n 200 || true
+            echo "::endgroup::"
+            exit "$status"
+          fi
+
+      - name: Validate raw V6 image outputs
+        id: firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-v6
+          full="$BUILD_DIR/xr-full-flash.bin"
+          flash_map="$BUILD_DIR/xr-flash-map.json"
+
+          shopt -s nullglob
+          app_candidates=()
+          for candidate in "$BUILD_DIR"/firmware-t-deck-v6-*.bin; do
+            [ -e "$candidate" ] || continue
+            case "$candidate" in
+              *.factory.bin) continue ;;
+            esac
+            app_candidates+=("$candidate")
+          done
+          fs_candidates=("$BUILD_DIR"/littlefs-t-deck-v6-*.bin)
+          shopt -u nullglob
+
+          test "${#app_candidates[@]}" -eq 1
+          test "${#fs_candidates[@]}" -eq 1
+
+          preferred="${app_candidates[0]}"
+          filesystem="${fs_candidates[0]}"
+
+          for required in "$preferred" "$filesystem" "$full" "$flash_map"; do
+            test -s "$required"
+          done
+
+          echo "firmware=$preferred" >> "$GITHUB_OUTPUT"
+          echo "filesystem=$filesystem" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "flash_map=$flash_map" >> "$GITHUB_OUTPUT"
+          ls -lh "$preferred" "$filesystem" "$full" "$flash_map"
+
+      - name: Package and validate V6 flash bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=.pio/build/t-deck-v6
+          RELEASE_DIR=v6-release
+          mkdir -p "$RELEASE_DIR"
+
+          APP_NAME=V6-TDeck-Plus-firmware.bin
+          FULL_NAME=V6-TDeck-Plus-FULL-FLASH.bin
+
+          cp "${{ steps.firmware.outputs.firmware }}" "$RELEASE_DIR/$APP_NAME"
+          cp "${{ steps.firmware.outputs.filesystem }}" "$RELEASE_DIR/littlefs.bin"
+          cp "${{ steps.firmware.outputs.full }}" "$RELEASE_DIR/$FULL_NAME"
+          cp "${{ steps.firmware.outputs.flash_map }}" "$RELEASE_DIR/xr-flash-map.json"
+
+          for file in partitions.bin bootloader.bin boot_app0.bin; do
+            test ! -s "$BUILD_DIR/$file" || cp "$BUILD_DIR/$file" "$RELEASE_DIR/$file"
+          done
+
+          BASE_VERSION="$(python - <<'PY'
+          import configparser
+          cfg = configparser.ConfigParser()
+          cfg.read("version.properties")
+          v = cfg["VERSION"]
+          print(f"{v['major']}.{v['minor']}.{v['build']}")
+          PY
+          )"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          VERSION="$BASE_VERSION-v6.$SHORT_SHA"
+          FULL_SHA="$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$RELEASE_DIR/$FULL_NAME")"
+
+          python - "$RELEASE_DIR" "$FULL_NAME" "$VERSION" "$FULL_SHA" "$SOURCE_SHA" <<'PY'
+          import json, os, pathlib, sys
+          release = pathlib.Path(sys.argv[1])
+          full_name, version, full_sha, source_sha = sys.argv[2:6]
+
+          esp_web_tools = {
+              "name": "MeshOffGridNL V6 Privacy Mesh - LILYGO T-Deck Plus",
+              "version": version,
+              "new_install_prompt_erase": True,
+              "builds": [{"chipFamily": "ESP32-S3", "parts": [{"path": full_name, "offset": 0}]}],
+          }
+          (release / "esp-web-tools-manifest.json").write_text(
+              json.dumps(esp_web_tools, indent=2) + "\n", encoding="utf-8"
+          )
+
+          product = {
+              "schema": 1,
+              "channel": "candidate",
+              "product": "MeshOffGridNL T-Deck Plus V6 Privacy Mesh",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "version": version,
+              "sourceCommit": source_sha,
+              "sourceRunId": int(os.environ["GITHUB_RUN_ID"]),
+              "file": full_name,
+              "offset": 0,
+              "sha256": full_sha,
+              "size": 16711680,
+              "filesystemOffset": 13172736,
+              "features": {
+                  "connectionModes": ["off-grid", "internet", "smart-opt-in"],
+                  "privacyProfiles": ["balanced", "private", "maximum"],
+                  "directMessagePrivacy": "PKI-required-in-private-and-maximum",
+                  "mqttPayloadEncryption": True,
+                  "mqttAuthenticatedTls": True,
+                  "mqttMapReporting": False,
+                  "rotatingMqttGatewayId": True,
+                  "storeCarryForward": True,
+                  "adaptiveDelivery": True,
+                  "espNow": True,
+                  "xbeeOptional": True,
+                  "fullVpnProvider": False,
+              },
+          }
+          text = json.dumps(product, indent=2) + "\n"
+          (release / "manifest.json").write_text(text, encoding="utf-8")
+          (release / "meshoffgrid-manifest.json").write_text(text, encoding="utf-8")
+          PY
+
+          cat > "$RELEASE_DIR/BUILD_INFO.txt" <<EOF
+          MeshOffGridNL V6 Privacy Mesh
+          Target: LILYGO T-Deck Plus / ESP32-S3
+          Profile: t-deck-v6
+          Commit: $SOURCE_SHA
+
+          Connection:
+            Off-grid = LoRa + ESP-NOW + optional XBee + encrypted recovery/store-carry-forward
+            Internet = Wi-Fi + encrypted MQTT; no silent radio fallback
+            Smart = explicit opt-in coexistence of permitted Internet + off-grid paths
+
+          Privacy:
+            Private/Maximum direct text chats require destination-specific Meshtastic PKI encryption
+            MQTT payload encryption forced on
+            MQTT TLS server authentication uses the built-in CA bundle
+            MQTT map/location reporting forced off
+            MQTT gateway/client ID rotates per reboot
+            Maximum profile disables Bluetooth broadcast surface
+
+          Privacy tunnel:
+            Fail-closed tunnel policy framework included.
+            No unproven full WireGuard provider is advertised or enabled in this V6 candidate.
+          EOF
+
+          cat > "$RELEASE_DIR/FLASHING.txt" <<EOF
+          FIRST INSTALL / FULL RECOVERY
+          Flash $FULL_NAME at offset 0x0 on LILYGO T-Deck Plus / ESP32-S3.
+
+          WEB INSTALLER
+          Use the MeshOffGridNL V6 preview installer. It must pin this manifest sourceCommit, sourceRunId, size and SHA-256.
+
+          APP-ONLY
+          $APP_NAME is not a full first-install image. Never flash it at offset 0x0.
+          EOF
+
+          python - "$RELEASE_DIR" <<'PY'
+          import hashlib, pathlib, sys
+          release = pathlib.Path(sys.argv[1])
+          lines=[]
+          for path in sorted(release.glob("*.bin")):
+              lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
+          (release/"SHA256SUMS.txt").write_text("\n".join(lines)+"\n", encoding="utf-8")
+          PY
+
+          python scripts/validate_xr_release.py "$RELEASE_DIR"             --full-name "$FULL_NAME"             --app-name "$APP_NAME"
+
+          cat "$RELEASE_DIR/manifest.json"
+          cat "$RELEASE_DIR/VALIDATION.json"
+          cat "$RELEASE_DIR/SHA256SUMS.txt"
+
+      - name: V6 flash-ready candidate gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s v6-release/V6-TDeck-Plus-FULL-FLASH.bin
+          test -s v6-release/manifest.json
+          test -s v6-release/VALIDATION.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path("v6-release/manifest.json").read_text())
+          v=json.loads(Path("v6-release/VALIDATION.json").read_text())
+          assert v["validated"] is True
+          assert m["sha256"] == v["fullSha256"]
+          assert m["size"] == v["fullSize"] == 16711680
+          assert m["sourceCommit"] == __import__("os").environ["GITHUB_SHA"]
+          assert m["features"]["mqttAuthenticatedTls"] is True
+          assert m["features"]["fullVpnProvider"] is False
+          print("V6 flash-ready software gate PASSED")
+          PY
+
+      - name: Publish validated V6 preview release branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_DIR=v6-release
+          PUBLISH_DIR="$(mktemp -d)"
+          git init "$PUBLISH_DIR"
+          cd "$PUBLISH_DIR"
+          git config user.name "MeshOffGridNL Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git checkout --orphan v6-preview-release
+          cp -R "$GITHUB_WORKSPACE/$RELEASE_DIR/." .
+          git add -A
+          git commit -m "Publish validated V6 preview firmware ${GITHUB_SHA}"
+          git push --force origin HEAD:refs/heads/v6-preview-release
+
+      - name: Upload V6 validated artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: MeshOffGridNL-V6-TDeck-Plus-${{ github.sha }}
+          path: v6-release/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload V6 compiler diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: MeshOffGridNL-V6-compiler-logs-${{ github.sha }}
+          path: |
+            /tmp/v6-build.log
+            /tmp/v6-buildfs.log
+          if-no-files-found: ignore
+          retention-days: 7
