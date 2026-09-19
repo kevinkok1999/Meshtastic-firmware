@@ -598,7 +598,7 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
 #if defined(MESHOFFGRID_ENABLE_V6)
         if (meshoffgrid::v6::V6MessageGuard::evaluateOutgoing(*p, *p_decoded) !=
             meshoffgrid::v6::MessagePrivacyDecision::Allow) {
-            LOG_WARN("V6 privacy: direct text message requires verified PKI encryption");
+            LOG_WARN("V6 privacy: direct text message requires destination-specific PKI encryption");
             packetPool.release(p_decoded);
             packetPool.release(p);
             return meshtastic_Routing_Error_NOT_AUTHORIZED;
