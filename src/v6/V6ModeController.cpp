@@ -34,6 +34,13 @@ RuntimeCapabilities capabilities()
     return out;
 }
 
+void closeInternetEgress()
+{
+    moduleConfig.mqtt.enabled = false;
+    config.network.wifi_enabled = false;
+    setMqttChannelFlags(false);
+}
+
 bool effectiveInternetAllowed(const PolicyState &policy, PolicyRejectReason *reason = nullptr)
 {
     if (!V6Policy::allowsInternet(policy)) {
@@ -64,15 +71,13 @@ bool V6ModeController::begin()
 
     initialized = true;
 
-    // Boot must fail closed. If a previously selected Internet-only mode is
-    // currently impossible (missing Wi-Fi or a required tunnel), keep the
-    // requested policy on disk but run with all Internet egress disabled.
+    // Boot must fail closed. If an Internet-only policy is currently
+    // impossible, keep the requested mode but close Internet egress. Do NOT
+    // activate LoRa/ESP-NOW/XBee as an automatic fallback.
     if (!apply(currentPolicy, false)) {
-        PolicyState safe = currentPolicy;
-        safe.connectionMode = static_cast<uint8_t>(ConnectionMode::OffGrid);
-        V6Policy::seal(safe);
-        (void)apply(safe, false);
-        LOG_WARN("V6 requested Internet policy unavailable at boot; runtime is fail-closed Off-grid");
+        closeInternetEgress();
+        config.bluetooth.enabled = false;
+        LOG_WARN("V6 requested Internet policy unavailable at boot; messages must wait for the selected path");
     }
 
     return true;
@@ -118,14 +123,9 @@ bool V6ModeController::internetOnlyActive()
 bool V6ModeController::offGridTransportActive()
 {
     (void)begin();
-    if (connectionMode() == ConnectionMode::OffGrid)
-        return true;
-    if (connectionMode() == ConnectionMode::Smart)
-        return true;
-    // If an Internet-only request failed closed during boot, LoRa remains
-    // available as local runtime safety but no automatic Internet fallback is
-    // performed. User must explicitly choose a new mode to persist a change.
-    return !internetTransportActive();
+    // Connection mode is a hard user policy. Internet-only NEVER silently
+    // falls back to radio transports, even when Wi-Fi/tunnel is unavailable.
+    return connectionMode() == ConnectionMode::OffGrid || connectionMode() == ConnectionMode::Smart;
 }
 
 bool V6ModeController::smartModeActive()
@@ -139,11 +139,13 @@ void V6ModeController::setPrivacyTunnelReady(bool ready)
 
     // If a required tunnel disappears while Internet-only mode is active,
     // immediately close the Internet path. Do not silently downgrade.
-    if (initialized && V6Policy::tunnelPolicy(currentPolicy) == TunnelPolicy::Required && !ready) {
-        moduleConfig.mqtt.enabled = false;
-        config.network.wifi_enabled = false;
-        setMqttChannelFlags(false);
-        rejectReason = PolicyRejectReason::TunnelRequiredButUnavailable;
+    if (initialized && V6Policy::tunnelPolicy(currentPolicy) == TunnelPolicy::Required) {
+        if (!ready) {
+            closeInternetEgress();
+            rejectReason = PolicyRejectReason::TunnelRequiredButUnavailable;
+        } else {
+            (void)apply(currentPolicy, false);
+        }
     }
 }
 
