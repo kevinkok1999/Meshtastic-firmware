@@ -3,6 +3,7 @@
 #if defined(MESHOFFGRID_ENABLE_V6)
 
 #include "V6PolicyStore.h"
+#include "configuration.h"
 #include "mesh/Channels.h"
 #include "mesh/NodeDB.h"
 
