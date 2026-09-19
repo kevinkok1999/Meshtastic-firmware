@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mesh/generated/meshtastic/mesh.pb.h"
+#include <cstdint>
 
 namespace meshoffgrid::v6 {
 
