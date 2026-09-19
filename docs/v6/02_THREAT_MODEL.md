@@ -27,6 +27,10 @@ Goal: should not recover plaintext or stable unnecessary identifiers.
 Can store/forward packets.
 Goal: sees opaque envelopes only; cannot read message content.
 
+### Privacy Gateway
+Can observe the encrypted tunnel endpoint and timing/volume of tunneled traffic.
+Goal: never has message plaintext or messaging private keys. Treat it as a separate metadata observer from the Blind Relay where possible.
+
 ### Untrusted internet relay
 Can observe connection and opaque mailbox traffic.
 Goal: cannot decrypt content and should retain the minimum routing metadata needed for delivery.
@@ -122,3 +126,7 @@ Every new V6 feature answers:
 8. Can an identifier rotate?
 9. How is it deleted/expired?
 10. What happens after device compromise?
+
+
+## VPN / Privacy Tunnel boundary
+A VPN/tunnel reduces metadata visible to the local Wi-Fi/ISP, but shifts some network metadata to the Privacy Gateway. It is not an anonymity guarantee. V6 E2EE remains mandatory even inside the tunnel. If the user configures Tunnel Required, direct Internet fallback is a privacy violation and must fail closed.
