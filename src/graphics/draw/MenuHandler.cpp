@@ -39,6 +39,9 @@
 #if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
 #include "xr/XRInternetMode.h"
 #endif
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include "v6/V6ModeController.h"
+#endif
 #if !MESHTASTIC_EXCLUDE_WAYPOINT
 #include "WaypointStore.h"
 #endif
@@ -1307,7 +1310,11 @@ void menuHandler::textMessageBaseMenu()
 
 void menuHandler::systemBaseMenu()
 {
+#if defined(MESHOFFGRID_ENABLE_V6)
+    enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, WiFiToggle, PrivacyProfile, PowerMenu, Test, enumEnd };
+#else
     enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, WiFiToggle, PowerMenu, Test, enumEnd };
+#endif
     static const char *optionsArray[enumEnd] = {"Back"};
     static int optionsEnumArray[enumEnd] = {Back};
     int options = 1;
@@ -1325,12 +1332,18 @@ void menuHandler::systemBaseMenu()
     }
     optionsEnumArray[options++] = Bluetooth;
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
-#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    optionsArray[options] = "Connection Mode";
+#elif defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
     optionsArray[options] = "Communication Mode";
 #else
     optionsArray[options] = "WiFi Toggle";
 #endif
     optionsEnumArray[options++] = WiFiToggle;
+#endif
+#if defined(MESHOFFGRID_ENABLE_V6)
+    optionsArray[options] = "Privacy Profile";
+    optionsEnumArray[options++] = PrivacyProfile;
 #endif
 
     if (currentResolution == ScreenResolution::UltraLow) {
@@ -1372,6 +1385,11 @@ void menuHandler::systemBaseMenu()
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
         } else if (selected == WiFiToggle) {
             menuQueue = WifiToggleMenu;
+            screen->runNow();
+#endif
+#if defined(MESHOFFGRID_ENABLE_V6)
+        } else if (selected == PrivacyProfile) {
+            menuQueue = V6PrivacyMenu;
             screen->runNow();
 #endif
         } else if (selected == Back && !test_enabled) {
@@ -2679,7 +2697,56 @@ void menuHandler::wifiBaseMenu()
 
 void menuHandler::wifiToggleMenu()
 {
-#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    enum optionsNumbers { Back, OffGrid, Internet, Smart };
+
+    static const char *optionsArray[] = {"Back", "Off-grid", "Internet (Wi-Fi)", "Smart (opt-in)"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Connection Mode";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 4;
+
+    using meshoffgrid::v6::ConnectionMode;
+    const auto mode = meshoffgrid::v6::V6ModeController::connectionMode();
+    bannerOptions.InitialSelected =
+        mode == ConnectionMode::Internet ? Internet : (mode == ConnectionMode::Smart ? Smart : OffGrid);
+
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        using meshoffgrid::v6::ConnectionMode;
+        bool ok = false;
+        if (selected == OffGrid)
+            ok = meshoffgrid::v6::V6ModeController::setConnectionMode(ConnectionMode::OffGrid);
+        else if (selected == Internet)
+            ok = meshoffgrid::v6::V6ModeController::setConnectionMode(ConnectionMode::Internet);
+        else if (selected == Smart)
+            ok = meshoffgrid::v6::V6ModeController::setConnectionMode(ConnectionMode::Smart);
+        else
+            return;
+
+        if (ok) {
+            rebootAtMsec = Time::timerEndsAtMillis(DEFAULT_REBOOT_SECONDS * 1000);
+            return;
+        }
+
+        static const char *warningOptions[] = {"Back"};
+        BannerOverlayOptions warning;
+        const auto reason = meshoffgrid::v6::V6ModeController::lastRejectReason();
+        if (reason == meshoffgrid::v6::PolicyRejectReason::WifiNotConfigured)
+            warning.message = "Set Wi-Fi SSID first in Meshtastic settings";
+        else if (reason == meshoffgrid::v6::PolicyRejectReason::TunnelRequiredButUnavailable)
+            warning.message = "Privacy Tunnel required but unavailable";
+        else
+            warning.message = "Connection policy could not be applied";
+        warning.optionsArrayPtr = warningOptions;
+        warning.optionsCount = 1;
+        warning.bannerCallback = [](int) -> void {
+            menuQueue = SystemBaseMenu;
+            screen->runNow();
+        };
+        screen->showOverlayBanner(warning);
+    };
+    screen->showOverlayBanner(bannerOptions);
+#elif defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
     enum optionsNumbers { Back, OffGrid, Internet };
 
     static const char *optionsArray[] = {"Back", "Off-grid", "Internet (Wi-Fi)"};
@@ -2741,6 +2808,41 @@ void menuHandler::wifiToggleMenu()
     screen->showOverlayBanner(bannerOptions);
 #endif
 }
+
+#if defined(MESHOFFGRID_ENABLE_V6)
+void menuHandler::v6PrivacyMenu()
+{
+    enum optionsNumbers { Back, Balanced, Private, Maximum };
+
+    static const char *optionsArray[] = {"Back", "Balanced", "Private", "Maximum"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Privacy Profile";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 4;
+
+    using meshoffgrid::v6::PrivacyProfile;
+    const auto profile = meshoffgrid::v6::V6ModeController::privacyProfile();
+    bannerOptions.InitialSelected =
+        profile == PrivacyProfile::Maximum ? Maximum : (profile == PrivacyProfile::Balanced ? Balanced : Private);
+
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        using meshoffgrid::v6::PrivacyProfile;
+        bool ok = false;
+        if (selected == Balanced)
+            ok = meshoffgrid::v6::V6ModeController::setPrivacyProfile(PrivacyProfile::Balanced);
+        else if (selected == Private)
+            ok = meshoffgrid::v6::V6ModeController::setPrivacyProfile(PrivacyProfile::Private);
+        else if (selected == Maximum)
+            ok = meshoffgrid::v6::V6ModeController::setPrivacyProfile(PrivacyProfile::Maximum);
+        else
+            return;
+
+        if (ok)
+            rebootAtMsec = Time::timerEndsAtMillis(DEFAULT_REBOOT_SECONDS * 1000);
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+#endif
 
 void menuHandler::screenOptionsMenu()
 {
@@ -3301,6 +3403,11 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case WifiToggleMenu:
         wifiToggleMenu();
         break;
+#if defined(MESHOFFGRID_ENABLE_V6)
+    case V6PrivacyMenu:
+        v6PrivacyMenu();
+        break;
+#endif
     case KeyVerificationInit:
         keyVerificationInitMenu();
         break;
