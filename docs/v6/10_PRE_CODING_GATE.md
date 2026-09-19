@@ -37,6 +37,14 @@ No large V6 implementation begins until these decisions are closed.
 [ ] Backup/recovery key design
 
 ## D. Privacy
+[ ] Off-grid privacy profile defined
+[ ] Rotating discovery identifier design
+[ ] Pairwise transport pseudonym decision
+[ ] Sender-sealed relay header decision
+[ ] Padding classes benchmarked against airtime
+[ ] Route-privacy research decision
+[ ] RF timing/beacon policy
+[ ] No-silent-downgrade tests for required privacy profile
 [ ] Cleartext metadata budget approved field-by-field
 [ ] Discovery identifier design reviewed
 [ ] Logging policy enforced in code structure
