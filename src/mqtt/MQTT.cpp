@@ -540,7 +540,7 @@ void MQTT::reconnect()
             // V6 requires authenticated TLS, not merely encrypted TLS.
             // Re-attach the built-in CA bundle before every reconnect because
             // NetworkClientSecure::stop() can clear the bundle callback state.
-            mqttClientTLS.useBuiltinCACertBundle();
+            mqttClientTLS.useBuiltinCACertBundleCompat();
             LOG_INFO("V6 MQTT: authenticated TLS with built-in CA bundle");
 #else
             mqttClientTLS.setInsecure();

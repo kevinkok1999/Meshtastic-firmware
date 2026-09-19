@@ -21,6 +21,22 @@
 #include <memory>
 #endif
 
+#if HAS_WIFI && defined(MESHOFFGRID_ENABLE_V6) && __has_include(<WiFiClientSecure.h>)
+class V6AuthenticatedWiFiClientSecure : public WiFiClientSecure
+{
+  public:
+    // Arduino-ESP32 3.3.11 already contains the ESP-IDF built-in CA bundle
+    // machinery. The public convenience helper arrives in 3.3.12, so V6
+    // exposes the same behavior without changing the platform/toolchain.
+    void useBuiltinCACertBundleCompat()
+    {
+        attach_ssl_certificate_bundle(sslclient.get(), true);
+        _use_ca_bundle = true;
+        _use_insecure = false;
+    }
+};
+#endif
+
 #define MAX_MQTT_QUEUE 16
 
 /**
@@ -80,7 +96,11 @@ class MQTT : private concurrency::OSThread
 #if HAS_WIFI
     using MQTTClient = WiFiClient;
 #if __has_include(<WiFiClientSecure.h>)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    using MQTTClientTLS = V6AuthenticatedWiFiClientSecure;
+#else
     using MQTTClientTLS = WiFiClientSecure;
+#endif
 #define MQTT_SUPPORTS_TLS 1
 #endif
 #elif HAS_ETHERNET
