@@ -1,0 +1,66 @@
+{
+  "schema": 2,
+  "target": "LILYGO T-Deck Plus",
+  "environment": "t-deck-ultra-xbee-internet",
+  "mcu": "esp32s3",
+  "flash_mode": "qio",
+  "flash_frequency": "80m",
+  "flash_size_bytes": 16777216,
+  "partition_csv": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/default_16MB.csv",
+  "app_offset": 65536,
+  "filesystem_offset": 13172736,
+  "filesystem_size": 3538944,
+  "images": [
+    {
+      "offset": 0,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-ultra-xbee-internet/bootloader.bin",
+      "source_name": "bootloader.bin",
+      "role": "bootloader",
+      "size": 19968,
+      "end": 19968,
+      "sha256": "31b3c1be45dc5a76aa85c82540d6787b675e711eaf11021a5eea7e36f469c6de"
+    },
+    {
+      "offset": 32768,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-ultra-xbee-internet/partitions.bin",
+      "source_name": "partitions.bin",
+      "role": "partitions",
+      "size": 3072,
+      "end": 35840,
+      "sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"
+    },
+    {
+      "offset": 57344,
+      "path": "/Users/runner/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin",
+      "source_name": "boot_app0.bin",
+      "role": "ota_data_initial",
+      "size": 8192,
+      "end": 65536,
+      "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"
+    },
+    {
+      "offset": 65536,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-ultra-xbee-internet/firmware-t-deck-ultra-xbee-internet-2.8.1.eeb87be.bin",
+      "source_name": "firmware-t-deck-ultra-xbee-internet-2.8.1.eeb87be.bin",
+      "role": "application",
+      "size": 3973888,
+      "end": 4039424,
+      "sha256": "118d471f20937296f0c41cd7479818990d2b01d2b677b91426f126547f20b361"
+    },
+    {
+      "offset": 13172736,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-ultra-xbee-internet/littlefs-t-deck-ultra-xbee-internet-2.8.1.eeb87be.bin",
+      "source_name": "littlefs-t-deck-ultra-xbee-internet-2.8.1.eeb87be.bin",
+      "role": "filesystem",
+      "size": 3538944,
+      "end": 16711680,
+      "sha256": "eeea2547e759895860aa2cd181ea4ab73f75c36b06295c51f412065565d1148d"
+    }
+  ],
+  "full_image": {
+    "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-ultra-xbee-internet/xr-full-flash.bin",
+    "offset": 0,
+    "size": 16711680,
+    "sha256": "76c79bb419e7e4160473bb3fdf4254bc3300d9613b07b585d96d2b989e1eba94"
+  }
+}

@@ -1,0 +1,10 @@
+FIRST INSTALL / FULL RECOVERY
+Flash XR-TDeck-Plus-FULL-FLASH.bin at offset 0x0 using a compatible ESP32-S3 flasher.
+
+BROWSER FLASHER
+Host this directory over HTTPS and point ESP Web Tools at esp-web-tools-manifest.json.
+
+APP-ONLY UPDATE
+Use XR-TDeck-Plus-firmware.bin only with an update method that expects the application partition image.
+
+Do not flash the app-only image at offset 0x0.

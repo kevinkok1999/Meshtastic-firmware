@@ -1,0 +1,16 @@
+{
+  "name": "MeshOffGrid XR V5 Dual Mode - LILYGO T-Deck Plus",
+  "version": "2.8.1-xr5.eeb87be",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "XR-TDeck-Plus-FULL-FLASH.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
