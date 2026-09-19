@@ -299,7 +299,8 @@ jobs:
             echo "LoRa/Meshtastic: preserved"
             echo "XR ESP-NOW sidecar: enabled in Off-grid mode"
             echo "Encrypted recovery/store-carry-forward: enabled"
-            echo "Adaptive delivery intelligence: enabled in Off-grid mode"\n            echo "Manual Internet mode: Wi-Fi + encrypted MQTT; no automatic fallback"
+            echo "Adaptive delivery intelligence: enabled in Off-grid mode"
+            echo "Manual Internet mode: Wi-Fi + encrypted MQTT; no automatic fallback"
           } > "$RELEASE_DIR/BUILD_INFO.txt"
 
           {
