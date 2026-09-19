@@ -46,6 +46,9 @@ class menuHandler
         EnvironmentTelemetryMenu,
         EnvironmentTelemetrySourceMenu,
         WifiToggleMenu,
+#if defined(MESHOFFGRID_ENABLE_V6)
+        V6PrivacyMenu,
+#endif
         BluetoothToggleMenu,
         ScreenOptionsMenu,
         PowerMenu,
@@ -123,6 +126,9 @@ class menuHandler
     static void environmentTelemetrySourceMenu();
     static void wifiBaseMenu();
     static void wifiToggleMenu();
+#if defined(MESHOFFGRID_ENABLE_V6)
+    static void v6PrivacyMenu();
+#endif
     static void screenOptionsMenu();
     static void powerMenu();
     static void nodeNameLengthMenu();
