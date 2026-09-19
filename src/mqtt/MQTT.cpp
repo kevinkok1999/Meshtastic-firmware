@@ -14,6 +14,9 @@
 #include "modules/RoutingModule.h"
 #if defined(ARCH_ESP32)
 #include "../mesh/generated/meshtastic/paxcount.pb.h"
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include <esp_random.h>
+#endif
 #endif
 #include "mesh/generated/meshtastic/remote_hardware.pb.h"
 #include "sleep.h"
@@ -62,6 +65,24 @@ static bool isConnected = false;
 
 static uint32_t lastPositionUnavailableWarning = 0;
 static const uint32_t POSITION_UNAVAILABLE_WARNING_INTERVAL_MS = 15000; // 15 seconds
+
+std::string mqttGatewayId()
+{
+#if defined(MESHOFFGRID_ENABLE_V6) && defined(ARCH_ESP32)
+    // Keep the wire shape compatible with a normal Meshtastic node ID while
+    // avoiding a stable broker/client identifier. A new pseudonym is created
+    // after every reboot and is shared only within that boot session.
+    static const std::string pseudonym = []() {
+        char id[10] = {0};
+        const uint32_t value = esp_random();
+        snprintf(id, sizeof(id), "!%08x", static_cast<unsigned>(value));
+        return std::string(id);
+    }();
+    return pseudonym;
+#else
+    return nodeDB->getNodeId();
+#endif
+}
 
 inline bool shouldDropMqttDownlink(const meshtastic_MeshPacket &packet)
 {
@@ -118,7 +139,7 @@ inline void onReceiveProto(char *topic, byte *payload, size_t length)
         return;
     }
     // Generate node ID from nodenum for comparison
-    std::string nodeId = nodeDB->getNodeId();
+    std::string nodeId = mqttGatewayId();
     if (strcmp(e.gateway_id, nodeId.c_str()) == 0) {
         // Generate an implicit ACK towards ourselves (handled and processed only locally!) for this message.
         // We do this because packets are not rebroadcasted back into MQTT anymore and we assume that at least one node
@@ -289,7 +310,7 @@ bool connectPubSub(const PubSubConfig &config, PubSubClient &pubSub, Client &cli
              config.mqttUsername);
 
     // Generate node ID from nodenum for client identification
-    std::string nodeId = nodeDB->getNodeId();
+    std::string nodeId = mqttGatewayId();
     const bool connected = pubSub.connect(nodeId.c_str(), config.mqttUsername, config.mqttPassword);
     if (connected) {
         isConnected = true;
@@ -776,7 +797,7 @@ void MQTT::onSend(const meshtastic_MeshPacket &mp_encrypted, const meshtastic_Me
     }
 
     // Generate node ID from nodenum for service envelope
-    std::string nodeId = nodeDB->getNodeId();
+    std::string nodeId = mqttGatewayId();
 
     const meshtastic_ServiceEnvelope env = {.packet = const_cast<meshtastic_MeshPacket *>(p),
                                             .channel_id = const_cast<char *>(channelId),
@@ -877,7 +898,7 @@ void MQTT::perhapsReportToMap()
         pb_encode_to_bytes(mp->decoded.payload.bytes, sizeof(mp->decoded.payload.bytes), &meshtastic_MapReport_msg, &mapReport);
 
     // Generate node ID from nodenum for service envelope
-    std::string nodeId = nodeDB->getNodeId();
+    std::string nodeId = mqttGatewayId();
 
     // Encode the MeshPacket into a binary ServiceEnvelope and publish
     const meshtastic_ServiceEnvelope se = {
