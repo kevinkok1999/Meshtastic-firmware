@@ -197,3 +197,18 @@ Good:
 "De ontvanger is nog niet bereikbaar. Je bericht blijft opgeslagen."
 
 Technical code remains available in details for support.
+
+
+## Privacy Tunnel UX
+Under Privacy -> Internet privacy:
+- Off
+- Preferred
+- Required
+
+Required means: if the tunnel is unavailable, Internet messages remain safely queued. Never silently bypass.
+
+Normal status uses simple wording:
+- 🟢 Privacy Tunnel actief
+- 🟠 Privacy Tunnel niet beschikbaar — berichten wachten
+
+Technical gateway/WireGuard details stay under Advanced.
