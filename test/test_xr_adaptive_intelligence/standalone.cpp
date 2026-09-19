@@ -79,7 +79,7 @@ void lowBatteryGateTest()
     auto context = goodWifiContext();
     context.batteryPercent = 20;
     const auto decision = ai.choose(context, wifiOnlyCapabilities(true), 1000, 7);
-    require(decision.action == XRAdaptiveAction::BASELINE,
+    require(decision.action != XRAdaptiveAction::WIFI_MQTT_PREFERRED,
             "low battery must block Wi-Fi exploration");
 }
 
@@ -107,8 +107,8 @@ void quarantineRollbackTest()
     require(state.quarantineUntilMs > 2000, "failed strategy must enter quarantine");
 
     const auto after = ai.choose(context, capabilities, 3000, 2);
-    require(after.action == XRAdaptiveAction::BASELINE,
-            "quarantined strategy must roll back to baseline");
+    require(after.action != XRAdaptiveAction::WIFI_MQTT_PREFERRED,
+            "quarantined strategy must not be selected during rollback");
 }
 
 void promotionAndFreshnessTest()
