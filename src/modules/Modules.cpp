@@ -1,4 +1,7 @@
 #include "configuration.h"
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include "v6/V6ModeController.h"
+#endif
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
 #include "xr/XREspNowTransport.h"
 #if defined(MESHOFFGRID_ENABLE_XBEE_XR868) && defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
@@ -301,6 +304,11 @@ void setupModules()
     OPTIONAL_MODULES_SETUP();
 #endif
 #if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    // Load and apply the V6 policy before any sidecar thread is constructed.
+    // This prevents a transport from briefly starting in a disallowed mode.
+    (void)meshoffgrid::v6::V6ModeController::begin();
+#endif
     // Construct late enough that Meshtastic preferences/filesystem are ready. The OSThreads
     // run after setup(), so sidecar initialization cannot race the remaining board/radio setup.
     meshoffgrid::xr::xrEspNowTransport = new meshoffgrid::xr::XREspNowTransport();
