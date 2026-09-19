@@ -1,4 +1,7 @@
 #include "XRXBeeTransport.h"
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include "v6/V6ModeController.h"
+#endif
 #include "XRInternetMode.h"
 #include "mesh/xbee/XBeeApiCodec.h"
 #include "XRTransportTeam.h"
@@ -342,7 +345,13 @@ void XRXBeeTransport::serviceFactoryProvisioning(uint32_t nowMs)
 
 int32_t XRXBeeTransport::runOnce()
 {
-#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    if (!meshoffgrid::v6::V6ModeController::offGridTransportActive()) {
+        if (initialized_)
+            shutdown();
+        return 5000;
+    }
+#elif defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
     if (internetModeActive()) {
         if (initialized_)
             shutdown();
@@ -416,7 +425,12 @@ bool XRXBeeTransport::eligibleForMirror(const meshtastic_MeshPacket &packet) con
 
 RadioTxHook::PreTxAction XRXBeeTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
-#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    if (!meshoffgrid::v6::V6ModeController::offGridTransportActive()) {
+        mirrorCandidate_ = {};
+        return PRETX_SEND;
+    }
+#elif defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
     if (internetModeActive()) {
         mirrorCandidate_ = {};
         return PRETX_SEND;
