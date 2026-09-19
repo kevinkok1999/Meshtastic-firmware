@@ -35,5 +35,28 @@ V6 is a new communication architecture above the proven T-Deck/Meshtastic hardwa
 - 09_BLIND_RELAY.md — server architecture and data minimization.
 - 10_PRE_CODING_GATE.md — decisions that must be closed before implementation begins.
 - 11_PRIVACY_TUNNEL.md — optional fail-closed privacy tunnel / internal VPN architecture.
+- 12_SECOND_ARCHITECT_REVIEW.md — independent architecture/red-team review.
 
 - 13_OFFGRID_PRIVACY_LAYER.md — privacy architecture for LoRa/ESP-NOW/XBee/store-forward radio paths.
+- 14_SINGLE_RUNNER_EXECUTION_PLAN.md — deterministic implementation plan for one GitHub runner.
+
+
+## Readiness
+PRE-CODING ARCHITECTURE STATUS: READY FOR IMPLEMENTATION SLICES 0–1.
+
+The architecture is intentionally not frozen for every future feature. Decisions are closed just before the first slice that depends on them. This prevents premature commitment while keeping implementation structured.
+
+Ready now:
+- Slice 0: V6 scaffold / interfaces / compile guards / host test target.
+- Slice 1: MessageId + bounded V6 wire codec + parser tests.
+
+Not required yet:
+- final group/MLS design;
+- full VPN vs application tunnel;
+- post-quantum suite;
+- secure-production eFuse/provisioning details;
+- federation/multi-relay;
+- FEC.
+
+Single-runner execution contract:
+- 14_SINGLE_RUNNER_EXECUTION_PLAN.md
