@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "channel": "candidate",
+  "product": "MeshOffGridNL T-Deck Plus V6 Privacy Mesh",
+  "board": "lilygo-t-deck-plus",
+  "chip": "ESP32-S3",
+  "flashSizeBytes": 16777216,
+  "version": "2.8.1-v6.052b429",
+  "sourceCommit": "052b4291a3058059acf4b9c65dc6301d5558a81f",
+  "sourceRunId": 35414036315,
+  "file": "V6-TDeck-Plus-FULL-FLASH.bin",
+  "offset": 0,
+  "sha256": "3c02976770b15667c9316469d615731251a2baeb158a4eb230c06a98c8e86b6f",
+  "size": 16711680,
+  "filesystemOffset": 13172736,
+  "features": {
+    "connectionModes": [
+      "off-grid",
+      "internet",
+      "smart-opt-in"
+    ],
+    "privacyProfiles": [
+      "balanced",
+      "private",
+      "maximum"
+    ],
+    "directMessagePrivacy": "PKI-required-in-private-and-maximum",
+    "mqttPayloadEncryption": true,
+    "mqttAuthenticatedTls": true,
+    "mqttMapReporting": false,
+    "rotatingMqttGatewayId": true,
+    "storeCarryForward": true,
+    "adaptiveDelivery": true,
+    "espNow": true,
+    "xbeeOptional": true,
+    "fullVpnProvider": false
+  }
+}

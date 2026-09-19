@@ -1,0 +1,66 @@
+{
+  "schema": 2,
+  "target": "LILYGO T-Deck Plus",
+  "environment": "t-deck-v6",
+  "mcu": "esp32s3",
+  "flash_mode": "qio",
+  "flash_frequency": "80m",
+  "flash_size_bytes": 16777216,
+  "partition_csv": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/default_16MB.csv",
+  "app_offset": 65536,
+  "filesystem_offset": 13172736,
+  "filesystem_size": 3538944,
+  "images": [
+    {
+      "offset": 0,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-v6/bootloader.bin",
+      "source_name": "bootloader.bin",
+      "role": "bootloader",
+      "size": 19968,
+      "end": 19968,
+      "sha256": "31b3c1be45dc5a76aa85c82540d6787b675e711eaf11021a5eea7e36f469c6de"
+    },
+    {
+      "offset": 32768,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-v6/partitions.bin",
+      "source_name": "partitions.bin",
+      "role": "partitions",
+      "size": 3072,
+      "end": 35840,
+      "sha256": "bd0f7954aca2ef7d925ee21aaa1f3dc8822d1d6ce5cbbd26a135e5886bfff6ce"
+    },
+    {
+      "offset": 57344,
+      "path": "/Users/runner/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin",
+      "source_name": "boot_app0.bin",
+      "role": "ota_data_initial",
+      "size": 8192,
+      "end": 65536,
+      "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"
+    },
+    {
+      "offset": 65536,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-v6/firmware-t-deck-v6-2.8.1.052b429.bin",
+      "source_name": "firmware-t-deck-v6-2.8.1.052b429.bin",
+      "role": "application",
+      "size": 3998096,
+      "end": 4063632,
+      "sha256": "1b43945ae6a51b252cb253c7606cf9adac4a47441ef01b92c0d629b668bda4b4"
+    },
+    {
+      "offset": 13172736,
+      "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-v6/littlefs-t-deck-v6-2.8.1.052b429.bin",
+      "source_name": "littlefs-t-deck-v6-2.8.1.052b429.bin",
+      "role": "filesystem",
+      "size": 3538944,
+      "end": 16711680,
+      "sha256": "be95c14b976a92edd6e3eead461be453fd97a494eaa5259d069c3283083d3da9"
+    }
+  ],
+  "full_image": {
+    "path": "/Users/runner/work/Meshtastic-firmware/Meshtastic-firmware/.pio/build/t-deck-v6/xr-full-flash.bin",
+    "offset": 0,
+    "size": 16711680,
+    "sha256": "3c02976770b15667c9316469d615731251a2baeb158a4eb230c06a98c8e86b6f"
+  }
+}
