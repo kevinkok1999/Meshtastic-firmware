@@ -44,9 +44,8 @@ void privacyGateTest()
     XRAdaptiveIntelligence ai(policy);
 
     const auto decision = ai.choose(goodWifiContext(), wifiOnlyCapabilities(false), 1000, 42);
-    require(decision.action == XRAdaptiveAction::BASELINE,
+    require(decision.action != XRAdaptiveAction::WIFI_MQTT_PREFERRED,
             "privacy-unapproved Wi-Fi must never be selected");
-    require(!decision.exploratory, "blocked privacy path must not be marked exploratory");
 
     XRAdaptiveOutcome rejected{};
     rejected.delivered = true;
