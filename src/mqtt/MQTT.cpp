@@ -515,8 +515,16 @@ void MQTT::reconnect()
         MQTTClient *clientConnection = mqttClient.get();
 #if MQTT_SUPPORTS_TLS
         if (moduleConfig.mqtt.tls_enabled) {
+#if defined(MESHOFFGRID_ENABLE_V6)
+            // V6 requires authenticated TLS, not merely encrypted TLS.
+            // Re-attach the built-in CA bundle before every reconnect because
+            // NetworkClientSecure::stop() can clear the bundle callback state.
+            mqttClientTLS.useBuiltinCACertBundle();
+            LOG_INFO("V6 MQTT: authenticated TLS with built-in CA bundle");
+#else
             mqttClientTLS.setInsecure();
             LOG_INFO("Use TLS-encrypted session");
+#endif
             clientConnection = &mqttClientTLS;
         } else {
             LOG_INFO("Use non-TLS-encrypted session");
