@@ -9,6 +9,9 @@
 #include "gps/RTC.h"
 
 #include "configuration.h"
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include "v6/V6MessageGuard.h"
+#endif
 #include "main.h"
 #include "mesh-pb-constants.h"
 #include "meshUtils.h"
@@ -592,6 +595,15 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
             abortSendAndNak(encodeResult, p);
             return encodeResult; // FIXME - this isn't a valid ErrorCode
         }
+#if defined(MESHOFFGRID_ENABLE_V6)
+        if (meshoffgrid::v6::V6MessageGuard::evaluateOutgoing(*p, *p_decoded) !=
+            meshoffgrid::v6::MessagePrivacyDecision::Allow) {
+            LOG_WARN("V6 privacy: direct text message requires verified PKI encryption");
+            packetPool.release(p_decoded);
+            packetPool.release(p);
+            return meshtastic_Routing_Error_NOT_AUTHORIZED;
+        }
+#endif
 #if !MESHTASTIC_EXCLUDE_MQTT
         // Only publish to MQTT if we're the original transmitter of the packet
         if (moduleConfig.mqtt.enabled && isFromUs(p) && mqtt && p_decoded) {
