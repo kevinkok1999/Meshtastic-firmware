@@ -1,4 +1,7 @@
 #include "XREspNowTransport.h"
+#if defined(MESHOFFGRID_ENABLE_V6)
+#include "v6/V6ModeController.h"
+#endif
 #include "XRInternetMode.h"
 #include "XRTransportTeam.h"
 #include "XRTransportTeamStore.h"
@@ -288,7 +291,13 @@ void XREspNowTransport::shutdown()
 
 int32_t XREspNowTransport::runOnce()
 {
-#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    if (!meshoffgrid::v6::V6ModeController::offGridTransportActive()) {
+        if (initialized_)
+            shutdown();
+        return 5000;
+    }
+#elif defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
     if (internetModeActive()) {
         if (initialized_)
             shutdown();
@@ -339,7 +348,12 @@ int32_t XREspNowTransport::runOnce()
 
 RadioTxHook::PreTxAction XREspNowTransport::beforeTransmit(RadioInterface *, meshtastic_MeshPacket *packet)
 {
-#if defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
+#if defined(MESHOFFGRID_ENABLE_V6)
+    if (!meshoffgrid::v6::V6ModeController::offGridTransportActive()) {
+        mirrorCandidate_ = {};
+        return PRETX_SEND;
+    }
+#elif defined(MESHOFFGRID_ENABLE_MANUAL_INTERNET_MODE)
     if (internetModeActive()) {
         mirrorCandidate_ = {};
         return PRETX_SEND;
