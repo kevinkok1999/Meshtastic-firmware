@@ -80,7 +80,7 @@ def main() -> None:
         raise SystemExit("filesystem region is entirely erased")
 
     flash_map = json.loads(flash_map_path.read_text(encoding="utf-8"))
-    if flash_map.get("environment") != "t-deck-ultra-xbee-internet":
+    if flash_map.get("environment") != "t-deck-v6":
         raise SystemExit(f"unexpected production environment: {flash_map.get('environment')}")
     if flash_map.get("flash_size_bytes") != FLASH_BYTES:
         raise SystemExit("flash map does not declare exactly 16 MiB")
@@ -135,7 +135,7 @@ def main() -> None:
     if product.get("channel") != "candidate":
         raise SystemExit("unpublished release must remain on candidate channel")
     version = str(product.get("version", ""))
-    pieces = version.split("-xr5.")
+    pieces = version.split("-v6.")
     if len(pieces) != 2 or pieces[0] != "2.8.1" or len(pieces[1]) != 7 or any(ch not in "0123456789abcdef" for ch in pieces[1].lower()):
         raise SystemExit(f"unexpected candidate version format: {version!r}")
     source_commit = str(product.get("sourceCommit", ""))
