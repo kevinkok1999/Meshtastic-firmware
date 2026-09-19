@@ -73,7 +73,19 @@ No large V6 implementation begins until these decisions are closed.
 [ ] Advanced settings boundary
 [ ] NL/EN/DE string architecture
 
-## H. Backend
+## H. Privacy Tunnel
+[ ] V6.0 chooses application-scoped tunnel or full IP VPN
+[ ] WireGuard/lwIP candidate benchmarked if full VPN is considered
+[ ] Required/Preferred/Off semantics frozen
+[ ] Fail-closed kill-switch tests defined
+[ ] DNS/bootstrap leak model defined
+[ ] Gateway identity/key lifecycle defined
+[ ] Gateway/Blind Relay separation decision
+[ ] IPv4/IPv6 and captive-portal behavior
+[ ] Battery/keepalive resource budget
+[ ] Self-hosted gateway policy
+
+## I. Backend
 [ ] Relay API
 [ ] Opaque mailbox design
 [ ] Database schema
@@ -83,7 +95,7 @@ No large V6 implementation begins until these decisions are closed.
 [ ] Deletion/retention jobs
 [ ] Server observability privacy review
 
-## I. Testing
+## J. Testing
 [ ] Unit framework
 [ ] Property testing
 [ ] Fuzz harness
@@ -94,7 +106,7 @@ No large V6 implementation begins until these decisions are closed.
 [ ] Performance budgets
 [ ] Release gates
 
-## J. Production hardening
+## K. Production hardening
 [ ] Signing key custody procedure
 [ ] Signed update format
 [ ] A/B OTA/rollback design
