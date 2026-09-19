@@ -130,3 +130,7 @@ Every new V6 feature answers:
 
 ## VPN / Privacy Tunnel boundary
 A VPN/tunnel reduces metadata visible to the local Wi-Fi/ISP, but shifts some network metadata to the Privacy Gateway. It is not an anonymity guarantee. V6 E2EE remains mandatory even inside the tunnel. If the user configures Tunnel Required, direct Internet fallback is a privacy violation and must fail closed.
+
+
+## Off-grid RF privacy boundary
+E2EE protects content but not the existence of RF transmissions. V6 must minimize stable identifiers, clear sender metadata, discovery beacons, packet-size leakage and unnecessary timing regularity. High-privacy off-grid profiles may use rotating identifiers, sender-sealed envelopes, padding classes and reviewed route-privacy mechanisms. No profile may claim RF invisibility or immunity from direction finding.
