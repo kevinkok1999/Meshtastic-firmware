@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "product": "MeshOffGridNL Version 8",
+  "prepared_on": "2026-09-20",
+  "v8_base": {
+    "repository": "kevinkok1999/Meshtastic-firmware",
+    "branch": "v8-architecture-prep",
+    "validated_v7_commit": "4413758a25dfbc7958d134bbe9b1734243d608fa"
+  },
+  "saitama": {
+    "repository": "https://github.com/868meshbot/Saitama",
+    "tag": "v1.3.0",
+    "commit": "16598b4e6a7eabd6195d06d2a3abc1b3b448f368",
+    "target": "t-deck",
+    "chip": "ESP32-S3",
+    "flash_size": "16MB",
+    "flash_mode": "dio"
+  },
+  "meshcore": {
+    "commit": "d92964352441e53b93e8667b802e04f6e072b39e"
+  },
+  "v7_protocol": {
+    "compatibility_required": true,
+    "transport": "ESP-NOW LR",
+    "wire_magic": "M7",
+    "protocol_version": 1
+  },
+  "xbee_reference": {
+    "branch": "feature/xbee-xr868-transport",
+    "integration_doc_sha": "96c41e8e3992c7243485544773c9ec6a866a70bc",
+    "api_codec_header_sha": "74af2c51d033f66a262b651a45ad1bf8ca7eefdc",
+    "api_codec_cpp_sha": "9d8bc0f78ad0b1d828b3de77a5c5156dcf67acce",
+    "link_header_sha": "23c5c338e55959d569c16eb521c5f48036b80171",
+    "link_cpp_sha": "07390eeaba66f80216641ad2bc9683e3eafe423f"
+  },
+  "lr2021": {
+    "radio_family": "Semtech LR2021 LoRa Gen 4",
+    "region_target": "EU868",
+    "saitama_declared_radiolib_dependency": "^7.6.0",
+    "coding_rule": "pin an exact validated RadioLib version for V8 before release"
+  },
+  "policy": {
+    "historical_versions_immutable": true,
+    "optional_hardware_must_fail_safe": true,
+    "production_installer_change_before_validation": false,
+    "single_runner_serial_ci": true,
+    "public_channels_initially_remain_lora": true
+  }
+}
