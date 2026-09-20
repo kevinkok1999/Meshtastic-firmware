@@ -171,7 +171,7 @@ V9ReachDecision V9ReachEngine::decide(uint32_t nowMs) {
         const V9Route r = static_cast<V9Route>(i);
         ranked[i] = {score(r, nowMs), r};
     }
-    std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(ranked.begin(), ranked.end(), [](const std::pair<int32_t, V9Route>& a, const std::pair<int32_t, V9Route>& b) { return a.first > b.first; });
 
     if (ranked[0].first != REJECTED) {
         d.hasPrimary = true;
