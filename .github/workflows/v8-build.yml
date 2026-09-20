@@ -1,0 +1,161 @@
+name: V8 Multi-Radio Build
+
+on:
+  push:
+    branches:
+      - v8-dev
+    paths:
+      - 'v8-overlay/**'
+      - 'v8/**'
+      - '.github/workflows/v8-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v8-firmware
+  cancel-in-progress: true
+
+jobs:
+  build-v8:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout V8 control repository
+        uses: actions/checkout@v4
+        with:
+          path: control
+          fetch-depth: 0
+
+      - name: Checkout exact Saitama v1.3.0
+        uses: actions/checkout@v4
+        with:
+          repository: 868meshbot/Saitama
+          ref: v1.3.0
+          path: saitama
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify locked upstream provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saitama rev-parse HEAD)" = "16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+          test "$(git -C saitama/lib/MeshCore rev-parse HEAD)" = "d92964352441e53b93e8667b802e04f6e072b39e"
+
+      - name: Apply validated V7 compatibility overlay
+        run: |
+          python control/v7-overlay/apply_v7.py saitama control/v7-overlay
+          grep -q 'OPS_VERSION_STRING "7.0.0"' saitama/src/version.h
+
+      - name: Apply V8 adaptive multi-radio overlay
+        run: |
+          python control/v8-overlay/apply_v8.py saitama control/v8-overlay
+          grep -q 'OPS_VERSION_STRING "8.0.0"' saitama/src/version.h
+          grep -q 'Adaptive route core ready' saitama/src/mesh/MeshService.cpp
+          test -f saitama/src/mesh/XBeeXr868Link.cpp
+          test -f saitama/src/mesh/LR2021Adapter.cpp
+
+      - name: Run host V8 policy and XBee codec tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v8-tests
+          g++ -std=c++17 -Wall -Wextra -Werror             control/v8-overlay/V8RouteCore.cpp             control/v8-overlay/XBeeApiCodec.cpp             control/v8-overlay/test_v8_route_core.cpp             -Icontrol/v8-overlay             -o /tmp/v8-tests/v8-core-tests
+          /tmp/v8-tests/v8-core-tests
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO and esptool
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.piocache
+          key: ${{ runner.os }}-v8-pio-${{ hashFiles('saitama/platformio.ini', 'control/v8-overlay/**') }}
+          restore-keys: |
+            ${{ runner.os }}-v8-pio-
+            ${{ runner.os }}-v7-pio-
+
+      - name: Build exactly one T-Deck target
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.piocache
+          export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
+          cd saitama
+          pio run -e t-deck
+
+      - name: Validate V8 firmware images
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd saitama
+          APP="firmware/saitama-t-deck-plus-8.0.0.bin"
+          MERGED="firmware/saitama-t-deck-plus-8.0.0-merged.bin"
+          test -s "$APP"
+          test -s "$MERGED"
+          python -m esptool --chip esp32s3 image_info .pio/build/t-deck/bootloader.bin > ../v8-image-info.txt
+          grep -qi "dio" ../v8-image-info.txt
+          APP_BYTES="$(stat -c%s "$APP")"
+          MERGED_BYTES="$(stat -c%s "$MERGED")"
+          APP_SHA="$(sha256sum "$APP" | awk '{print $1}')"
+          MERGED_SHA="$(sha256sum "$MERGED" | awk '{print $1}')"
+          {
+            echo "version=8.0.0"
+            echo "upstream_saitama=16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+            echo "meshcore=d92964352441e53b93e8667b802e04f6e072b39e"
+            echo "target=t-deck-plus"
+            echo "flash_size=16MB"
+            echo "flash_mode=dio"
+            echo "app_bytes=$APP_BYTES"
+            echo "merged_bytes=$MERGED_BYTES"
+            echo "app_sha256=$APP_SHA"
+            echo "merged_sha256=$MERGED_SHA"
+            echo "source_commit=${GITHUB_SHA}"
+          } | tee ../v8-release-metadata.txt
+
+      - name: Prepare immutable-addressable V8 asset tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v8publish/firmware/v8
+          cp saitama/firmware/saitama-t-deck-plus-8.0.0.bin /tmp/v8publish/firmware/v8/
+          cp saitama/firmware/saitama-t-deck-plus-8.0.0-merged.bin /tmp/v8publish/firmware/v8/
+          cp v8-release-metadata.txt /tmp/v8publish/firmware/v8/
+          cp v8-image-info.txt /tmp/v8publish/firmware/v8/
+
+      - name: Publish V8 assets only after all validation passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd control
+          git switch --orphan v8-assets-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -R /tmp/v8publish/. .
+          git add firmware/v8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "assets(v8): publish validated 8.0.0 firmware"
+          git push origin HEAD:refs/heads/v8-assets --force
+
+      - name: Upload V8 workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshoffgridnl-v8-firmware
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            saitama/firmware/saitama-t-deck-plus-8.0.0.bin
+            saitama/firmware/saitama-t-deck-plus-8.0.0-merged.bin
+            v8-release-metadata.txt
+            v8-image-info.txt
