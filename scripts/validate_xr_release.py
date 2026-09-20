@@ -40,7 +40,6 @@ def main() -> None:
     fs_path = require_file(release / "littlefs.bin")
     bootloader_path = require_file(release / "bootloader.bin")
     partitions_path = require_file(release / "partitions.bin")
-    bootloader_path = require_file(release / "bootloader.bin")
     flash_map_path = require_file(release / "xr-flash-map.json")
     esp_manifest_path = require_file(release / "esp-web-tools-manifest.json")
     product_manifest_path = require_file(release / "manifest.json")
@@ -51,7 +50,6 @@ def main() -> None:
     fs = fs_path.read_bytes()
     bootloader = bootloader_path.read_bytes()
     partitions = partitions_path.read_bytes()
-    bootloader = bootloader_path.read_bytes()
 
     if len(full) != FULL_BYTES:
         raise SystemExit(f"full image size {len(full)} != expected {FULL_BYTES}")
@@ -64,12 +62,6 @@ def main() -> None:
 
     if full[0] != 0xE9:
         raise SystemExit("invalid ESP32-S3 bootloader magic at 0x000000")
-    if len(bootloader) < 4 or bootloader[0] != 0xE9:
-        raise SystemExit("standalone bootloader.bin has invalid ESP32-S3 image header")
-    if bootloader[2] != 0x02:
-        raise SystemExit(f"standalone bootloader must use ROM-safe DIO mode (0x02), got 0x{bootloader[2]:02x}")
-    if full[:len(bootloader)] != bootloader:
-        raise SystemExit("bootloader bytes in full image differ from packaged bootloader.bin")
     if len(bootloader) < 4 or bootloader[0] != 0xE9:
         raise SystemExit("standalone bootloader has invalid ESP32-S3 image header")
     if bootloader[2] != 0x02:
