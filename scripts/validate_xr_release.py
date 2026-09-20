@@ -39,6 +39,7 @@ def main() -> None:
     app_path = require_file(release / args.app_name)
     fs_path = require_file(release / "littlefs.bin")
     partitions_path = require_file(release / "partitions.bin")
+    bootloader_path = require_file(release / "bootloader.bin")
     flash_map_path = require_file(release / "xr-flash-map.json")
     esp_manifest_path = require_file(release / "esp-web-tools-manifest.json")
     product_manifest_path = require_file(release / "manifest.json")
@@ -48,6 +49,7 @@ def main() -> None:
     app = app_path.read_bytes()
     fs = fs_path.read_bytes()
     partitions = partitions_path.read_bytes()
+    bootloader = bootloader_path.read_bytes()
 
     if len(full) != FULL_BYTES:
         raise SystemExit(f"full image size {len(full)} != expected {FULL_BYTES}")
@@ -60,6 +62,14 @@ def main() -> None:
 
     if full[0] != 0xE9:
         raise SystemExit("invalid ESP32-S3 bootloader magic at 0x000000")
+    if len(bootloader) < 4 or bootloader[0] != 0xE9:
+        raise SystemExit("standalone bootloader has invalid ESP32-S3 image header")
+    if bootloader[2] != 0x02:
+        raise SystemExit(f"standalone bootloader must use ROM-safe DIO mode, got header byte 0x{bootloader[2]:02x}")
+    if full[2] != 0x02:
+        raise SystemExit(f"full image must preserve ROM-safe DIO boot mode, got header byte 0x{full[2]:02x}")
+    if full[:len(bootloader)] != bootloader:
+        raise SystemExit("bootloader bytes in full image do not match packaged bootloader.bin")
     if full[PARTITION_OFFSET:PARTITION_OFFSET + 2] != b"\xaa\x50":
         raise SystemExit("invalid partition table signature at 0x008000")
     if full[APP_OFFSET] != 0xE9:
@@ -84,8 +94,12 @@ def main() -> None:
         raise SystemExit(f"unexpected production environment: {flash_map.get('environment')}")
     if flash_map.get("flash_size_bytes") != FLASH_BYTES:
         raise SystemExit("flash map does not declare exactly 16 MiB")
-    if flash_map.get("flash_mode") != "qio":
-        raise SystemExit(f"flash map mode mismatch: {flash_map.get('flash_mode')!r} != 'qio'")
+    if flash_map.get("flash_mode") != "dio":
+        raise SystemExit(f"flash map boot mode mismatch: {flash_map.get('flash_mode')!r} != 'dio'")
+    if flash_map.get("board_declared_flash_mode") != "qio":
+        raise SystemExit(
+            f"flash map board runtime mode mismatch: {flash_map.get('board_declared_flash_mode')!r} != 'qio'"
+        )
     if flash_map.get("flash_frequency") != "80m":
         raise SystemExit(
             f"flash map frequency mismatch: {flash_map.get('flash_frequency')!r} != '80m'"
