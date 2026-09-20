@@ -125,7 +125,7 @@ replace_once("src/mesh/MeshService.cpp",
 # Prevent a successful hybrid send from inheriting a stale MeshCore ACK id in the UI.
 replace_once("src/mesh/MeshService.cpp",
     '    bool getPeerInfo(int idx, PeerInfo& out) const {',
-    '    void clearLastExpectedAck() { _lastExpectedAck = 0; }\\n\\n'
+    '    void clearLastExpectedAck() { _lastExpectedAck = 0; }\n\n'
     '    bool getPeerInfo(int idx, PeerInfo& out) const {')
 
 # AUTO routing: verified V7 peer first, normal MeshCore/LoRa otherwise.
