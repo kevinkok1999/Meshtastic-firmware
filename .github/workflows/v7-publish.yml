@@ -1,0 +1,91 @@
+name: Publish V7 prerelease
+
+on:
+  push:
+    branches:
+      - v7-saitama-hybrid-dev
+    paths:
+      - '.github/workflows/v7-publish.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: v7-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the already validated V7 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir artifact
+          gh run download 35525960579 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name meshoffgridnl-v7-firmware \
+            --dir artifact
+
+      - name: Re-verify immutable V7 merged image
+        run: |
+          set -euo pipefail
+          FILE="artifact/saitama/firmware/saitama-t-deck-plus-7.0.0-merged.bin"
+          test -s "$FILE"
+          test "$(stat -c%s "$FILE")" = "2643840"
+          echo "c33db994c7eb88022bde248220c6ec3450fb83ef8a39d81b1347e971b3e703b3  $FILE" | sha256sum -c -
+          cat artifact/v7-release-metadata.txt
+
+      - name: Publish Version 7.0.0 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FILE="artifact/saitama/firmware/saitama-t-deck-plus-7.0.0-merged.bin"
+          APP="artifact/saitama/firmware/saitama-t-deck-plus-7.0.0.bin"
+          META="artifact/v7-release-metadata.txt"
+          INFO="artifact/v7-image-info.txt"
+
+          if gh release view v7.0.0 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release v7.0.0 already exists; refusing to mutate immutable release."
+            exit 1
+          fi
+
+          cat > release-notes.md <<'EOF'
+          MeshOffGridNL Version 7.0.0 — Saitama Hybrid
+
+          Base:
+          - Saitama v1.3.0, commit 16598b4e6a7eabd6195d06d2a3abc1b3b448f368
+          - MeshCore d92964352441e53b93e8667b802e04f6e072b39e
+          - LILYGO T-Deck Plus / ESP32-S3 / 16 MB / DIO
+
+          V7 adds an ESP-NOW Long Range direct-message transport next to the existing MeshCore/LoRa route. Verified V7 peers can use ESP-NOW LR first, with application-level acknowledgements, bounded retries, duplicate suppression and automatic fallback to MeshCore/LoRa. Non-V7 MeshCore peers continue to use LoRa.
+
+          Security:
+          - Signed V7 peer discovery.
+          - Direct payloads protected with MeshCore identity-derived ECDH plus AES/HMAC.
+          - No plaintext downgrade for private messages.
+
+          Build validation:
+          - Clean exact-upstream checkout succeeded.
+          - Pinned upstream commits verified.
+          - Single T-Deck Plus target build succeeded.
+          - ESP32-S3 image metadata verified: 16 MB, DIO.
+          - Merged binary size: 2643840 bytes.
+          - Merged SHA-256: c33db994c7eb88022bde248220c6ec3450fb83ef8a39d81b1347e971b3e703b3
+
+          Hardware validation status:
+          This is deliberately marked as a prerelease until the binary has been flashed and exercised on real T-Deck Plus hardware. Version 4 / official Saitama 1.3.0 remains available as the recovery/reference image.
+          EOF
+
+          gh release create v7.0.0 \
+            "$FILE" "$APP" "$META" "$INFO" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target 052ba2a97365f73b3b60a7a3dc7191ac73a3d45c \
+            --title "MeshOffGridNL Version 7.0.0" \
+            --notes-file release-notes.md \
+            --prerelease
