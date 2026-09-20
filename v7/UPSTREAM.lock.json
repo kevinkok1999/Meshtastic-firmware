@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "product": "MeshOffGridNL Version 7",
+  "prepared_on": "2026-09-20",
+  "firmware_base": {
+    "repository": "https://github.com/868meshbot/Saitama",
+    "tag": "v1.3.0",
+    "commit": "16598b4e6a7eabd6195d06d2a3abc1b3b448f368",
+    "license": "GPL-3.0-or-later",
+    "target": "t-deck",
+    "device": "LILYGO T-Deck Plus",
+    "chip": "ESP32-S3",
+    "flash_size": "16MB",
+    "flash_mode": "dio"
+  },
+  "meshcore": {
+    "repository_declared_by_submodule": "https://github.com/ripplebiz/MeshCore.git",
+    "canonical_repository": "https://github.com/meshcore-dev/MeshCore",
+    "commit": "d92964352441e53b93e8667b802e04f6e072b39e",
+    "license": "MIT"
+  },
+  "reference_v4_release": {
+    "asset": "saitama-t-deck-plus-1.3.0-merged.bin",
+    "bytes": 2623488,
+    "sha256": "f13b26e418fbca022e59fb5e30c760029734a68dc924c3a15428b11641cc8785"
+  },
+  "esp_idf_design_reference": {
+    "component": "ESP-NOW / ESP32-S3 Wi-Fi LR",
+    "required_protocol_flag": "WIFI_PROTOCOL_LR",
+    "compatibility_rule": "ESP-NOW LR is a V7-capable ESP32 direct transport; never assume non-V7 or non-LR peers support it."
+  },
+  "policy": {
+    "historical_versions_immutable": true,
+    "production_installer_change_before_validation": false,
+    "single_runner_serial_ci": true
+  }
+}
