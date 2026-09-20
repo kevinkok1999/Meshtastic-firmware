@@ -1,0 +1,167 @@
+name: V9 Reach Engine Build
+
+on:
+  push:
+    branches:
+      - v9-dev
+    paths:
+      - 'v9-overlay/**'
+      - 'v9/**'
+      - '.github/workflows/v9-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v9-firmware
+  cancel-in-progress: true
+
+jobs:
+  build-v9:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout V9 control repository
+        uses: actions/checkout@v4
+        with:
+          path: control
+          fetch-depth: 0
+
+      - name: Checkout exact Saitama v1.3.0
+        uses: actions/checkout@v4
+        with:
+          repository: 868meshbot/Saitama
+          ref: v1.3.0
+          path: saitama
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify locked upstream provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saitama rev-parse HEAD)" = "16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+          test "$(git -C saitama/lib/MeshCore rev-parse HEAD)" = "d92964352441e53b93e8667b802e04f6e072b39e"
+
+      - name: Apply V7 compatibility overlay
+        run: python control/v7-overlay/apply_v7.py saitama control/v7-overlay
+
+      - name: Apply validated V8 overlay
+        run: |
+          python control/v8-overlay/apply_v8.py saitama control/v8-overlay
+          grep -q 'OPS_VERSION_STRING "8.0.0"' saitama/src/version.h
+
+      - name: Apply V9 Reach Engine overlay
+        run: |
+          python control/v9-overlay/apply_v9.py saitama control/v9-overlay
+          grep -q 'OPS_VERSION_STRING "9.0.0"' saitama/src/version.h
+          grep -q 'Reach Engine ready' saitama/src/mesh/MeshService.cpp
+          test -f saitama/src/mesh/V9ReachEngine.cpp
+          test -f saitama/src/mesh/V9DeliveryCore.cpp
+          test -f saitama/src/mesh/V9StoreForward.cpp
+
+      - name: Run host V9 tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v9-tests
+          g++ -std=c++17 -Wall -Wextra -Werror             control/v9-overlay/V9ReachEngine.cpp             control/v9-overlay/V9DeliveryCore.cpp             control/v9-overlay/V9StoreForward.cpp             control/v9-overlay/test_v9_core.cpp             -Icontrol/v9-overlay             -o /tmp/v9-tests/v9-core-tests
+          /tmp/v9-tests/v9-core-tests
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO and esptool
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.piocache
+          key: ${{ runner.os }}-v9-pio-${{ hashFiles('saitama/platformio.ini', 'control/v9-overlay/**') }}
+          restore-keys: |
+            ${{ runner.os }}-v9-pio-
+            ${{ runner.os }}-v8-pio-
+            ${{ runner.os }}-v7-pio-
+
+      - name: Build exactly one T-Deck target
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.piocache
+          export PLATFORMIO_BUILD_CACHE_DIR=~/.piocache
+          cd saitama
+          pio run -e t-deck
+
+      - name: Validate V9 firmware images
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd saitama
+          APP="firmware/saitama-t-deck-plus-9.0.0.bin"
+          MERGED="firmware/saitama-t-deck-plus-9.0.0-merged.bin"
+          test -s "$APP"
+          test -s "$MERGED"
+          python -m esptool --chip esp32s3 image_info .pio/build/t-deck/bootloader.bin > ../v9-image-info.txt
+          grep -qi "dio" ../v9-image-info.txt
+          APP_BYTES="$(stat -c%s "$APP")"
+          MERGED_BYTES="$(stat -c%s "$MERGED")"
+          APP_SHA="$(sha256sum "$APP" | awk '{print $1}')"
+          MERGED_SHA="$(sha256sum "$MERGED" | awk '{print $1}')"
+          {
+            echo "version=9.0.0"
+            echo "upstream_saitama=16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+            echo "meshcore=d92964352441e53b93e8667b802e04f6e072b39e"
+            echo "base_v8=fbe6917df3f040ab72dc3dee8b82c131cbc8fea5"
+            echo "target=t-deck-plus"
+            echo "flash_size=16MB"
+            echo "flash_mode=dio"
+            echo "app_bytes=$APP_BYTES"
+            echo "merged_bytes=$MERGED_BYTES"
+            echo "app_sha256=$APP_SHA"
+            echo "merged_sha256=$MERGED_SHA"
+            echo "source_commit=${GITHUB_SHA}"
+          } | tee ../v9-release-metadata.txt
+
+      - name: Prepare V9 immutable asset tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v9publish/firmware/v9
+          cp saitama/firmware/saitama-t-deck-plus-9.0.0.bin /tmp/v9publish/firmware/v9/
+          cp saitama/firmware/saitama-t-deck-plus-9.0.0-merged.bin /tmp/v9publish/firmware/v9/
+          cp v9-release-metadata.txt /tmp/v9publish/firmware/v9/
+          cp v9-image-info.txt /tmp/v9publish/firmware/v9/
+
+      - name: Publish V9 assets only after validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd control
+          git switch --orphan v9-assets-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -R /tmp/v9publish/. .
+          git add firmware/v9
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "assets(v9): publish validated 9.0.0 firmware"
+          git push origin HEAD:refs/heads/v9-assets --force
+
+      - name: Upload V9 workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshoffgridnl-v9-firmware
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            saitama/firmware/saitama-t-deck-plus-9.0.0.bin
+            saitama/firmware/saitama-t-deck-plus-9.0.0-merged.bin
+            v9-release-metadata.txt
+            v9-image-info.txt
