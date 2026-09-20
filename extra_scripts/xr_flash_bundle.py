@@ -279,19 +279,36 @@ def build_xr_flash_bundle(source, target, env):
         raise RuntimeError("Filesystem image offset mismatch")
 
     # Build the canonical first-install image with Espressif's own merge
-    # implementation. This is intentionally not a bytearray concatenation:
-    # esptool patches the bootloader flash header to the board's actual flash
-    # mode/frequency/size and recomputes its digest when required.
+    # implementation, but preserve the generated bootloader header byte-for-byte.
+    #
+    # IMPORTANT (ESP32-S3/T-Deck Plus): PlatformIO intentionally emits the
+    # software bootloader with an initial DIO header even when the board's runtime
+    # flash mode is QIO. Passing --flash_mode qio to esptool merge_bin rewrites
+    # byte 2 of the bootloader header from DIO (0x02) to QIO (0x00), plus its
+    # appended digest. The ESP32-S3 ROM reads this header before our software
+    # bootloader can enable Quad I/O, so that rewrite can make a valid build
+    # unbootable. Keep the source header exactly as built.
     full_path = build_dir / "xr-full-flash.bin"
     map_path = build_dir / "xr-flash-map.json"
     uploader = _resolved_path(env.subst("$UPLOADER"))
-    flash_mode = str(board.get("build.flash_mode", "")).strip().lower()
+    board_flash_mode = str(board.get("build.flash_mode", "")).strip().lower()
     flash_freq = _flash_frequency_arg(board)
 
-    if not flash_mode:
+    if not board_flash_mode:
         raise RuntimeError("Board flash mode is unavailable; refusing to build canonical image")
     if not uploader.is_file():
         raise RuntimeError(f"PlatformIO esptool uploader not found: {uploader}")
+
+    bootloader_bytes = Path(bootloader["path"]).read_bytes()
+    if len(bootloader_bytes) < 4 or bootloader_bytes[0] != 0xE9:
+        raise RuntimeError("Invalid ESP32-S3 bootloader image header")
+
+    flash_mode_names = {0: "qio", 1: "qout", 2: "dio", 3: "dout"}
+    bootloader_flash_mode = flash_mode_names.get(bootloader_bytes[2], f"unknown-{bootloader_bytes[2]}")
+    if bootloader_flash_mode != "dio":
+        raise RuntimeError(
+            f"T-Deck Plus bootloader must start in DIO for ROM-safe boot, got {bootloader_flash_mode}"
+        )
 
     command = [
         str(uploader),
@@ -300,12 +317,6 @@ def build_xr_flash_bundle(source, target, env):
         "merge_bin",
         "-o",
         str(full_path),
-        "--flash_mode",
-        flash_mode,
-        "--flash_freq",
-        flash_freq,
-        "--flash_size",
-        "16MB",
     ]
     for item in resolved:
         command.extend([hex(item["offset"]), item["path"]])
@@ -321,6 +332,16 @@ def build_xr_flash_bundle(source, target, env):
 
     if not full_path.is_file() or full_path.stat().st_size <= 0:
         raise RuntimeError("esptool did not create the canonical full-flash image")
+
+    # Regression gate: merge_bin must not rewrite any bootloader byte. This
+    # catches the exact V6 failure where a QIO override changed the ROM-facing
+    # header even though the standalone bootloader artifact itself was correct.
+    with full_path.open("rb") as handle:
+        merged_bootloader = handle.read(len(bootloader_bytes))
+    if merged_bootloader != bootloader_bytes:
+        raise RuntimeError(
+            "Merged full-flash image mutated the bootloader; refusing to publish an unbootable candidate"
+        )
 
     # Keep the release image deterministic through the end of LittleFS while
     # intentionally leaving the final 64 KiB coredump partition erased. If the
@@ -344,7 +365,8 @@ def build_xr_flash_bundle(source, target, env):
         "target": "LILYGO T-Deck Plus",
         "environment": env.subst("$PIOENV"),
         "mcu": board.get("build.mcu", "esp32s3"),
-        "flash_mode": flash_mode,
+        "flash_mode": bootloader_flash_mode,
+        "board_declared_flash_mode": board_flash_mode,
         "flash_frequency": flash_freq,
         "flash_size_bytes": flash_bytes,
         "partition_csv": str(partition_path),
