@@ -1,0 +1,74 @@
+name: V7 Publish Assets
+
+on:
+  push:
+    branches:
+      - v7-saitama-hybrid-dev
+    paths:
+      - '.github/workflows/v7-publish-assets.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: v7-publish-assets
+  cancel-in-progress: true
+
+jobs:
+  publish-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download definitive V7 build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/v7artifact
+          mkdir -p /tmp/v7artifact
+          gh run download 35526375585 \
+            --repo kevinkok1999/Meshtastic-firmware \
+            --name meshoffgridnl-v7-firmware \
+            --dir /tmp/v7artifact
+
+      - name: Verify artifact hashes and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          META="$(find /tmp/v7artifact -name v7-release-metadata.txt -type f | head -1)"
+          APP="$(find /tmp/v7artifact -name saitama-t-deck-plus-7.0.0.bin -type f | head -1)"
+          MERGED="$(find /tmp/v7artifact -name saitama-t-deck-plus-7.0.0-merged.bin -type f | head -1)"
+          test -n "$META" && test -n "$APP" && test -n "$MERGED"
+          source "$META"
+          test "$version" = "7.0.0"
+          test "$upstream_saitama" = "16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+          test "$meshcore" = "d92964352441e53b93e8667b802e04f6e072b39e"
+          test "$merged_bytes" = "2644048"
+          test "$merged_sha256" = "8407f79e1d0c35648fd99f9c5bb55f64fb4c1dcedf8a553dacdecb677ca6c056"
+          echo "$app_sha256  $APP" | sha256sum -c -
+          echo "$merged_sha256  $MERGED" | sha256sum -c -
+          mkdir -p /tmp/v7publish/firmware/v7
+          cp "$APP" /tmp/v7publish/firmware/v7/
+          cp "$MERGED" /tmp/v7publish/firmware/v7/
+          cp "$META" /tmp/v7publish/firmware/v7/
+          printf 'build_run=35526375585\nsource_commit=fa409a84b7dd353a6ed87c8cefb8f832118bdbe8\n' \
+            >> /tmp/v7publish/firmware/v7/v7-release-metadata.txt
+
+      - name: Publish immutable-addressable asset branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git switch --orphan v7-assets-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -R /tmp/v7publish/. .
+          git add firmware/v7
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "assets(v7): publish validated 7.0.0 firmware"
+          git push origin HEAD:refs/heads/v7-assets --force
