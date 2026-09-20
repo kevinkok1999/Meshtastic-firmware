@@ -47,7 +47,7 @@ public:
 
     // Shared cross-transport dedup filter. Call before delivering either a
     // LoRa or ESP-NOW application message to the UI.
-    bool acceptApplicationMessage(const uint8_t senderPub[32], const char* text);
+    bool acceptApplicationMessage(const uint8_t senderPub[32], const char* text, bool fromHybrid);
 
     bool initialized() const { return _initialized; }
     int peerCount() const;
@@ -89,6 +89,7 @@ private:
         bool used = false;
         uint8_t hash[8] = {};
         uint32_t seenMs = 0;
+        uint8_t route = 0; // 1=LoRa, 2=ESP-NOW; only cross-route repeats are suppressed
     };
 
     struct Pending {

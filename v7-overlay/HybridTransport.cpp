@@ -429,23 +429,31 @@ bool HybridTransport::pollFallback(HybridFallback& out) {
     return true;
 }
 
-bool HybridTransport::acceptApplicationMessage(const uint8_t senderPub[32], const char* text) {
+bool HybridTransport::acceptApplicationMessage(const uint8_t senderPub[32], const char* text, bool fromHybrid) {
     if (!senderPub || !text) return false;
     uint8_t h[8];
     mesh::Utils::sha256(h, sizeof(h), senderPub, 32,
                         reinterpret_cast<const uint8_t*>(text), (int)strnlen(text, 159));
     const uint32_t now = millis();
+    const uint8_t route = fromHybrid ? 2 : 1;
     for (auto& r : _recent) {
         if (r.used && memcmp(r.hash, h, sizeof(h)) == 0 &&
             (uint32_t)(now - r.seenMs) <= DUP_WINDOW_MS) {
-            _stats.duplicateDrops++;
-            return false;
+            if (r.route != 0 && r.route != route) {
+                _stats.duplicateDrops++;
+                return false; // same app message arrived over the other transport
+            }
+            // Same-route repeated text is a legitimate new user message.
+            r.seenMs = now;
+            r.route = route;
+            return true;
         }
     }
     Recent& r = _recent[_recentCursor++ % RECENT_CACHE];
     r.used = true;
     memcpy(r.hash, h, sizeof(h));
     r.seenMs = now;
+    r.route = route;
     return true;
 }
 

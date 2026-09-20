@@ -33,7 +33,7 @@ replace_once("src/mesh/MeshService.cpp",
 replace_once("src/mesh/MeshService.cpp",
     '    void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override {\n        _upsertPeer(from);',
     '    void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) override {\n'
-    '        if (!hybrid_transport.acceptApplicationMessage(from.id.pub_key, text)) {\n'
+    '        if (!hybrid_transport.acceptApplicationMessage(from.id.pub_key, text, false)) {\n'
     '            OPS_LOG("Hybrid", "Dropped cross-transport duplicate from %s", from.name);\n'
     '            return;\n'
     '        }\n'
@@ -52,7 +52,7 @@ insert = anchor + '''
     void injectHybridMessage(const uint8_t* pubKey32, const char* name,
                              uint32_t timestamp, const char* text) {
         if (!pubKey32 || !text || !text[0]) return;
-        if (!hybrid_transport.acceptApplicationMessage(pubKey32, text)) {
+        if (!hybrid_transport.acceptApplicationMessage(pubKey32, text, true)) {
             OPS_LOG("Hybrid", "Dropped ESP-NOW/LoRa duplicate");
             return;
         }
@@ -122,6 +122,12 @@ replace_once("src/mesh/MeshService.cpp",
     '    }\n'
     '    _tickFhss();')
 
+# Prevent a successful hybrid send from inheriting a stale MeshCore ACK id in the UI.
+replace_once("src/mesh/MeshService.cpp",
+    '    bool getPeerInfo(int idx, PeerInfo& out) const {',
+    '    void clearLastExpectedAck() { _lastExpectedAck = 0; }\\n\\n'
+    '    bool getPeerInfo(int idx, PeerInfo& out) const {')
+
 # AUTO routing: verified V7 peer first, normal MeshCore/LoRa otherwise.
 replace_once("src/mesh/MeshService.cpp",
     'bool MeshService::sendDirect(const uint8_t* pubKeyPrefix4, const char* text) {\n'
@@ -130,6 +136,7 @@ replace_once("src/mesh/MeshService.cpp",
     'bool MeshService::sendDirect(const uint8_t* pubKeyPrefix4, const char* text) {\n'
     '    if (!_initialized) return false;\n'
     '    if (hybrid_transport.sendDirect(pubKeyPrefix4, text, (uint32_t)rtc_clock.getCurrentTime())) {\n'
+    '        the_mesh.clearLastExpectedAck();\n'
     '        OPS_LOG("Hybrid", "DM queued over ESP-NOW LR");\n'
     '        return true;\n'
     '    }\n'
