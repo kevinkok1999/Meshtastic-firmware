@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "product": "MeshOffGridNL Version 9 Reach Engine",
+  "prepared_on": "2026-09-20",
+  "v9_base": {
+    "repository": "kevinkok1999/Meshtastic-firmware",
+    "branch": "v9-architecture-prep",
+    "validated_v8_commit": "fbe6917df3f040ab72dc3dee8b82c131cbc8fea5"
+  },
+  "saitama": {
+    "repository": "https://github.com/868meshbot/Saitama",
+    "tag": "v1.3.0",
+    "commit": "16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+  },
+  "meshcore": {
+    "commit": "d92964352441e53b93e8667b802e04f6e072b39e"
+  },
+  "radiolib": {
+    "latest_observed_release": "7.7.1",
+    "policy": "pin exact version only after stock SX1262 and LR2021 regression validation"
+  },
+  "radios": {
+    "stock": ["SX1262_MESHCORE", "ESPNOW_LR"],
+    "optional": ["XBEE_XR868", "LR2021"]
+  },
+  "v9_core_features": [
+    "normalized_link_metrics",
+    "multipath_primary_backup",
+    "adaptive_fragmentation",
+    "selective_repeat",
+    "bounded_fec",
+    "store_and_forward",
+    "protected_cross_bearer_relay",
+    "phy_profile_manager"
+  ],
+  "policy": {
+    "historical_versions_immutable": true,
+    "one_firmware_runner": true,
+    "optional_hardware_fail_safe": true,
+    "production_site_unchanged_until_hardware_qa": true,
+    "no_unvalidated_gpio_assignments": true,
+    "no_unvalidated_rf_power_profiles": true
+  }
+}
