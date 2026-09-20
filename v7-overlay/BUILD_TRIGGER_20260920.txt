@@ -1,0 +1,1 @@
+Trigger the single serial V7 firmware validation build.
