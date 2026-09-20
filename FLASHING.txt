@@ -1,0 +1,8 @@
+FIRST INSTALL / FULL RECOVERY
+Flash V6-TDeck-Plus-FULL-FLASH.bin at offset 0x0 on LILYGO T-Deck Plus / ESP32-S3.
+
+WEB INSTALLER
+Use the MeshOffGridNL V6 preview installer. It must pin this manifest sourceCommit, sourceRunId, size and SHA-256.
+
+APP-ONLY
+V6-TDeck-Plus-firmware.bin is not a full first-install image. Never flash it at offset 0x0.

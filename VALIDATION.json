@@ -1,0 +1,10 @@
+{
+  "validated": true,
+  "fullImage": "V6-TDeck-Plus-FULL-FLASH.bin",
+  "fullSize": 16711680,
+  "fullSha256": "c6512077fc8d7544e9d3e379c79c8b7bf45f2251a6028175e48e959d50e85bbb",
+  "applicationSize": 3998096,
+  "filesystemSize": 3538944,
+  "flashCapacity": 16777216,
+  "unusedCoredumpBytes": 65536
+}

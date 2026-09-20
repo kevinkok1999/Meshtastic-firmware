@@ -1,0 +1,21 @@
+MeshOffGridNL V6 Privacy Mesh
+Target: LILYGO T-Deck Plus / ESP32-S3
+Profile: t-deck-v6
+Commit: 0e8d7e7bd92d326e418bf797299fc0c768895f30
+
+Connection:
+  Off-grid = LoRa + ESP-NOW + optional XBee + encrypted recovery/store-carry-forward
+  Internet = Wi-Fi + encrypted MQTT; no silent radio fallback
+  Smart = explicit opt-in coexistence of permitted Internet + off-grid paths
+
+Privacy:
+  Private/Maximum direct text chats require destination-specific Meshtastic PKI encryption
+  MQTT payload encryption forced on
+  MQTT TLS server authentication uses the built-in CA bundle
+  MQTT map/location reporting forced off
+  MQTT gateway/client ID rotates per reboot
+  Maximum profile disables Bluetooth broadcast surface
+
+Privacy tunnel:
+  Fail-closed tunnel policy framework included.
+  No unproven full WireGuard provider is advertised or enabled in this V6 candidate.

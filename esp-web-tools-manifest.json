@@ -1,0 +1,16 @@
+{
+  "name": "MeshOffGridNL V6 Privacy Mesh - LILYGO T-Deck Plus",
+  "version": "2.8.1-v6.0e8d7e7",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "V6-TDeck-Plus-FULL-FLASH.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
