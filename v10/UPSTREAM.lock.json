@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "product": "MeshOffGridNL V10 DirectLink Extreme",
+  "prepared_on": "2026-09-20",
+  "base": {
+    "repository": "kevinkok1999/Meshtastic-firmware",
+    "commit": "d24bd9910b53589652778ff79fc7da795d790c07"
+  },
+  "saitama": {
+    "tag": "v1.3.0",
+    "commit": "16598b4e6a7eabd6195d06d2a3abc1b3b448f368"
+  },
+  "meshcore": {
+    "commit": "d92964352441e53b93e8667b802e04f6e072b39e"
+  },
+  "observed_successful_v9_toolchain": {
+    "platformio_espressif32": "7.1.3",
+    "arduino_esp32_package": "4.20017.260907",
+    "xtensa_esp32s3_toolchain": "8.4.0+2021r2-patch5",
+    "radiolib": "7.7.1"
+  },
+  "logical_bearers": [
+    "SX1262_LORA",
+    "SX1262_GFSK",
+    "ESPNOW_LR",
+    "WIFI_LR_DIRECT",
+    "BLE_CODED"
+  ],
+  "physical_resources": {
+    "SUBGHZ": ["SX1262_LORA", "SX1262_GFSK"],
+    "RF24": ["ESPNOW_LR", "WIFI_LR_DIRECT", "BLE_CODED"]
+  },
+  "policy": {
+    "two_devices_only_primary_mode": true,
+    "no_extra_hardware": true,
+    "no_relay_required": true,
+    "one_firmware_runner": true,
+    "historical_versions_immutable": true,
+    "production_site_unchanged_until_hardware_qa": true,
+    "all_mode_transitions_require_rollback": true
+  }
+}
