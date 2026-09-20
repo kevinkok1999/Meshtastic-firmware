@@ -1,0 +1,14 @@
+version=10.0.0
+upstream_saitama=16598b4e6a7eabd6195d06d2a3abc1b3b448f368
+meshcore=d92964352441e53b93e8667b802e04f6e072b39e
+base_v9=d24bd9910b53589652778ff79fc7da795d790c07
+target=t-deck-plus
+flash_size=16MB
+flash_mode=dio
+routes=lora,espnow_lr,wifi_lr_direct
+experimental_gates=gfsk_direct,ble_coded
+app_bytes=2600720
+merged_bytes=2666256
+app_sha256=aafdeadbb800aa6369c24e35f1af21d29bd5cd62bd75d88e64b900f018cf63c0
+merged_sha256=137147e739b32a752ed03b9645110986cee36f654e35b92a5ae6ba8f6e3f7a36
+source_commit=0ad6a3e539fb8c859282e0a1734776b4022ed2a6
