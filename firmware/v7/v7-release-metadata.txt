@@ -1,0 +1,12 @@
+version=7.0.0
+upstream_saitama=16598b4e6a7eabd6195d06d2a3abc1b3b448f368
+meshcore=d92964352441e53b93e8667b802e04f6e072b39e
+target=t-deck-plus
+flash_size=16MB
+flash_mode=dio
+app_bytes=2578512
+merged_bytes=2644048
+app_sha256=c81986bf34f8e49a7089944c4dc2a1cd4d89eac2f6e2acc230f953620adbe505
+merged_sha256=8407f79e1d0c35648fd99f9c5bb55f64fb4c1dcedf8a553dacdecb677ca6c056
+build_run=35526375585
+source_commit=fa409a84b7dd353a6ed87c8cefb8f832118bdbe8
