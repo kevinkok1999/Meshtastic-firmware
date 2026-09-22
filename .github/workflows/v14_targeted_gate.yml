@@ -30,10 +30,13 @@ jobs:
       - name: Setup native build
         uses: ./.github/actions/setup-native
 
-      - name: Pin compatible PlatformIO Core
+      - name: Pin compatible PlatformIO/SCons toolchain
         run: |
           python -m pip install --force-reinstall "platformio==6.1.19"
+          rm -rf "$HOME/.platformio/packages/tool-scons"
+          pio pkg install -g -t "platformio/tool-scons@4.40801.0" --force
           pio --version
+          pio pkg list -g --only-tools | grep -A2 -B1 "tool-scons" || true
 
       - name: Route Brain native tests
         run: pio test -e native -f test_meshoffgrid_route_brain
