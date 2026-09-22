@@ -1,33 +1,35 @@
 # MeshOffGridNL V15 — V13 Hotspot Crash Fix
 
-V15 is an exact continuation of the V13 Mobile Wi-Fi firmware. It is not based on V14.
+V15 is intentionally a direct copy of V13 Mobile Wi-Fi with one targeted stability fix.
 
-The only functional change from V13 is the fix for the crash seen after connecting the T-Deck Plus to the Android 2.4 GHz hotspot.
-
-## V15 = V13 + one crash fix
+## Base
 
 V15 keeps the complete V13 behavior unchanged:
 
-- V13 Wi-Fi reconnect ownership stays unchanged.
-- V13 selected BSSID/channel handoff stays unchanged.
-- V13 all-channel fallback stays unchanged.
-- V13 retry interval stays 15 seconds.
-- V13 no-erase reconnect behavior stays unchanged.
-- V13 on-device disconnect diagnostics stay unchanged.
-- V11 encrypted worldwide chat stays unchanged.
-- LoRa fallback and radio settings stay unchanged.
-- No V14 DirectLink code is imported.
+- V11 encrypted worldwide direct-message bridge
+- normal LoRa fallback
+- V12 scrollable Wi-Fi list and Wi-Fi hardening
+- V13 selected BSSID/channel handoff
+- V13 all-channel SSID fallback
+- V13 single reconnect owner
+- V13 15-second retry interval
+- V13 no-erase retry behavior
+- V13 on-device disconnect diagnostics
 
-The single functional fix is:
+V14 DirectLink changes are **not** included.
 
-- remove the V13 association-time `WiFi.setSleep(false)` override from `v13WifiBegin()`.
+## The only functional V15 change
 
-The WadaMesh base already owns the Wi-Fi/Bluetooth coexistence power policy. V15 therefore stops overriding that policy during hotspot association/reconnect.
+V13 called `WiFi.setSleep(false)` inside the T-Deck Wi-Fi association helper before every `WiFi.begin()`.
+
+The pinned WadaMesh base already owns ESP32-S3 Wi-Fi/Bluetooth coexistence and applies the correct modem-sleep policy after association. Its source also documents that forcing Wi-Fi power-save off while Bluetooth is active can abort in the ESP32 Wi-Fi power-management path.
+
+V15 therefore removes only that association-time `WiFi.setSleep(false)` call.
+
+No reconnect timing, BSSID selection, scanning, routing, LoRa, chat, UI, encryption or radio-profile behavior is changed from V13.
 
 ## Validation
 
-CI applies V11, V12 and V13 first, then applies this one-line-behavior V15 patch. Contract tests verify that the V13 behavior is preserved and only the unsafe association-time sleep override is absent.
+CI applies V11, V12 and V13 first, then applies this one-line behavioral fix, runs contracts and builds the real `LilyGo_TDeck_companion_radio_touch` target.
 
-The real `LilyGo_TDeck_companion_radio_touch` target must compile and package successfully before the V15 RC release is published.
-
-Physical retesting with the Android hotspot that triggered the V13 crash is still required before calling V15 stable.
+The resulting release is V15 RC1 until the affected Android hotspot has been physically retested on the T-Deck Plus.
