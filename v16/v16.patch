@@ -273,7 +273,7 @@
  }
  static void wifiJoinConfirmCb(lv_event_t* e) {
    if (lv_event_get_code(e) != LV_EVENT_CLICKED && lv_event_get_code(e) != LV_EVENT_READY) return;
-@@ -31098,14 +31140,24 @@
+@@ -31098,14 +31140,28 @@
    // warm retry. So loop a few attempts until APs appear; cap_ms bounds EACH attempt.
    // Returns on the first attempt that finds anything, so a hot scan is still ~3 s.
    for (int attempt = 0; attempt < 4; ++attempt) {
@@ -303,7 +303,7 @@
      s_swd_st = st; s_swd_dur = millis() - t0;
      if (st > 0) return st;                        // found APs — done
      vTaskDelay(pdMS_TO_TICKS(400));               // empty / -2 / timeout -> warm up + rescan
-@@ -44913,6 +44965,17 @@
+@@ -44913,7 +44969,20 @@
  
  #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
  static const char* wifiStaStatusBrief(int s) {
