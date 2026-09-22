@@ -62,18 +62,23 @@ def main():
   // V21 Wi-Fi First: the station is initialized by the existing setup/loop
   // owner. Association itself is deliberately minimal and mirrors the
   // official Arduino/Espressif station path.
-  WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
   const char* v21_pwd = (pwd && pwd[0]) ? pwd : nullptr;
 
-  Serial.printf("[V21][wifi] attempt=%u begin ssid='%s' previous_reason=%u\\n",
-                (unsigned)g_v16_wifi_attempt, ssid,
-                (unsigned)g_wifi_last_disc_reason);
-
-  // Do not mutate station mode, tear down the live link, tune scan/security,
-  // pin an AP, or call low-level Wi-Fi driver mutators here. WiFi.begin() owns
-  // association and DHCP is observed independently through GOT_IP.
-  WiFi.begin(ssid, v21_pwd);
+  // First attempt installs credentials through the normal Arduino path.
+  // Later application retries use reconnect(), which reuses the station
+  // configuration without tearing down or rewriting it.
+  if (g_v16_wifi_attempt <= 1) {
+    WiFi.persistent(false);
+    Serial.printf("[V21][wifi] attempt=1 begin ssid='%s' previous_reason=%u\\n",
+                  ssid, (unsigned)g_wifi_last_disc_reason);
+    WiFi.begin(ssid, v21_pwd);
+  } else {
+    Serial.printf("[V21][wifi] attempt=%u reconnect previous_reason=%u\\n",
+                  (unsigned)g_v16_wifi_attempt,
+                  (unsigned)g_wifi_last_disc_reason);
+    WiFi.reconnect();
+  }
   return;
 #elif defined(MESH_OFFGRIDNL_V19)
   // V19 assumes the installer already performed the destructive factory clean.
@@ -264,7 +269,7 @@ def main():
     end=main.find("#elif defined(MESH_OFFGRIDNL_V19)", start)
     if start<0 or end<0: fail("V21 association block missing")
     block=main[start:end]
-    for must in ("WiFi.persistent(false);","WiFi.setAutoReconnect(false);","WiFi.begin(ssid, v21_pwd);"):
+    for must in ("WiFi.persistent(false);","WiFi.setAutoReconnect(false);","WiFi.begin(ssid, v21_pwd);","WiFi.reconnect();"):
         if must not in block: fail("V21 association missing "+must)
     for bad in (
         "WiFi.disconnect(", "WiFi.mode(", "setScanMethod", "setSortMethod",
