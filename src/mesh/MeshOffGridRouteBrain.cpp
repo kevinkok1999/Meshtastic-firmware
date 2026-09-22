@@ -67,8 +67,8 @@ uint16_t RouteBrain::score(const RouteCandidate &candidate, DeliveryIntent inten
     return static_cast<uint16_t>(std::max<int32_t>(0, total));
 }
 
-RouteDecision RouteBrain::select(const RouteCandidate *candidates, size_t count, DeliveryIntent intent,
-                                 uint32_t payloadBytes, bool hasCurrent, TransportKind current, uint16_t switchMargin)
+RouteDecision RouteBrain::select(const RouteCandidate *candidates, size_t count, DeliveryIntent intent, uint32_t payloadBytes,
+                                 bool hasCurrent, TransportKind current, uint16_t switchMargin)
 {
     RouteDecision decision;
     if (!candidates || count == 0)
