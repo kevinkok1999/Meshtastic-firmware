@@ -62,7 +62,6 @@ def main() -> None:
         "  -D WADAMESH_FORK_BUILD=1\n"
         "  -D MESH_OFFGRIDNL_V11=1\n"
         "  -D MAX_LORA_TX_POWER=22\n"
-        "  -D V11_GLOBAL_BROKER='\\\"broker.emqx.io\\\"'\n"
         "  -D V11_GLOBAL_PORT=1883\n",
         "T-Deck build flags",
     )
