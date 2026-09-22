@@ -1,0 +1,141 @@
+name: V16 Wi-Fi Engine
+
+on:
+  push:
+    branches:
+      - v16-wifi-engine
+    paths:
+      - "v11/**"
+      - "v12/**"
+      - "v13/**"
+      - "v15/**"
+      - "v16/**"
+      - ".github/workflows/v16-wifi-engine.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: true
+
+jobs:
+  build-v16:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: v16-pio-${{ runner.os }}-${{ hashFiles('v11/**','v12/**','v13/**','v15/**','v16/**') }}
+
+      - name: Fetch pinned WadaMesh beta_83
+        run: |
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply and contract-test V11 through V16
+        run: |
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build once — real T-Deck target
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v16.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V16 Wi-Fi Engine"'
+        run: |
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Package release
+        run: |
+          mkdir -p dist
+          B=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          BOOT_APP0="$(find ~/.platformio/packages -path '*/tools/partitions/boot_app0.bin' -print -quit)"
+          cp "$B/bootloader.bin" dist/MeshOffGridNL-V16-bootloader.bin
+          cp "$B/partitions.bin" dist/MeshOffGridNL-V16-partitions.bin
+          cp "$BOOT_APP0" dist/MeshOffGridNL-V16-boot_app0.bin
+          cp "$B/firmware.bin" dist/MeshOffGridNL-V16-TDeck-Plus.bin
+          cp "$B/firmware-merged.bin" dist/MeshOffGridNL-V16-TDeck-Plus-merged.bin
+          cp upstream-wadamesh/LICENSE dist/WADAMESH-GPL-3.0-LICENSE.txt
+          tar --exclude='upstream-wadamesh/.git' --exclude='upstream-wadamesh/.pio' -czf dist/MeshOffGridNL-V16-corresponding-source.tar.gz upstream-wadamesh
+
+          python - <<'PY'
+          import hashlib, json, pathlib
+          d=pathlib.Path("dist")
+          names={
+            "bootloader":"MeshOffGridNL-V16-bootloader.bin",
+            "partitions":"MeshOffGridNL-V16-partitions.bin",
+            "boot_app0":"MeshOffGridNL-V16-boot_app0.bin",
+            "app":"MeshOffGridNL-V16-TDeck-Plus.bin",
+            "merged":"MeshOffGridNL-V16-TDeck-Plus-merged.bin"
+          }
+          def sha(p):
+            h=hashlib.sha256()
+            with p.open("rb") as f:
+              for b in iter(lambda:f.read(1024*1024),b""): h.update(b)
+            return h.hexdigest()
+          m={
+            "schema":1,
+            "version":"16.0.0-rc1",
+            "label":"MeshOffGridNL V16 Wi-Fi Engine",
+            "board":"lilygo-t-deck-plus",
+            "chip":"ESP32-S3",
+            "flashSizeBytes":16777216,
+            "base":{"meshOffGridNL":"V15","wadameshTag":"beta_83","wadameshCommit":"6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"},
+            "wifi":{"hardwareBand":"2.4 GHz","foregroundJoinBounded":True,"singleReconnectOwner":True,"selectedApHint":"one-shot","allChannelFallback":True,"softRecovery":True,"retryIntervalMs":12000,"disconnectReasonPreservedAcrossStages":True,"associationSleepOverrideRemoved":True},
+            "validation":{"compileAndContractTests":True,"physicalAndroidHotspotRetestRequired":True},
+            "flashMode":"nvs-preserving-4-component",
+            "flashFiles":[]
+          }
+          for part,addr in [("bootloader",0),("partitions",32768),("boot_app0",57344),("app",65536)]:
+            p=d/names[part]
+            m["flashFiles"].append({"part":part,"file":names[part],"address":addr,"size":p.stat().st_size,"sha256":sha(p)})
+          p=d/names["merged"]
+          m["merged"]={"file":names["merged"],"size":p.stat().st_size,"sha256":sha(p),"defaultInstaller":False}
+          (d/"v16-manifest.json").write_text(json.dumps(m,indent=2)+"\n")
+          print(json.dumps(m,indent=2))
+          PY
+          sha256sum dist/*
+
+      - name: Publish V16 RC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v16.0.0-rc1
+        run: |
+          NOTES="V16 replaces the endless hotspot connect loop with one deterministic connection owner: one-shot selected BSSID/channel, all-channel SSID fallback, bounded soft recovery, preserved disconnect diagnostics and no association-time WiFi.setSleep(false). Built on V15 and the pinned WadaMesh beta_83 base. Physical Android-hotspot validation is still required before Stable."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V16 Wi-Fi Engine RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" dist/* --prerelease --target "$GITHUB_SHA" --title "MeshOffGridNL V16 Wi-Fi Engine RC1" --notes "$NOTES"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V16-TDeck-Plus
+          path: dist/*
+          retention-days: 30
