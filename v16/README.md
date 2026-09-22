@@ -7,7 +7,7 @@ The field symptom was: Android hotspot is visible, Connect is pressed, V15 no lo
 V16 addresses the state-machine causes found in the actual V15 source:
 
 - A user Connect action has priority over Wi-Fi scanning.
-- Queued scans are cancelled before association; an already-running async scan is aborted by the worker that owns it.
+- Queued scans are cancelled before association; an already-running async scan is stopped with esp_wifi_scan_stop() by the worker/core that owns it, then its result buffer is released.
 - Closing the join sheet no longer immediately rebuilds the network list and starts another scan under WPA/DHCP.
 - Arduino auto-reconnect remains disabled after scans, so there is one reconnect owner.
 - A scanned BSSID/channel hint is used once only. Retry 2+ falls back to SSID-only all-channel association.
