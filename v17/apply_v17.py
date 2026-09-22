@@ -44,6 +44,8 @@ def main():
     anchor='''static void v13WifiBegin(const char* ssid, const char* pwd) {
   if (!ssid || !ssid[0]) return;
 
+  // A phone hotspot association is timing-sensitive. Keep the station awake
+  // until GOT_IP; the existing post-connect path turns modem sleep back on.
   WiFi.setAutoReconnect(false);
 '''
     replacement='''static void v13WifiBegin(const char* ssid, const char* pwd) {
