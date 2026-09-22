@@ -141,8 +141,8 @@ def main():
         if marker not in main: fail("main missing "+marker)
     if "S21 hotspot auth... (%u/3)" not in ui: fail("UI S21 status missing")
 
-    start=main.find("#if defined(MESH_OFFGRIDNL_V17)", main.find("static void v13WifiBegin"))
-    end=main.find("#endif",start)
+    start=main.find("// Galaxy S21 compatibility path:", main.find("static void v13WifiBegin"))
+    end=main.find("  return;\n",start)
     if start<0 or end<0: fail("V17 helper block missing")
     block=main[start:end]
     if "WiFi.begin(" in block: fail("V17 path must not call Arduino WiFi.begin")
