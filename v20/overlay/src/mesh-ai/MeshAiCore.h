@@ -104,7 +104,7 @@ inline bool answer(const char* command, const Context& c, char* out, size_t cap)
   char q[192];
   lowerCopy(raw, q, sizeof(q));
 
-  if (!q[0] || has(q, "help") || has(q, "hulp") || has(q, "hilfe") || has(q, "?")) {
+  if (!q[0] || has(q, "help") || has(q, "hulp") || has(q, "hilfe") || strcmp(q, "?") == 0) {
     snprintf(out, cap,
       "Mesh AI LOCAL. Probeer: ai status | ai wifi | ai radio | ai bereikbaar | ai gps | ai route | ai geheugen | ai diagnose");
     return true;
