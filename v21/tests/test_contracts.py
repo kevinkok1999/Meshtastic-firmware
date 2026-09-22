@@ -67,8 +67,14 @@ def main():
     if retry_guard < 0:
         die("V21 no-pre-disconnect retry guard missing")
 
-    for marker in ("V21 Wi-Fi: choose network","V21 linked -> DHCP...","V21 associating..."):
-        if marker not in ui: die("missing UI marker "+marker)
+    for marker in (
+        "V21 Wi-Fi: choose network",
+        "V21 linked -> DHCP...",
+        "V21 associating...",
+        "ledcAttach(PIN_TFT_LEDA_CTL, 20000, 8)",
+        "ledcWrite(PIN_TFT_LEDA_CTL, duty)",
+    ):
+        if marker not in ui: die("missing UI marker/compatibility path "+marker)
 
     print("V21 contracts OK")
 

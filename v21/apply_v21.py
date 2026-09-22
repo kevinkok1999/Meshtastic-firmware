@@ -230,6 +230,49 @@ def main():
     # 3. Make the UI describe the new state machine instead of V19 attempts.
     # ------------------------------------------------------------------
     ui=ui_p.read_text()
+
+    # Arduino-ESP32 3.x removed the channel-based ledcSetup/ledcAttachPin API.
+    # Keep the exact legacy path for Arduino 2.x, but use the pin-based API on
+    # the modern V21 toolchain. ledcWrite() is pin-based in 3.x as well.
+    ui=one(
+        ui,
+        '''static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  if (!s_bl_pwm_ready) {
+    ledcSetup(kBlPwmChannel, 20000, 8);              // 20 kHz, 8-bit
+    ledcAttachPin(PIN_TFT_LEDA_CTL, kBlPwmChannel);  // takes the pin over from the display's digitalWrite
+    s_bl_pwm_ready = true;
+  }
+  ledcWrite(kBlPwmChannel, (uint32_t)pct * 255u / 100u);
+}
+''',
+        '''static void applyBrightness(uint8_t pct) {
+  if (pct < 5)   pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  if (!s_bl_pwm_ready) {
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    s_bl_pwm_ready = ledcAttach(PIN_TFT_LEDA_CTL, 20000, 8);
+#else
+    ledcSetup(kBlPwmChannel, 20000, 8);              // 20 kHz, 8-bit
+    ledcAttachPin(PIN_TFT_LEDA_CTL, kBlPwmChannel);  // takes the pin over from the display's digitalWrite
+    s_bl_pwm_ready = true;
+#endif
+  }
+  if (!s_bl_pwm_ready) return;
+  const uint32_t duty = (uint32_t)pct * 255u / 100u;
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(PIN_TFT_LEDA_CTL, duty);
+#else
+  ledcWrite(kBlPwmChannel, duty);
+#endif
+}
+''',
+        "V21 Arduino3 LEDC backlight compatibility"
+    )
+
     ui=one(
         ui,
         '''#if defined(MESH_OFFGRIDNL_V19)
@@ -343,6 +386,8 @@ def main():
         "V21 linked -> DHCP...",
         "V21 associating...",
         "V21 Wi-Fi connecting...",
+        "ledcAttach(PIN_TFT_LEDA_CTL, 20000, 8)",
+        "ledcWrite(PIN_TFT_LEDA_CTL, duty)",
     ):
         if marker not in ui: fail("UI missing "+marker)
 

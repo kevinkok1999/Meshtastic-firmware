@@ -46,7 +46,10 @@ jobs:
             ~/.platformio/.cache
             ~/.platformio/packages
             ~/.platformio/platforms
-          key: v21-full-pio-${{ runner.os }}-${{ hashFiles('v11/**','v12/**','v13/**','v15/**','v16/**','v17/**','v18/**','v19/**','v20/**','v21/**') }}
+          key: v21-full-pio-${{ runner.os }}-pioarduino-55.03.312-1
+          restore-keys: |
+            v21-full-pio-${{ runner.os }}-
+          save-always: true
 
       - name: Fetch pinned WadaMesh beta_83
         run: |
