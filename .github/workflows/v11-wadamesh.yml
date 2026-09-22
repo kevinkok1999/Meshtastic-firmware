@@ -174,7 +174,7 @@ jobs:
                   "file": merged.name,
                   "size": merged.stat().st_size,
                   "sha256": sha(merged),
-                  "defaultInstaller": false,
+                  "defaultInstaller": False,
                   "note": "Recovery/full-flash only; merged image pads gaps and can wipe NVS."
               }
           }
