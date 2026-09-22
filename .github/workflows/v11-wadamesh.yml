@@ -42,6 +42,10 @@ jobs:
 
       - name: Fetch pinned WadaMesh beta_83
         run: |
+          # The PlatformIO cache may restore upstream-wadamesh/.pio from a
+          # previous run. Remove only the disposable upstream checkout before
+          # cloning; ~/.platformio still provides the expensive dependency cache.
+          rm -rf upstream-wadamesh
           git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
           cd upstream-wadamesh
           test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
