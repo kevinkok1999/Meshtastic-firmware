@@ -92,6 +92,9 @@ NRF52Bluetooth *nrf52Bluetooth = nullptr;
 #if HAS_WIFI || defined(USE_WS5500) || defined(USE_CH390D)
 #include "mesh/api/WiFiServerAPI.h"
 #include "mesh/wifi/WiFiAPClient.h"
+#ifdef MESHOFFGRID_V14
+#include "mesh/MeshOffGridDirectLink.h"
+#endif
 #endif
 
 #if HAS_ETHERNET && !defined(USE_WS5500) && !defined(USE_CH390D)
@@ -1191,6 +1194,9 @@ void setup()
         // Initialize Wifi
 #if HAS_WIFI
     initWifi();
+#endif
+#ifdef MESHOFFGRID_V14
+    meshoffgrid::initV14DirectLink();
 #endif
 
 #if HAS_ETHERNET
