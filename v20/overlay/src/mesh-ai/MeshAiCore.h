@@ -129,7 +129,7 @@ inline bool answer(const char* command, const Context& c, char* out, size_t cap)
       has(q, "route") || has(q, "pad") || has(q, "path") ||
       has(q, "weg") || has(q, "transport");
   const bool ask_diag =
-      has(q, "diagnose") || has(q, "waarom") || has(q, "why") ||
+      has(q, "diagnose") || has(q, "waarom") || has(q, "warum") || has(q, "why") ||
       has(q, "problem") || has(q, "probleem") || has(q, "fehler");
   const bool ask_status =
       has(q, "status") || has(q, "health") || has(q, "gezondheid") ||
