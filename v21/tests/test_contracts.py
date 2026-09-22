@@ -48,6 +48,8 @@ def main():
         "[V21][wifi] phase=STA_CONNECTED",
         "[V21][wifi] phase=GOT_IP",
         "WIFI_RETRY_INTERVAL_MS = 20000",
+        "esp_task_wdt_reconfigure(&twdt)",
+        "[V21][wdt] 20s config",
     ):
         if good not in main: die("missing diagnostic/state marker "+good)
 
