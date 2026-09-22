@@ -1,0 +1,178 @@
+name: V21 Full Wi-Fi First
+
+on:
+  push:
+    branches:
+      - v21-full-wifi-core
+    paths:
+      - "v11/**"
+      - "v12/**"
+      - "v13/**"
+      - "v15/**"
+      - "v16/**"
+      - "v17/**"
+      - "v18/**"
+      - "v19/**"
+      - "v20/**"
+      - "v21/**"
+      - ".github/workflows/v21-full-wifi.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: true
+
+jobs:
+  v21-full:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: v21-full-pio-${{ runner.os }}-${{ hashFiles('v11/**','v12/**','v13/**','v15/**','v16/**','v17/**','v18/**','v19/**','v20/**','v21/**') }}
+
+      - name: Fetch pinned WadaMesh beta_83
+        run: |
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply V11 through V21
+        run: |
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+          python v17/apply_v17.py upstream-wadamesh
+          python v17/tests/test_contracts.py upstream-wadamesh
+          python v18/apply_v18.py upstream-wadamesh
+          python v18/tests/test_contracts.py upstream-wadamesh
+          python v19/apply_v19.py upstream-wadamesh
+          python v19/tests/test_contracts.py upstream-wadamesh
+          python v20/apply_v20.py upstream-wadamesh
+          python v20/tests/test_contracts.py upstream-wadamesh
+          python v21/apply_v21.py upstream-wadamesh
+          python v21/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build full V21 T-Deck
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v21.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V21 Wi-Fi First"'
+        run: |
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Verify toolchain and package
+        run: |
+          mkdir -p dist
+          BUILD=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          BOOT_APP0="$(find "$HOME/.platformio/packages" -path '*/tools/partitions/boot_app0.bin' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
+          test -f "$BUILD/bootloader.bin"
+          test -f "$BUILD/partitions.bin"
+          test -f "$BUILD/firmware.bin"
+          test -f "$BUILD/firmware-merged.bin"
+          test -n "$BOOT_APP0" && test -f "$BOOT_APP0"
+
+          cp "$BUILD/bootloader.bin" dist/MeshOffGridNL-V21-bootloader.bin
+          cp "$BUILD/partitions.bin" dist/MeshOffGridNL-V21-partitions.bin
+          cp "$BOOT_APP0" dist/MeshOffGridNL-V21-boot_app0.bin
+          cp "$BUILD/firmware.bin" dist/MeshOffGridNL-V21-TDeck-Plus.bin
+          cp "$BUILD/firmware-merged.bin" dist/MeshOffGridNL-V21-TDeck-Plus-merged.bin
+
+          cd upstream-wadamesh
+          pio pkg list -e LilyGo_TDeck_companion_radio_touch > ../dist/packages.txt
+          cd ..
+          grep -q "framework-arduinoespressif32 @ 3.3.12" dist/packages.txt
+          grep -q "framework-arduinoespressif32-libs @ 5.5.5" dist/packages.txt
+
+          python - <<'PY'
+          import hashlib,json,pathlib
+          d=pathlib.Path("dist")
+          files={
+            "bootloader":("MeshOffGridNL-V21-bootloader.bin",0x0000),
+            "partitions":("MeshOffGridNL-V21-partitions.bin",0x8000),
+            "boot_app0":("MeshOffGridNL-V21-boot_app0.bin",0xE000),
+            "app":("MeshOffGridNL-V21-TDeck-Plus.bin",0x10000),
+          }
+          def sha(p):
+            h=hashlib.sha256(); h.update(p.read_bytes()); return h.hexdigest()
+          manifest={
+            "schema":1,
+            "version":"21.0.0-rc1",
+            "label":"MeshOffGridNL V21 Wi-Fi First",
+            "board":"lilygo-t-deck-plus",
+            "framework":{"arduino":"3.3.12","espIdf":"5.5.5","pioarduino":"55.03.312-1"},
+            "wifi":{
+              "normalAssociation":"WiFi.begin only",
+              "autoReconnect":False,
+              "singleRetryOwner":True,
+              "disconnectBeforeJoin":False,
+              "modeCycleBeforeJoin":False,
+              "bssidPinning":False,
+              "channelPinning":False,
+              "forcedPmfSae":False,
+              "forcedPhy":False,
+              "retryIntervalMs":20000,
+              "events":["STA_CONNECTED","GOT_IP","DISCONNECTED_REASON"]
+            },
+            "inherits":["V11","V12","V13","V15","V16","V17","V18","V19","V20"],
+            "physicalValidation":{"tDeckPlus":False,"galaxyS21":False},
+            "status":"software-validated-rc",
+            "flashFiles":[]
+          }
+          for part,(name,addr) in files.items():
+            p=d/name
+            manifest["flashFiles"].append({"part":part,"file":name,"address":addr,"size":p.stat().st_size,"sha256":sha(p)})
+          merged=d/"MeshOffGridNL-V21-TDeck-Plus-merged.bin"
+          manifest["merged"]={"file":merged.name,"size":merged.stat().st_size,"sha256":sha(merged)}
+          (d/"v21-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+          PY
+          sha256sum dist/*.bin dist/v21-manifest.json
+
+      - name: Publish V21 software-validated prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v21.0.0-rc1
+        run: |
+          NOTES="V21 Wi-Fi First replaces the V19 runtime join strategy with the minimal WiFi.begin-only association path and pins the T-Deck build to pioarduino 55.03.312-1 / Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5. It preserves V20 Local AI, LoRa/MeshCore, chats and UI. CI and contracts are software validation only; physical Galaxy S21/T-Deck validation has not been performed."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC1" --notes "$NOTES" --prerelease
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V21-WiFi-First
+          path: dist/*
+          retention-days: 30
