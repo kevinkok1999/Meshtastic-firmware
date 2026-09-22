@@ -39,9 +39,9 @@ def main():
         if bad in block: die("forbidden V21 association behavior "+bad)
 
     for good in (
-        "[V21][wifi] event=DISCONNECTED",
-        "[V21][wifi] event=STA_CONNECTED",
-        "[V21][wifi] event=GOT_IP",
+        "[V21][wifi] phase=DISCONNECTED",
+        "[V21][wifi] phase=STA_CONNECTED",
+        "[V21][wifi] phase=GOT_IP",
         "WIFI_RETRY_INTERVAL_MS = 20000",
     ):
         if good not in main: die("missing diagnostic/state marker "+good)
@@ -49,6 +49,17 @@ def main():
     # V20 AI and older functionality must still be present.
     if "MeshAi::isCommand(cmd)" not in (root/"src/MyMesh.cpp").read_text():
         die("V20 Local AI integration lost")
+    # V21 must not execute the V19 sanitizer or compile the legacy V17 raw
+    # security fallback. The source stays for older builds behind explicit guards.
+    if "#if defined(MESH_OFFGRIDNL_V19) && !defined(MESH_OFFGRIDNL_V21)" not in main:
+        die("V19 first-boot sanitizer is not disabled for V21")
+    if "#if defined(MESH_OFFGRIDNL_V17) && !defined(MESH_OFFGRIDNL_V21)" not in main:
+        die("legacy V17 raw-driver fallback is not disabled for V21")
+
+    retry_guard = main.find("#if defined(MESH_OFFGRIDNL_V21)\n          // V21: no pre-disconnect")
+    if retry_guard < 0:
+        die("V21 no-pre-disconnect retry guard missing")
+
     for marker in ("V21 Wi-Fi: choose network","V21 linked -> DHCP...","V21 associating..."):
         if marker not in ui: die("missing UI marker "+marker)
 
