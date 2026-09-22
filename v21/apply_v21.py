@@ -69,6 +69,41 @@ def main():
     #    overrides on the normal path.
     # ------------------------------------------------------------------
     main=main_p.read_text()
+
+    # Arduino 3 / IDF 5 changed the TWDT API from positional arguments to a
+    # configuration struct. Keep the legacy call for old targets while using
+    # reconfigure/init safely on the modern V21 T-Deck toolchain.
+    main=one(
+        main,
+        '#include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)\n',
+        '#include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)\n'
+        '#include "esp_idf_version.h"\n',
+        "V21 IDF version include"
+    )
+    main=one(
+        main,
+        '''  esp_task_wdt_init(20, true);   // 20 s grace (was ~5 s), keep panic. Re-init reconfigures the
+                                 // already-running TWDT + keeps the idle-task subscriptions.
+''',
+        '''#if ESP_IDF_VERSION_MAJOR >= 5
+  {
+    esp_task_wdt_config_t twdt = {};
+    twdt.timeout_ms = 20000;
+    twdt.idle_core_mask = (1U << portNUM_PROCESSORS) - 1U;
+    twdt.trigger_panic = true;
+    esp_err_t twdt_rc = esp_task_wdt_reconfigure(&twdt);
+    if (twdt_rc == ESP_ERR_INVALID_STATE) {
+      twdt_rc = esp_task_wdt_init(&twdt);
+    }
+    Serial.printf("[V21][wdt] 20s config rc=%d\\n", (int)twdt_rc);
+  }
+#else
+  esp_task_wdt_init(20, true);   // legacy IDF 4 API
+#endif
+''',
+        "V21 IDF5 task watchdog API"
+    )
+
     anchor='''#if defined(MESH_OFFGRIDNL_V19)
   // V19 assumes the installer already performed the destructive factory clean.
 '''
@@ -298,6 +333,8 @@ def main():
         "[V21][wifi] phase=STA_CONNECTED",
         "[V21][wifi] phase=GOT_IP",
         "WIFI_RETRY_INTERVAL_MS = 20000",
+        "esp_task_wdt_reconfigure(&twdt)",
+        "[V21][wdt] 20s config",
     ):
         if marker not in main: fail("main missing "+marker)
 
