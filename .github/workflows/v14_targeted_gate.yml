@@ -1,0 +1,47 @@
+name: V14 Targeted Gate
+
+on:
+  push:
+    branches:
+      - v14-development
+    paths:
+      - "src/mesh/MeshOffGrid*.h"
+      - "src/mesh/MeshOffGrid*.cpp"
+      - "test/test_meshoffgrid_*/**"
+      - ".github/workflows/v14_targeted_gate.yml"
+
+concurrency:
+  group: v14-targeted-gate
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  v14-gate:
+    name: V14 native tests and T-Deck build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup native build
+        uses: ./.github/actions/setup-native
+
+      - name: Route Brain native tests
+        run: pio test -e native -f test_meshoffgrid_route_brain
+
+      - name: Delivery Core native tests
+        run: pio test -e native -f test_meshoffgrid_delivery_core
+
+      - name: Compile T-Deck firmware
+        run: pio run -e t-deck
+
+      - name: Record firmware size
+        if: success()
+        run: |
+          test -f .pio/build/t-deck/firmware.bin
+          ls -lh .pio/build/t-deck/firmware.bin
+          sha256sum .pio/build/t-deck/firmware.bin
