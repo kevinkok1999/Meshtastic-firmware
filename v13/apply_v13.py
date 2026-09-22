@@ -235,7 +235,7 @@ static volatile int  s_wifiscan_count   = 0;
 #endif
 #endif
 """
-    ui = replace_exact_count(ui, auto_anchor, auto_replacement, 2,
+    ui = replace_exact_count(ui, auto_anchor, auto_replacement, 1,
                              "V13 scan reconnect ownership")
 
     # Surface useful failure reasons even when Arduino reports WL_DISCONNECTED
