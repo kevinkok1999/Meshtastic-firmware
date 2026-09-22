@@ -13,7 +13,7 @@ def main():
 
     for flag in (
         "MESH_OFFGRIDNL_V19=1","MESH_OFFGRIDNL_V20=1","MESH_OFFGRIDNL_V21=1",
-        "MESH_V21_WIFI_SINGLE_OWNER=1","MESH_V21_WIFI_PRIORITY=1"
+        "MESH_V21_WIFI_SINGLE_OWNER=1","MESH_V21_WIFI_PRIORITY=1","  -D ESP32\n"
     ):
         if flag not in pio: die("missing "+flag)
 
