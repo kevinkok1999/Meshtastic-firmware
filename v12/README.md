@@ -1,29 +1,39 @@
-# MeshOffGridNL V12 — Wi-Fi Hardening
+# MeshOffGridNL V12 — Base Wi-Fi + Global Chat
 
-V12 is an incremental hardening release on top of V11. It keeps the WadaMesh beta_83 / MeshCore base, LoRa configuration, encrypted global direct-message bridge, no-SD essential operation and four-component NVS-preserving installer unchanged.
+V12 is intentionally a thin layer on top of V11 and the pinned WadaMesh beta_83 base.
 
-## Why V12 exists
+## Design rule
 
-A real T-Deck Plus could scan nearby Wi-Fi networks but remained on `Connecting...` when joining both a router and a 2.4 GHz phone hotspot. Source review found several association-path gaps worth fixing independently of the user's router:
+Wi-Fi itself must behave like the base firmware. V12 does **not** replace the WadaMesh Wi-Fi state machine, association policy, saved-network model, scanning flow or reconnect behaviour.
 
-- upstream WadaMesh does not explicitly set the ESP32-S3 Wi-Fi country, so a disconnected station starts from the world-safe channel policy rather than an explicit Netherlands/EU 2.4 GHz policy;
-- changing credentials uses a light disconnect in the apply path, while the later retry path already uses a stronger supplicant reset;
-- modem sleep is deliberately disabled before the first association but was not explicitly disabled again before every later association attempt;
-- the firmware records ESP-IDF disconnect reason codes, but failure diagnosis is not prominent enough on-device.
+When the T-Deck is connected to Wi-Fi, the existing V11 encrypted global-DM bridge is active in the same chat UI. When Wi-Fi is unavailable, normal LoRa/MeshCore messaging continues to work.
 
-## V12 changes
+## V12 behaviour
 
-- Set station country to `NL` after STA initialization, with 802.11d enabled.
-- Force modem sleep OFF before each association attempt, then restore modem sleep after a successful connection.
-- Clear stale supplicant/AP state when applying a changed network.
-- Preserve T-Deck automatic reconnect.
-- Surface useful on-device failure reasons without revealing passwords:
-  - handshake/password timeout;
-  - authentication/security mismatch;
-  - network not found / wrong band or channel;
-  - incompatible security;
-  - beacon/signal timeout;
-  - generic connection failure.
-- Keep all V11 LoRa/radio settings byte-for-byte in policy: 869.618 MHz, 62.5 kHz, SF8, 22 dBm hardware cap, DIO2 RF switch and boosted RX.
+- Keep the WadaMesh beta_83 Wi-Fi settings and saved-network behaviour.
+- Keep the base scan and network-selection flow.
+- Keep up to eight known/saved networks as provided by the base firmware.
+- Fix the T-Deck Wi-Fi network list so all saved/scanned networks are reachable by vertical scrolling instead of only the first few visible rows.
+- Preserve V11 worldwide direct messages while Wi-Fi is connected.
+- Preserve V11 LoRa/internet de-duplication so one logical message appears once in the chat.
+- Preserve the LoRa path as the normal compatibility/off-grid path.
 
-V12 does **not** add 5 GHz support. ESP32-S3 Wi-Fi remains 2.4 GHz hardware. The goal is robust 2.4 GHz association with routers and phone hotspots.
+## Global direct messages
+
+V11 supplies the worldwide route and V12 leaves it intact:
+
+- per-peer key material is derived from the existing device identities/shared secret;
+- internet payloads use AES-256-GCM;
+- the internet copy is used only when Wi-Fi is actually connected;
+- the same direct-message chat is used; there is no separate "internet chat";
+- LoRa remains available in parallel and duplicate copies are suppressed.
+
+## What V12 deliberately does not do
+
+The earlier V12 Wi-Fi-hardening experiment has been removed. V12 does not add an NL country override, custom supplicant reset, custom modem-sleep association policy or its own disconnect-reason state machine.
+
+The ESP32-S3 remains 2.4 GHz Wi-Fi hardware; V12 does not create 5 GHz support.
+
+## Radio policy
+
+The V11 T-Deck radio profile is unchanged: 869.618 MHz, 62.5 kHz, SF8, 22 dBm hardware cap, DIO2 RF switch and boosted RX.

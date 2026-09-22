@@ -1,4 +1,4 @@
-name: V12 Wi-Fi Hardening
+name: V12 Base Wi-Fi + Global Chat
 
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
           cd upstream-wadamesh
           test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
 
-      - name: Apply V11 base then V12 Wi-Fi hardening
+      - name: Apply V11 global chat then V12 compatibility layer
         run: |
           python v11/apply_v11.py upstream-wadamesh
           python v11/tests/test_contracts.py upstream-wadamesh
@@ -60,7 +60,7 @@ jobs:
         env:
           PLATFORMIO_BUILD_FLAGS: >-
             -DFIRMWARE_RELEASE_TAG='"mog-v12.0.0-rc1"'
-            -DFIRMWARE_VERSION='"MeshOffGridNL V12 Wi-Fi Hardening"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V12 Base Wi-Fi + Global Chat"'
         run: |
           cd upstream-wadamesh
           pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
@@ -82,7 +82,11 @@ jobs:
           cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V12-TDeck-Plus-merged.bin
           cp upstream-wadamesh/LICENSE dist/WADAMESH-GPL-3.0-LICENSE.txt
 
-          tar             --exclude='upstream-wadamesh/.git'             --exclude='upstream-wadamesh/.pio'             -czf dist/MeshOffGridNL-V12-corresponding-source.tar.gz             upstream-wadamesh
+          tar \
+            --exclude='upstream-wadamesh/.git' \
+            --exclude='upstream-wadamesh/.pio' \
+            -czf dist/MeshOffGridNL-V12-corresponding-source.tar.gz \
+            upstream-wadamesh
 
           python - <<'PY'
           import hashlib
@@ -106,7 +110,7 @@ jobs:
           manifest = {
               "schema": 1,
               "version": "12.0.0-rc1",
-              "label": "MeshOffGridNL V12 Wi-Fi Hardening",
+              "label": "MeshOffGridNL V12 Base Wi-Fi + Global Chat",
               "board": "lilygo-t-deck-plus",
               "chip": "ESP32-S3",
               "flashSizeBytes": 16777216,
@@ -123,18 +127,21 @@ jobs:
                   "maxTxPowerDbm": 22,
                   "unchangedFromV11": True
               },
-              "wifiHardening": {
-                  "countryCode": "NL",
-                  "ieee80211d": True,
-                  "associationModemSleep": False,
-                  "postConnectModemSleep": True,
-                  "clearSupplicantOnNetworkChange": True,
-                  "onDeviceDisconnectDiagnostics": True,
-                  "hardwareBand": "2.4 GHz"
+              "wifi": {
+                  "implementation": "WadaMesh beta_83 base",
+                  "associationPolicy": "base",
+                  "savedNetworks": "base",
+                  "scanFlow": "base",
+                  "hardwareBand": "2.4 GHz",
+                  "v12UiFix": "directly scrollable saved/scanned network list"
               },
               "globalTransport": {
                   "inheritedFromV11": True,
+                  "activeWhenWifiConnected": True,
+                  "sameChatUi": True,
                   "payloadEncryption": "AES-256-GCM",
+                  "loraCompatibilityPath": True,
+                  "duplicateSuppression": True,
                   "status": "beta"
               },
               "flashMode": "nvs-preserving-4-component",
@@ -167,10 +174,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: mesh-v12.0.0-rc1
         run: |
+          NOTES="V12 keeps the pinned WadaMesh beta_83 Wi-Fi behaviour and the encrypted V11 worldwide direct-message bridge. The T-Deck Wi-Fi network list is now directly vertically scrollable so every saved/scanned network is reachable. No custom V12 Wi-Fi association/country/supplicant policy is applied. Physical T-Deck validation is still required."
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" \
+              --title "MeshOffGridNL V12 Base Wi-Fi + Global Chat RC1" \
+              --notes "$NOTES" \
+              --prerelease
           else
-            gh release create "$TAG" dist/*               --prerelease               --target "$GITHUB_SHA"               --title "MeshOffGridNL V12 Wi-Fi Hardening RC1"               --notes "V11 plus T-Deck Wi-Fi association hardening: explicit NL/2.4 GHz country policy, fresh association state, modem-sleep handoff and on-device disconnect diagnostics. LoRa/radio policy and encrypted V11 global-chat bridge remain unchanged. Physical hotspot/router validation is still required."
+            gh release create "$TAG" dist/* \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "MeshOffGridNL V12 Base Wi-Fi + Global Chat RC1" \
+              --notes "$NOTES"
           fi
 
       - name: Upload build artifact
