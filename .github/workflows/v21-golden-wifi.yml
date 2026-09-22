@@ -1,0 +1,100 @@
+name: V21 Golden Wi-Fi A-B
+
+on:
+  push:
+    branches:
+      - v21-wifi-first
+    paths:
+      - "v21/golden/**"
+      - ".github/workflows/v21-golden-wifi.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: true
+
+jobs:
+  golden-wifi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build Golden A — legacy stack
+        run: |
+          pio run -d v21/golden -e golden-old
+          mkdir -p dist/old
+          cp v21/golden/.pio/build/golden-old/bootloader.bin dist/old/
+          cp v21/golden/.pio/build/golden-old/partitions.bin dist/old/
+          cp v21/golden/.pio/build/golden-old/firmware.bin dist/old/MeshOffGridNL-V21-Golden-A-legacy.bin
+          pio pkg list -d v21/golden -e golden-old > dist/old/packages.txt
+
+      - name: Build Golden B — modern stack
+        run: |
+          pio run -d v21/golden -e golden-modern
+          mkdir -p dist/modern
+          cp v21/golden/.pio/build/golden-modern/bootloader.bin dist/modern/
+          cp v21/golden/.pio/build/golden-modern/partitions.bin dist/modern/
+          cp v21/golden/.pio/build/golden-modern/firmware.bin dist/modern/MeshOffGridNL-V21-Golden-B-modern.bin
+          pio pkg list -d v21/golden -e golden-modern > dist/modern/packages.txt
+
+      - name: Build manifests and hashes
+        run: |
+          python - <<'PY'
+          import hashlib, json, pathlib
+          root=pathlib.Path("dist")
+          for name,folder in (("A-legacy","old"),("B-modern","modern")):
+              d=root/folder
+              app=next(d.glob("MeshOffGridNL-V21-Golden-*.bin"))
+              manifest={
+                  "schema":1,
+                  "name":"MeshOffGridNL V21 Golden Wi-Fi "+name,
+                  "board":"LILYGO T-Deck / T-Deck Plus",
+                  "testSsid":"MeshOffGrid21",
+                  "testPassword":"MeshOffGrid21Test",
+                  "bleStarted":False,
+                  "loraIncluded":False,
+                  "scanIncluded":False,
+                  "customSecurityOverrides":False,
+                  "normalPath":"events -> WIFI_STA once -> WiFi.begin -> CONNECTED -> GOT_IP",
+                  "app":{"file":app.name,"size":app.stat().st_size}
+              }
+              for p in d.glob("*.bin"):
+                  h=hashlib.sha256(p.read_bytes()).hexdigest()
+                  manifest.setdefault("sha256",{})[p.name]=h
+              (d/"manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+          PY
+          find dist -type f -maxdepth 2 -print -exec sha256sum {} \;
+
+      - name: Publish diagnostic prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v21-golden-wifi-rc1
+        run: |
+          NOTES="V21 Phase 1 diagnostic only. Two minimal T-Deck Wi-Fi-only builds use identical application logic: Golden A on legacy PlatformIO/Arduino stack, Golden B on pioarduino modern stable. BLE, LoRa, WadaMesh, scanning and custom Wi-Fi security/recovery logic are absent. Temporarily set the Samsung S21 hotspot to SSID MeshOffGrid21, password MeshOffGrid21Test, 2.4 GHz and WPA2 if selectable. This is not the full V21 firmware."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/old/* dist/modern/* --clobber
+            gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Golden Wi-Fi RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" dist/old/* dist/modern/* --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Golden Wi-Fi RC1" --notes "$NOTES" --prerelease
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V21-Golden-WiFi
+          path: dist/**
+          retention-days: 30
