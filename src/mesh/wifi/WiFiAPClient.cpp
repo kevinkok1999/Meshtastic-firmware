@@ -362,12 +362,21 @@ void deinitWifi()
 
     if (isWifiAvailable()) {
 #ifdef ARCH_ESP32
+#ifdef MESHOFFGRID_V14
+        // V14 keeps the STA radio alive for ESP-NOW DirectLink even when IP networking is disabled.
+        WiFi.disconnect(false, false);
+        WiFi.mode(WIFI_STA);
+        LOG_INFO("V14 network WiFi disconnected; STA radio retained for DirectLink");
+#else
         WiFi.disconnect(true, false);
-#elif defined(ARCH_RP2040)
-        WiFi.disconnect(true);
-#endif
         WiFi.mode(WIFI_OFF);
         LOG_INFO("WiFi Turned Off");
+#endif
+#elif defined(ARCH_RP2040)
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        LOG_INFO("WiFi Turned Off");
+#endif
         // WiFi.printDiag(Serial);
     }
 }
