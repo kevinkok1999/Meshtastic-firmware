@@ -21,7 +21,7 @@ public:
     // Dedup when the same message arrives first over internet and later over LoRa.
     bool noteLoRaDM(const uint8_t senderPub[32], uint32_t timestamp, const char* text);
 
-    bool connected() const { return _mqtt.connected(); }
+    bool connected() { return _mqtt.connected(); }
 
 private:
     static constexpr uint8_t PROTOCOL_VERSION = 1;
