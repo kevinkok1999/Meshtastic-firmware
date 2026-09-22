@@ -29,6 +29,7 @@ def main():
         "WiFi.persistent(false);",
         "WiFi.setAutoReconnect(false);",
         "WiFi.begin(ssid, v21_pwd);",
+        "WiFi.reconnect();",
     ):
         if good not in block: die("V21 association missing "+good)
 
