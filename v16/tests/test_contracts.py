@@ -43,7 +43,9 @@ def main() -> None:
         "CONNECT always outranks SCAN",
         "never start a scan under WPA/DHCP",
         "worker owns this scan: safe abort point",
+        "esp_wifi_scan_stop();",
         "V16: exactly one reconnect owner, even after scans",
+        "retrying in background",
         "associating... (%u/3)",
         "refreshStatusLabels();",
     ]
