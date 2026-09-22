@@ -66,8 +66,18 @@ jobs:
       - name: Package firmware, source and manifest
         run: |
           mkdir -p dist
-          cp upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin              dist/MeshOffGridNL-V11-TDeck-Plus.bin
-          cp upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware-merged.bin              dist/MeshOffGridNL-V11-TDeck-Plus-merged.bin
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          BOOT_APP0="$(find ~/.platformio/packages -path '*/tools/partitions/boot_app0.bin' -print -quit)"
+          test -f "$BUILD_DIR/bootloader.bin"
+          test -f "$BUILD_DIR/partitions.bin"
+          test -n "$BOOT_APP0"
+          test -f "$BOOT_APP0"
+
+          cp "$BUILD_DIR/bootloader.bin" dist/MeshOffGridNL-V11-bootloader.bin
+          cp "$BUILD_DIR/partitions.bin" dist/MeshOffGridNL-V11-partitions.bin
+          cp "$BOOT_APP0" dist/MeshOffGridNL-V11-boot_app0.bin
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V11-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V11-TDeck-Plus-merged.bin
           cp upstream-wadamesh/LICENSE dist/WADAMESH-GPL-3.0-LICENSE.txt
 
           tar             --exclude='upstream-wadamesh/.git'             --exclude='upstream-wadamesh/.pio'             -czf dist/MeshOffGridNL-V11-corresponding-source.tar.gz             upstream-wadamesh
@@ -78,6 +88,9 @@ jobs:
           import pathlib
 
           d = pathlib.Path("dist")
+          bootloader = d / "MeshOffGridNL-V11-bootloader.bin"
+          partitions = d / "MeshOffGridNL-V11-partitions.bin"
+          boot_app0 = d / "MeshOffGridNL-V11-boot_app0.bin"
           app = d / "MeshOffGridNL-V11-TDeck-Plus.bin"
           merged = d / "MeshOffGridNL-V11-TDeck-Plus-merged.bin"
 
@@ -117,6 +130,37 @@ jobs:
                   "peerKeyAgreement": "MeshCore identity ECDH",
                   "status": "rc1"
               },
+              "flashMode": "nvs-preserving-4-component",
+              "flashFiles": [
+                  {
+                      "file": bootloader.name,
+                      "address": 0,
+                      "addressHex": "0x0000",
+                      "size": bootloader.stat().st_size,
+                      "sha256": sha(bootloader)
+                  },
+                  {
+                      "file": partitions.name,
+                      "address": 32768,
+                      "addressHex": "0x8000",
+                      "size": partitions.stat().st_size,
+                      "sha256": sha(partitions)
+                  },
+                  {
+                      "file": boot_app0.name,
+                      "address": 57344,
+                      "addressHex": "0xE000",
+                      "size": boot_app0.stat().st_size,
+                      "sha256": sha(boot_app0)
+                  },
+                  {
+                      "file": app.name,
+                      "address": 65536,
+                      "addressHex": "0x10000",
+                      "size": app.stat().st_size,
+                      "sha256": sha(app)
+                  }
+              ],
               "app": {
                   "file": app.name,
                   "size": app.stat().st_size,
@@ -125,7 +169,9 @@ jobs:
               "merged": {
                   "file": merged.name,
                   "size": merged.stat().st_size,
-                  "sha256": sha(merged)
+                  "sha256": sha(merged),
+                  "defaultInstaller": false,
+                  "note": "Recovery/full-flash only; merged image pads gaps and can wipe NVS."
               }
           }
 
