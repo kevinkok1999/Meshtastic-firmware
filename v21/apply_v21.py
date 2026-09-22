@@ -71,9 +71,9 @@ def main():
                 (unsigned)g_v16_wifi_attempt, ssid,
                 (unsigned)g_wifi_last_disc_reason);
 
-  // Do not call WiFi.disconnect(), WiFi.mode(), scan setters, PMF/SAE setters,
-  // or low-level esp_wifi_* mutators here.  WiFi.begin() owns association and
-  // DHCP is observed independently through GOT_IP.
+  // Do not mutate station mode, tear down the live link, tune scan/security,
+  // pin an AP, or call low-level Wi-Fi driver mutators here. WiFi.begin() owns
+  // association and DHCP is observed independently through GOT_IP.
   WiFi.begin(ssid, v21_pwd);
   return;
 #elif defined(MESH_OFFGRIDNL_V19)
