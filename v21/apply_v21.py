@@ -46,6 +46,19 @@ def main():
         "  -D MESH_V21_WIFI_PRIORITY=1\n",
         "V21 flags"
     )
+
+    # Adafruit ST7735 declares a generic dependency named "SD". On modern
+    # pioarduino that ambiguous name otherwise pulls arduino-libraries/SD 1.3.0,
+    # which is AVR-oriented and fails on ESP32-S3. Satisfy the dependency with
+    # the SD library shipped by the exact Arduino-ESP32 framework instead.
+    pio=section(
+        pio,tdeck_head,tdeck_next,
+        "  Wire\n  jgromes/RadioLib @ ^7.6.0\n",
+        "  Wire\n"
+        "  SD=file://${platformio.packages_dir}/framework-arduinoespressif32/libraries/SD\n"
+        "  jgromes/RadioLib @ ^7.6.0\n",
+        "V21 framework SD dependency"
+    )
     pio_p.write_text(pio)
 
     # ------------------------------------------------------------------
@@ -262,6 +275,7 @@ def main():
         "MESH_V21_WIFI_SINGLE_OWNER=1",
         "MESH_V21_WIFI_PRIORITY=1",
         "55.03.312-1/platform-espressif32.zip",
+        "SD=file://${platformio.packages_dir}/framework-arduinoespressif32/libraries/SD",
     ):
         if m not in pio: fail("platformio missing "+m)
 
