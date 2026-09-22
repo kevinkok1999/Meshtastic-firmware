@@ -1,0 +1,184 @@
+name: V20 Local AI
+
+on:
+  push:
+    branches:
+      - v20-local-ai
+    paths:
+      - "v11/**"
+      - "v12/**"
+      - "v13/**"
+      - "v15/**"
+      - "v16/**"
+      - "v17/**"
+      - "v18/**"
+      - "v19/**"
+      - "v20/**"
+      - ".github/workflows/v20-local-ai.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: true
+
+jobs:
+  build-v20:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: v20-pio-${{ runner.os }}-${{ hashFiles('v11/**','v12/**','v13/**','v15/**','v16/**','v17/**','v18/**','v19/**','v20/**') }}
+
+      - name: Test Local AI parser on host
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Iv20/overlay/src v20/tests/test_mesh_ai.cpp -o /tmp/test_mesh_ai
+          /tmp/test_mesh_ai
+
+      - name: Fetch pinned WadaMesh beta_83
+        run: |
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply V11 through V20 layers
+        run: |
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+          python v17/apply_v17.py upstream-wadamesh
+          python v17/tests/test_contracts.py upstream-wadamesh
+          python v18/apply_v18.py upstream-wadamesh
+          python v18/tests/test_contracts.py upstream-wadamesh
+          python v19/apply_v19.py upstream-wadamesh
+          python v19/tests/test_contracts.py upstream-wadamesh
+          python v20/apply_v20.py upstream-wadamesh
+          python v20/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build once — T-Deck / T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v20.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V20 Local AI"'
+        run: |
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Package V20 firmware
+        run: |
+          mkdir -p dist
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          BOOT_APP0="$(find ~/.platformio/packages -path '*/tools/partitions/boot_app0.bin' -print -quit)"
+          test -f "$BUILD_DIR/bootloader.bin"
+          test -f "$BUILD_DIR/partitions.bin"
+          test -n "$BOOT_APP0"
+          test -f "$BOOT_APP0"
+          test -f "$BUILD_DIR/firmware.bin"
+          test -f "$BUILD_DIR/firmware-merged.bin"
+
+          cp "$BUILD_DIR/bootloader.bin" dist/MeshOffGridNL-V20-bootloader.bin
+          cp "$BUILD_DIR/partitions.bin" dist/MeshOffGridNL-V20-partitions.bin
+          cp "$BOOT_APP0" dist/MeshOffGridNL-V20-boot_app0.bin
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V20-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V20-TDeck-Plus-merged.bin
+          cp upstream-wadamesh/LICENSE dist/WADAMESH-GPL-3.0-LICENSE.txt
+
+          tar --exclude='upstream-wadamesh/.git' --exclude='upstream-wadamesh/.pio'             -czf dist/MeshOffGridNL-V20-corresponding-source.tar.gz upstream-wadamesh
+
+          python - <<'PY'
+          import hashlib, json, pathlib
+          d=pathlib.Path("dist")
+          names={
+            "bootloader":"MeshOffGridNL-V20-bootloader.bin",
+            "partitions":"MeshOffGridNL-V20-partitions.bin",
+            "boot_app0":"MeshOffGridNL-V20-boot_app0.bin",
+            "app":"MeshOffGridNL-V20-TDeck-Plus.bin",
+            "merged":"MeshOffGridNL-V20-TDeck-Plus-merged.bin",
+          }
+          paths={k:d/v for k,v in names.items()}
+          def sha(p):
+            h=hashlib.sha256()
+            with p.open("rb") as f:
+              for block in iter(lambda:f.read(1024*1024),b""): h.update(block)
+            return h.hexdigest()
+          manifest={
+            "schema":1,
+            "version":"20.0.0-rc1",
+            "label":"MeshOffGridNL V20 Local AI",
+            "board":"lilygo-t-deck-plus",
+            "chip":"ESP32-S3",
+            "flashSizeBytes":16777216,
+            "base":{"meshOffGridNL":"V19","wadameshTag":"beta_83","wadameshCommit":"6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"},
+            "installer":{"fullChipEraseRequired":True,"preserveNvs":False,"warning":"Internal settings/state are erased before flashing"},
+            "localAI":{
+              "enabled":True,
+              "offlineFirst":True,
+              "engine":"deterministic-intent-diagnostics",
+              "cloudRequired":False,
+              "tinyMlDefault":False,
+              "voiceDefault":False,
+              "entrypoints":["LVGL Terminal","Console"],
+              "commands":["status","wifi","radio","bereikbaar","gps","route","geheugen","diagnose"]
+            },
+            "wifi":{"inheritsV19FactoryClean":True,"runtimeEraseAp":False,"singleReconnectOwner":True},
+            "validation":{"compileAndContractTests":True,"hostParserTests":True,"physicalTDeckRetestRequired":True,"physicalGalaxyS21RetestRequired":True},
+            "flashMode":"full-chip-erase-then-4-component",
+            "flashFiles":[
+              {"part":"bootloader","file":names["bootloader"],"address":0,"size":paths["bootloader"].stat().st_size,"sha256":sha(paths["bootloader"])},
+              {"part":"partitions","file":names["partitions"],"address":32768,"size":paths["partitions"].stat().st_size,"sha256":sha(paths["partitions"])},
+              {"part":"boot_app0","file":names["boot_app0"],"address":57344,"size":paths["boot_app0"].stat().st_size,"sha256":sha(paths["boot_app0"])},
+              {"part":"app","file":names["app"],"address":65536,"size":paths["app"].stat().st_size,"sha256":sha(paths["app"])}
+            ],
+            "merged":{"file":names["merged"],"size":paths["merged"].stat().st_size,"sha256":sha(paths["merged"]),"defaultInstaller":False}
+          }
+          (d/"v20-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+          print(json.dumps(manifest,indent=2))
+          PY
+          sha256sum dist/*
+
+      - name: Publish V20 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v20.0.0-rc1
+        run: |
+          NOTES="V20 layers a fully local Mesh AI intent/diagnostics engine on the validated V19 Factory Clean Wi-Fi base. On the T-Deck, open the existing Terminal app or Console and type 'ai help'. Commands work without cloud or internet and report Wi-Fi state, LoRa configuration, recently heard contacts, GPS/local position, route advice and memory. The AI layer is advisory and does not own radio/Wi-Fi drivers. Tiny ML and voice are intentionally disabled in RC1. Physical T-Deck, Galaxy S21 and LoRa validation are still required before Stable."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V20 Local AI RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" dist/* --prerelease --target "$GITHUB_SHA" --title "MeshOffGridNL V20 Local AI RC1" --notes "$NOTES"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V20-TDeck-Plus
+          path: dist/*
+          retention-days: 30
