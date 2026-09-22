@@ -4,6 +4,12 @@
 
 using namespace meshoffgrid;
 
+#if defined(ARCH_PORTDUINO)
+#define V14_TEST_ENTRY extern "C"
+#else
+#define V14_TEST_ENTRY
+#endif
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -80,7 +86,7 @@ void test_dedup_cache_is_bounded_and_rotates()
     TEST_ASSERT_TRUE(cache.contains(c));
 }
 
-void setup()
+V14_TEST_ENTRY void setup()
 {
     initializeTestEnvironment();
     UNITY_BEGIN();
@@ -93,4 +99,4 @@ void setup()
     exit(UNITY_END());
 }
 
-void loop() {}
+V14_TEST_ENTRY void loop() {}
