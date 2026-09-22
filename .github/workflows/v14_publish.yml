@@ -1,0 +1,190 @@
+name: Publish MeshOffGridNL V14 RC1
+
+on:
+  push:
+    branches:
+      - v14-phase2
+    paths:
+      - ".github/workflows/v14_publish.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: v14-publish-rc1
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VALIDATED_RUN_ID: "35714789479"
+      VALIDATED_SHA: "f8ea063d00f94d32455564581bde387afc6478dc"
+      ARTIFACT_NAME: "MeshOffGridNL-V14-TDeck-TFT-f8ea063d00f94d32455564581bde387afc6478dc"
+      RELEASE_TAG: "mesh-v14.0.0-rc1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download validated V14 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: raw
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.VALIDATED_RUN_ID }}
+
+      - name: Verify validated source commit
+        run: |
+          git cat-file -e "$VALIDATED_SHA^{commit}"
+          echo "Publishing only validated firmware from $VALIDATED_SHA"
+
+      - name: Package V14 release
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          APP="$(find raw -maxdepth 1 -type f -name 'firmware-t-deck-tft-*.bin' ! -name '*.factory.bin' | head -n1)"
+          FACTORY="$(find raw -maxdepth 1 -type f -name 'firmware-t-deck-tft-*.factory.bin' | head -n1)"
+          LITTLEFS="$(find raw -maxdepth 1 -type f -name 'littlefs-t-deck-tft-*.bin' | head -n1)"
+          MTJSON="$(find raw -maxdepth 1 -type f -name 'firmware-t-deck-tft-*.mt.json' | head -n1)"
+
+          test -f raw/bootloader.bin
+          test -f raw/partitions.bin
+          test -n "$APP" && test -f "$APP"
+          test -n "$FACTORY" && test -f "$FACTORY"
+          test -n "$LITTLEFS" && test -f "$LITTLEFS"
+          test -n "$MTJSON" && test -f "$MTJSON"
+
+          cp raw/bootloader.bin dist/MeshOffGridNL-V14-bootloader.bin
+          cp raw/partitions.bin dist/MeshOffGridNL-V14-partitions.bin
+          cp "$APP" dist/MeshOffGridNL-V14-TDeck-Plus.bin
+          cp "$LITTLEFS" dist/MeshOffGridNL-V14-littlefs.bin
+          cp "$MTJSON" dist/v14-build.mt.json
+          cp LICENSE dist/MESHTASTIC-GPL-3.0-LICENSE.txt
+
+          # boot_app0/OTA selector is embedded in the validated factory image at 0xE000.
+          dd if="$FACTORY" of=dist/MeshOffGridNL-V14-boot_app0.bin bs=1 skip=$((0xE000)) count=$((0x2000)) status=none
+
+          # Full recovery image: validated factory image + validated LittleFS at 0xC90000.
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          raw = Path("raw")
+          factory = next(raw.glob("firmware-t-deck-tft-*.factory.bin")).read_bytes()
+          littlefs = next(raw.glob("littlefs-t-deck-tft-*.bin")).read_bytes()
+          out_size = 0xFF0000
+          littlefs_offset = 0xC90000
+          image = bytearray(b"\xFF") * out_size
+          if len(factory) > len(image):
+              raise SystemExit("factory image exceeds merged recovery image")
+          if littlefs_offset + len(littlefs) > len(image):
+              raise SystemExit("LittleFS image exceeds configured partition")
+          image[:len(factory)] = factory
+          image[littlefs_offset:littlefs_offset + len(littlefs)] = littlefs
+          Path("dist/MeshOffGridNL-V14-TDeck-Plus-merged.bin").write_bytes(image)
+          PY
+
+          git archive --format=tar "$VALIDATED_SHA" | gzip -9 > dist/MeshOffGridNL-V14-corresponding-source.tar.gz
+
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          d = Path("dist")
+          def sha(p):
+              h=hashlib.sha256()
+              with p.open("rb") as f:
+                  for chunk in iter(lambda:f.read(1024*1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          names = {
+              "bootloader": ("MeshOffGridNL-V14-bootloader.bin", 0x0000),
+              "partitions": ("MeshOffGridNL-V14-partitions.bin", 0x8000),
+              "boot_app0": ("MeshOffGridNL-V14-boot_app0.bin", 0xE000),
+              "app": ("MeshOffGridNL-V14-TDeck-Plus.bin", 0x10000),
+              "littlefs": ("MeshOffGridNL-V14-littlefs.bin", 0xC90000),
+          }
+          flash_files=[]
+          for part,(name,address) in names.items():
+              p=d/name
+              flash_files.append({
+                  "part": part,
+                  "file": name,
+                  "address": address,
+                  "addressHex": hex(address),
+                  "size": p.stat().st_size,
+                  "sha256": sha(p),
+              })
+
+          merged=d/"MeshOffGridNL-V14-TDeck-Plus-merged.bin"
+          manifest={
+              "schema": 1,
+              "version": "14.0.0-rc1",
+              "label": "MeshOffGridNL V14 Smart DirectLink",
+              "board": "lilygo-t-deck-plus",
+              "platformioTarget": "t-deck-tft",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "validatedCommit": "f8ea063d00f94d32455564581bde387afc6478dc",
+              "validatedWorkflowRun": 35714789479,
+              "baseFirmware": "Meshtastic 2.8.1",
+              "features": {
+                  "routeBrain": True,
+                  "deliveryCore": True,
+                  "espNowDirectLink": True,
+                  "connectivitySupervisor": True,
+                  "loraGoldenFallback": True,
+                  "mui": True,
+                  "littlefs": True,
+              },
+              "validation": {
+                  "routeBrainNativeTests": True,
+                  "deliveryCoreNativeTests": True,
+                  "directLinkCodecNativeTests": True,
+                  "tDeckTftCompile": True,
+                  "twoDeviceHardwareValidationRequiredBeforeStable": True,
+              },
+              "flashMode": "nvs-preserving-5-component",
+              "preservedRegions": ["nvs@0x9000"],
+              "flashFiles": flash_files,
+              "merged": {
+                  "file": merged.name,
+                  "size": merged.stat().st_size,
+                  "sha256": sha(merged),
+                  "defaultInstaller": False,
+                  "note": "Recovery/full-flash image. Default web installer uses the NVS-preserving 5-component layout."
+              },
+          }
+          (d/"v14-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+          print(json.dumps(manifest,indent=2))
+          PY
+
+          sha256sum dist/*
+
+      - name: Publish V14 RC1 GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          NOTES="MeshOffGridNL V14 Smart DirectLink RC1. Validated on the t-deck-tft/MUI build target: Route Brain, Delivery Core and DirectLink codec native tests passed and the full ESP32-S3 T-Deck TFT build completed successfully. Meshtastic/LoRa remains the Golden Fallback; ESP-NOW DirectLink is an additional path. This is RC1: two-device physical DirectLink and hotspot field validation remain required before a Stable label."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release edit "$RELEASE_TAG" --target "$VALIDATED_SHA" --title "MeshOffGridNL V14 Smart DirectLink RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$RELEASE_TAG" dist/* --prerelease --target "$VALIDATED_SHA" --title "MeshOffGridNL V14 Smart DirectLink RC1" --notes "$NOTES"
+          fi
+
+      - name: Upload packaged V14 release
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V14-RC1-release
+          path: dist/*
+          retention-days: 90
