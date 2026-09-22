@@ -53,7 +53,7 @@ def main():
 
 #if defined(MESH_OFFGRIDNL_V17)
   // Galaxy S21 compatibility path: configure ESP-IDF station security
-  // explicitly instead of relying on Arduino WiFi.begin() defaults.
+  // explicitly instead of relying on Arduino high-level association defaults.
   WiFi.setAutoReconnect(false);
   wifiConfigClearApHint();
 
