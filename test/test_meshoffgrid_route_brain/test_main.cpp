@@ -7,6 +7,12 @@
 
 using namespace meshoffgrid;
 
+#if defined(ARCH_PORTDUINO)
+#define V14_TEST_ENTRY extern "C"
+#else
+#define V14_TEST_ENTRY
+#endif
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -132,7 +138,7 @@ void test_equal_scores_have_stable_transport_order()
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(TransportKind::LongLink), static_cast<uint8_t>(result.primary));
 }
 
-void setup()
+V14_TEST_ENTRY void setup()
 {
     initializeTestEnvironment();
     UNITY_BEGIN();
@@ -148,4 +154,4 @@ void setup()
     exit(UNITY_END());
 }
 
-void loop() {}
+V14_TEST_ENTRY void loop() {}
