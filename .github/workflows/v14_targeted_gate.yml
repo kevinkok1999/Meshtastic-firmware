@@ -49,21 +49,21 @@ jobs:
         run: pio test -e native -f test_meshoffgrid_direct_codec
 
       - name: Compile T-Deck firmware
-        run: pio run -e t-deck
+        run: pio run -e t-deck-tft
 
       - name: Record firmware outputs
         if: success()
         run: |
-          find .pio/build/t-deck -maxdepth 1 -type f \( -name "*.bin" -o -name "*.elf" -o -name "*.mt.json" \) -print -exec ls -lh {} \;
-          find .pio/build/t-deck -maxdepth 1 -type f -name "*.bin" -print0 | xargs -0 -r sha256sum
+          find .pio/build/t-deck-tft -maxdepth 1 -type f \( -name "*.bin" -o -name "*.elf" -o -name "*.mt.json" \) -print -exec ls -lh {} \;
+          find .pio/build/t-deck-tft -maxdepth 1 -type f -name "*.bin" -print0 | xargs -0 -r sha256sum
 
       - name: Upload validated V14 T-Deck artifacts
         if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: MeshOffGridNL-V14-TDeck-${{ github.sha }}
+          name: MeshOffGridNL-V14-TDeck-TFT-${{ github.sha }}
           if-no-files-found: error
           path: |
-            .pio/build/t-deck/*.bin
-            .pio/build/t-deck/*.elf
-            .pio/build/t-deck/*.mt.json
+            .pio/build/t-deck-tft/*.bin
+            .pio/build/t-deck-tft/*.elf
+            .pio/build/t-deck-tft/*.mt.json
