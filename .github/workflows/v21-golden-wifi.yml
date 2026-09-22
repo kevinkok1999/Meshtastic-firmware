@@ -33,6 +33,15 @@ jobs:
       - name: Install PlatformIO
         run: python -m pip install --upgrade platformio
 
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: v21-golden-pio-${{ runner.os }}-${{ hashFiles('v21/golden/platformio.ini','v21/golden/boards/t-deck.json') }}
+
       - name: Build Golden A — legacy stack
         run: |
           pio run -d v21/golden -e golden-old
@@ -77,7 +86,10 @@ jobs:
           root=pathlib.Path("dist")
           for name,folder in (("A-legacy","old"),("B-modern","modern")):
               d=root/folder
-              app=next(d.glob("MeshOffGridNL-V21-Golden-*.bin"))
+              app_name = "MeshOffGridNL-V21-Golden-A-legacy.bin" if folder == "old" else "MeshOffGridNL-V21-Golden-B-modern.bin"
+              app=d/app_name
+              if not app.exists():
+                  raise SystemExit(f"missing expected app binary: {app}")
               manifest={
                   "schema":1,
                   "name":"MeshOffGridNL V21 Golden Wi-Fi "+name,
