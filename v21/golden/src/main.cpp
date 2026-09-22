@@ -105,7 +105,7 @@ void setup() {
   Serial.println();
   Serial.println("=== MeshOffGridNL V21 Golden Wi-Fi ===");
   Serial.printf("[GOLDEN] stack=%s\n", GOLDEN_STACK_NAME);
-  Serial.printf("[GOLDEN] arduino=%s\n", ESP_ARDUINO_VERSION_STR);
+  Serial.printf("[GOLDEN] arduino=%d.%d.%d\n", ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR, ESP_ARDUINO_VERSION_PATCH);
   Serial.printf("[GOLDEN] idf=%d.%d.%d\n",
                 ESP_IDF_VERSION_MAJOR, ESP_IDF_VERSION_MINOR, ESP_IDF_VERSION_PATCH);
   Serial.println("[GOLDEN] BLE=NOT_STARTED LoRa=ABSENT scan=ABSENT custom-security=ABSENT");
