@@ -19,6 +19,8 @@ def main():
 
     if "55.03.312-1/platform-espressif32.zip" not in pio:
         die("modern pioarduino platform not pinned")
+    if "SD=file://${platformio.packages_dir}/framework-arduinoespressif32/libraries/SD" not in pio:
+        die("framework SD override missing")
 
     start=main.find("#if defined(MESH_OFFGRIDNL_V21)",main.find("static void v13WifiBegin"))
     end=main.find("#elif defined(MESH_OFFGRIDNL_V19)",start)
