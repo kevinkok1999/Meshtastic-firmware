@@ -1,0 +1,168 @@
+name: Publish V14 RC
+
+on:
+  push:
+    branches:
+      - v14-phase2
+    paths:
+      - ".github/workflows/v14-publish.yml"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: v14-publish
+  cancel-in-progress: false
+
+jobs:
+  publish-v14:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Locate latest successful V14 gate
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DATA="$(gh run list --workflow "V14 Targeted Gate" --branch v14-phase2 --status success --limit 1 --json databaseId,headSha)"
+          RUN_ID="$(printf '%s' "$DATA" | jq -r '.[0].databaseId // empty')"
+          SHA="$(printf '%s' "$DATA" | jq -r '.[0].headSha // empty')"
+          test -n "$RUN_ID"
+          test -n "$SHA"
+          git merge-base --is-ancestor "$SHA" "$GITHUB_SHA"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "validated_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Download validated firmware artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.gate.outputs.run_id }}
+        run: |
+          rm -rf validated-artifact dist
+          mkdir -p validated-artifact dist
+          gh run download "$RUN_ID" --dir validated-artifact
+          find validated-artifact -type f -maxdepth 4 -print
+
+      - name: Package V14 release
+        env:
+          VALIDATED_SHA: ${{ steps.gate.outputs.validated_sha }}
+        run: |
+          set -euo pipefail
+
+          BOOTLOADER="$(find validated-artifact -type f -name 'bootloader.bin' -print -quit)"
+          PARTITIONS="$(find validated-artifact -type f -name 'partitions.bin' -print -quit)"
+          APP="$(find validated-artifact -type f -name 'firmware-*.bin' ! -name '*merged*' -print -quit)"
+          LITTLEFS="$(find validated-artifact -type f -name 'littlefs-*.bin' -print -quit)"
+          MTJSON="$(find validated-artifact -type f -name '*.mt.json' -print -quit)"
+
+          test -f "$BOOTLOADER"
+          test -f "$PARTITIONS"
+          test -f "$APP"
+          test -f "$LITTLEFS"
+          test -f "$MTJSON"
+
+          cp "$BOOTLOADER" dist/MeshOffGridNL-V14-bootloader.bin
+          cp "$PARTITIONS" dist/MeshOffGridNL-V14-partitions.bin
+          cp "$APP" dist/MeshOffGridNL-V14-TDeck-Plus.bin
+          cp "$LITTLEFS" dist/MeshOffGridNL-V14-littlefs.bin
+          cp "$MTJSON" dist/MeshOffGridNL-V14-build.mt.json
+
+          curl -fsSL             https://github.com/kevinkok1999/Meshtastic-firmware/releases/download/mesh-v13.0.0-rc1/MeshOffGridNL-V13-boot_app0.bin             -o dist/MeshOffGridNL-V14-boot_app0.bin
+          echo "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0  dist/MeshOffGridNL-V14-boot_app0.bin" | sha256sum -c -
+
+          python - <<'PY'
+          import hashlib, json, pathlib
+
+          d = pathlib.Path("dist")
+          boot = d / "MeshOffGridNL-V14-bootloader.bin"
+          parts = d / "MeshOffGridNL-V14-partitions.bin"
+          ota = d / "MeshOffGridNL-V14-boot_app0.bin"
+          app = d / "MeshOffGridNL-V14-TDeck-Plus.bin"
+          fs = d / "MeshOffGridNL-V14-littlefs.bin"
+
+          def sha(p):
+              h = hashlib.sha256()
+              with p.open("rb") as f:
+                  for block in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(block)
+              return h.hexdigest()
+
+          if boot.read_bytes()[:1] != b"\xE9":
+              raise SystemExit("bad bootloader signature")
+          if parts.read_bytes()[:2] != b"\xAA\x50":
+              raise SystemExit("bad partition-table signature")
+          if ota.read_bytes()[:4] != b"\x01\x00\x00\x00":
+              raise SystemExit("bad boot_app0 format")
+          if app.read_bytes()[:1] != b"\xE9":
+              raise SystemExit("bad application signature")
+          if app.stat().st_size > 0x640000:
+              raise SystemExit("app exceeds app0 partition")
+          if fs.stat().st_size > 0x360000:
+              raise SystemExit("LittleFS exceeds filesystem partition")
+
+          manifest = {
+              "schema": 1,
+              "version": "14.0.0-rc1",
+              "label": "MeshOffGridNL V14 Smart DirectLink",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "validatedCommit": pathlib.Path(".git/refs/heads/v14-phase2").read_text().strip()
+                  if pathlib.Path(".git/refs/heads/v14-phase2").exists() else None,
+              "features": {
+                  "meshtasticLoraFallback": True,
+                  "espNowDirectLink": True,
+                  "routeBrain": True,
+                  "boundedFragmentation": True,
+                  "boundedReassembly": True,
+                  "wifiDirectLinkDiagnostics": True,
+                  "tftMuiTarget": True
+              },
+              "flashMode": "nvs-preserving-5-component",
+              "flashFiles": [
+                  {"file": boot.name, "address": 0x0000, "addressHex": "0x0000", "size": boot.stat().st_size, "sha256": sha(boot)},
+                  {"file": parts.name, "address": 0x8000, "addressHex": "0x8000", "size": parts.stat().st_size, "sha256": sha(parts)},
+                  {"file": ota.name, "address": 0xE000, "addressHex": "0xE000", "size": ota.stat().st_size, "sha256": sha(ota)},
+                  {"file": app.name, "address": 0x10000, "addressHex": "0x10000", "size": app.stat().st_size, "sha256": sha(app)},
+                  {"file": fs.name, "address": 0xC90000, "addressHex": "0xC90000", "size": fs.stat().st_size, "sha256": sha(fs)}
+              ],
+              "validation": {
+                  "routeBrainNative": True,
+                  "deliveryCoreNative": True,
+                  "directLinkCodecNative": True,
+                  "tDeckTftCompile": True,
+                  "physicalTwoDeviceValidationStillRecommended": True
+              }
+          }
+          (d / "v14-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+          git archive --format=tar.gz --output=dist/MeshOffGridNL-V14-corresponding-source.tar.gz "$VALIDATED_SHA"
+          sha256sum dist/*
+
+      - name: Publish V14 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v14.0.0-rc1
+          VALIDATED_SHA: ${{ steps.gate.outputs.validated_sha }}
+        run: |
+          NOTES="V14 Smart DirectLink keeps Meshtastic/LoRa as the safe fallback and adds ESP-NOW DirectLink, bounded fragmentation/reassembly, deterministic route scoring, Wi-Fi/DirectLink diagnostics and the T-Deck TFT/MUI target. This is an RC: build and automated tests are validated; physical two-T-Deck field validation is still recommended before calling it Stable."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --target "$VALIDATED_SHA" --title "MeshOffGridNL V14 Smart DirectLink RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" dist/* --prerelease --target "$VALIDATED_SHA" --title "MeshOffGridNL V14 Smart DirectLink RC1" --notes "$NOTES"
+          fi
+
+      - name: Upload packaged release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MeshOffGridNL-V14-RC1
+          retention-days: 30
+          path: dist/*
