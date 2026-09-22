@@ -78,3 +78,5 @@ V21 is not marked Stable until physical hardware passes.
 - `GOT_IP`: link + DHCP succeeded.
 
 The firmware prints the numeric ESP-IDF disconnect reason so we can stop guessing and identify the failing stage.
+
+Phase 1 branch: `v21-wifi-first`.
