@@ -30,18 +30,26 @@ jobs:
       - name: Setup native build
         uses: ./.github/actions/setup-native
 
+      - name: Pin compatible PlatformIO Core
+        run: |
+          python -m pip install --force-reinstall "platformio==6.1.19"
+          pio --version
+
       - name: Route Brain native tests
         run: pio test -e native -f test_meshoffgrid_route_brain
 
       - name: Delivery Core native tests
         run: pio test -e native -f test_meshoffgrid_delivery_core
 
-      - name: Compile T-Deck firmware
-        run: pio run -e t-deck
+      - name: DirectLink codec native tests
+        run: pio test -e native -f test_meshoffgrid_direct_codec
+
+      - name: Compile T-Deck TFT/MUI firmware
+        run: pio run -e t-deck-tft
 
       - name: Record firmware size
         if: success()
         run: |
-          test -f .pio/build/t-deck/firmware.bin
-          ls -lh .pio/build/t-deck/firmware.bin
-          sha256sum .pio/build/t-deck/firmware.bin
+          test -f .pio/build/t-deck-tft/firmware.bin
+          ls -lh .pio/build/t-deck-tft/firmware.bin
+          sha256sum .pio/build/t-deck-tft/firmware.bin
