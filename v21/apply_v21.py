@@ -129,11 +129,11 @@ def main():
         main,
         '''#if defined(MESH_OFFGRIDNL_V19)
   {
-    Preferences v19_factory;
+    // V11-V18 preserved internal NVS and WadaMesh touch builds can additionally
 ''',
         '''#if defined(MESH_OFFGRIDNL_V19) && !defined(MESH_OFFGRIDNL_V21)
   {
-    Preferences v19_factory;
+    // V11-V18 preserved internal NVS and WadaMesh touch builds can additionally
 ''',
         "V21 disable redundant V19 first-boot sanitizer"
     )
