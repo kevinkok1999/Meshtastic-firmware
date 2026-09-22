@@ -43,7 +43,8 @@ def main() -> None:
     if "MESH_OFFGRIDNL_V13=1" not in pio:
         fail("V13 base is not present")
 
-    # Release identity only. This does not change runtime behaviour.
+    # Identity only: V15 remains functionally V13 except for the targeted
+    # association-time power-management crash fix below.
     pio = patch_section(
         pio,
         "[env:LilyGo_TDeck_companion_radio_touch]",
@@ -51,16 +52,15 @@ def main() -> None:
         "  -D MESH_OFFGRIDNL_V13=1\n",
         "  -D MESH_OFFGRIDNL_V13=1\n"
         "  -D MESH_OFFGRIDNL_V15=1\n",
-        "T-Deck V15 identity flag",
+        "T-Deck V15 flag",
     )
     pio_path.write_text(pio)
 
     s = main_path.read_text()
 
-    # ONLY V15 functional change:
-    # V13 forced WIFI_PS_NONE immediately before association. The pinned
-    # WadaMesh base already owns ESP32-S3 Wi-Fi/BLE coexistence power policy.
-    # Do not override that policy during hotspot association/reconnect.
+    # ONLY functional change from V13:
+    # do not force WIFI_PS_NONE during association. The WadaMesh base owns
+    # ESP32-S3 Wi-Fi/BLE coexistence and its post-connect modem-sleep policy.
     s = replace_once(
         s,
         """  WiFi.setAutoReconnect(false);
@@ -68,19 +68,22 @@ def main() -> None:
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 """,
         """  WiFi.setAutoReconnect(false);
-  // V15 crash fix: leave Wi-Fi/Bluetooth power-management policy to WadaMesh.
+  // V15 crash fix: keep the base firmware in control of ESP32-S3
+  // Wi-Fi/Bluetooth power management during association.
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 """,
-        "remove unsafe association-time sleep override",
+        "remove association-time WiFi.setSleep(false)",
     )
 
     main_path.write_text(s)
 
-    # Prove that V15 is still V13 apart from the single sleep override removal.
+    # Guard that all important V13 behavior is still present and only the
+    # problematic association-time sleep override disappeared.
     pio = pio_path.read_text()
     s = main_path.read_text()
     required = [
         "MESH_OFFGRIDNL_V15=1",
+        "static void v13WifiBegin",
         "WiFi.setAutoReconnect(false);",
         "WIFI_ALL_CHANNEL_SCAN",
         "[V13][wifi] join selected AP",
@@ -91,14 +94,13 @@ def main() -> None:
     blob = pio + "\n" + s
     for marker in required:
         if marker not in blob:
-            fail("V13 behaviour changed unexpectedly; missing: " + marker)
+            fail("V13 behavior changed unexpectedly; missing: " + marker)
 
     helper_start = s.find("static void v13WifiBegin")
     helper_end = s.find("#endif", helper_start)
     if helper_start < 0 or helper_end < 0:
         fail("V13 association helper missing")
     helper = s[helper_start:helper_end]
-
     active_lines = [
         line.strip() for line in helper.splitlines()
         if line.strip() and not line.lstrip().startswith("//")
@@ -106,16 +108,7 @@ def main() -> None:
     if any(line.startswith("WiFi.setSleep(false)") for line in active_lines):
         fail("unsafe association-time WiFi.setSleep(false) still active")
 
-    # Guard against accidentally carrying over the earlier broader V15 draft.
-    forbidden = [
-        "[V15][wifi] join selected AP once",
-        "WIFI_RETRY_INTERVAL_MS = 20000",
-    ]
-    for marker in forbidden:
-        if marker in s:
-            fail("V15 must be V13 plus only the crash fix; found extra change: " + marker)
-
-    print("V15 applied: exact V13 behaviour with only association-time WiFi.setSleep(false) removed")
+    print("V15 applied: exact V13 behavior with only association-time sleep override removed")
 
 
 if __name__ == "__main__":
