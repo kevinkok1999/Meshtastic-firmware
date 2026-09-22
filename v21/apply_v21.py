@@ -43,7 +43,8 @@ def main():
         "  -D MESH_OFFGRIDNL_V20=1\n"
         "  -D MESH_OFFGRIDNL_V21=1\n"
         "  -D MESH_V21_WIFI_SINGLE_OWNER=1\n"
-        "  -D MESH_V21_WIFI_PRIORITY=1\n",
+        "  -D MESH_V21_WIFI_PRIORITY=1\n"
+        "  -Wno-error=return-type\n",
         "V21 flags"
     )
 
@@ -276,6 +277,7 @@ def main():
         "MESH_V21_WIFI_PRIORITY=1",
         "55.03.312-1/platform-espressif32.zip",
         "SD=file://${platformio.packages_dir}/framework-arduinoespressif32/libraries/SD",
+        "-Wno-error=return-type",
     ):
         if m not in pio: fail("platformio missing "+m)
 
