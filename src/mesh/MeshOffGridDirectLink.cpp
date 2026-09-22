@@ -101,6 +101,10 @@ class DirectLink final : public RadioTxHook
             }
         }
 
+        const esp_err_t countryResult = esp_wifi_set_country_code("NL", true);
+        if (countryResult != ESP_OK)
+            LOG_WARN("V14 DirectLink could not apply NL WiFi channel policy: %d", countryResult);
+
         if (!WiFi.isConnected()) {
             const esp_err_t channelResult = esp_wifi_set_channel(kOffGridChannel, WIFI_SECOND_CHAN_NONE);
             if (channelResult != ESP_OK)
@@ -168,7 +172,7 @@ class DirectLink final : public RadioTxHook
             return PRETX_SEND;
 
         uint8_t targetMac[6]{};
-        if (isBroadcast(packet->to)) {
+        if (isBroadcast(packet->to) || packet->to == NODENUM_BROADCAST_NO_LORA) {
             memcpy(targetMac, kBroadcastMac, sizeof(targetMac));
         } else if (!peerMac(packet->to, targetMac)) {
             return PRETX_SEND;
