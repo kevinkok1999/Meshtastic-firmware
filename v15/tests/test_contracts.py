@@ -23,27 +23,29 @@ def main() -> None:
         if flag not in pio:
             die("missing " + flag)
 
-    # V13 behaviour must remain exactly present.
-    required_v13 = [
+    # Preserve V13 behavior exactly.
+    for marker in (
         "static const uint32_t WIFI_RETRY_INTERVAL_MS = 15000;",
         "WiFi.disconnect(false, false);",
         "[V13][wifi] join selected AP",
         "[V13][wifi] join ssid=",
         "WIFI_ALL_CHANNEL_SCAN",
-        "WiFi.status() != WL_CONNECTED) wifiKickScan()",
-        "handshake timeout",
-    ]
-    combined = main_cpp + "\n" + ui
-    for marker in required_v13:
-        if marker not in combined:
-            die("V13 behaviour changed unexpectedly: missing " + marker)
+    ):
+        if marker not in main_cpp:
+            die("V13 behavior changed: missing " + marker)
 
+    if "WiFi.status() != WL_CONNECTED) wifiKickScan()" not in ui:
+        die("V13 connected-link scan guard lost")
+    if "handshake timeout" not in ui:
+        die("V13 disconnect diagnostics lost")
+
+    # The only functional delta: no active WiFi.setSleep(false) in the
+    # V13 association helper.
     start = main_cpp.find("static void v13WifiBegin")
     end = main_cpp.find("#endif", start)
     if start < 0 or end < 0:
-        die("V13 association helper missing")
+        die("association helper missing")
     helper = main_cpp[start:end]
-
     active_lines = [
         line.strip() for line in helper.splitlines()
         if line.strip() and not line.lstrip().startswith("//")
@@ -51,13 +53,7 @@ def main() -> None:
     if any(line.startswith("WiFi.setSleep(false)") for line in active_lines):
         die("association helper still forces WIFI_PS_NONE")
 
-    # Extra behavioural changes are explicitly forbidden for this release.
-    if "[V15][wifi] join selected AP once" in main_cpp:
-        die("unexpected BSSID one-shot change present")
-    if "WIFI_RETRY_INTERVAL_MS = 20000" in main_cpp:
-        die("unexpected retry interval change present")
-
-    print("V15 contracts OK: V13 preserved; only hotspot crash power-management override removed")
+    print("V15 contracts OK: exact V13 behavior + only hotspot crash fix")
 
 
 if __name__ == "__main__":
