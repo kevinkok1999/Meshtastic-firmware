@@ -23,22 +23,27 @@ def main() -> None:
         if flag not in pio:
             die("missing " + flag)
 
-    if "static const uint32_t WIFI_RETRY_INTERVAL_MS = 20000;" not in main_cpp:
-        die("20 second V15 retry interval missing")
-    if "WiFi.disconnect(false, false);" not in main_cpp:
-        die("non-erasing reconnect missing")
-    if "[V15][wifi] join selected AP once" not in main_cpp:
-        die("one-shot selected AP path missing")
-    if "wifiConfigClearApHint();" not in main_cpp:
-        die("AP hint is not cleared after first use")
-    if "WIFI_ALL_CHANNEL_SCAN" not in main_cpp:
-        die("all-channel fallback missing")
+    # V13 behaviour must remain exactly present.
+    required_v13 = [
+        "static const uint32_t WIFI_RETRY_INTERVAL_MS = 15000;",
+        "WiFi.disconnect(false, false);",
+        "[V13][wifi] join selected AP",
+        "[V13][wifi] join ssid=",
+        "WIFI_ALL_CHANNEL_SCAN",
+        "WiFi.status() != WL_CONNECTED) wifiKickScan()",
+        "handshake timeout",
+    ]
+    combined = main_cpp + "\n" + ui
+    for marker in required_v13:
+        if marker not in combined:
+            die("V13 behaviour changed unexpectedly: missing " + marker)
 
     start = main_cpp.find("static void v13WifiBegin")
     end = main_cpp.find("#endif", start)
     if start < 0 or end < 0:
-        die("association helper missing")
+        die("V13 association helper missing")
     helper = main_cpp[start:end]
+
     active_lines = [
         line.strip() for line in helper.splitlines()
         if line.strip() and not line.lstrip().startswith("//")
@@ -46,12 +51,13 @@ def main() -> None:
     if any(line.startswith("WiFi.setSleep(false)") for line in active_lines):
         die("association helper still forces WIFI_PS_NONE")
 
-    if "WiFi.status() != WL_CONNECTED) wifiKickScan()" not in ui:
-        die("connected-link scan guard lost")
-    if "handshake timeout" not in ui:
-        die("disconnect diagnostics lost")
+    # Extra behavioural changes are explicitly forbidden for this release.
+    if "[V15][wifi] join selected AP once" in main_cpp:
+        die("unexpected BSSID one-shot change present")
+    if "WIFI_RETRY_INTERVAL_MS = 20000" in main_cpp:
+        die("unexpected retry interval change present")
 
-    print("V15 contracts OK")
+    print("V15 contracts OK: V13 preserved; only hotspot crash power-management override removed")
 
 
 if __name__ == "__main__":
