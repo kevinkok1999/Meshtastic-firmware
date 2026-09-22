@@ -51,9 +51,19 @@ jobs:
       - name: Compile T-Deck firmware
         run: pio run -e t-deck
 
-      - name: Record firmware size
+      - name: Record firmware outputs
         if: success()
         run: |
-          test -f .pio/build/t-deck/firmware.bin
-          ls -lh .pio/build/t-deck/firmware.bin
-          sha256sum .pio/build/t-deck/firmware.bin
+          find .pio/build/t-deck -maxdepth 1 -type f \( -name "*.bin" -o -name "*.elf" -o -name "*.mt.json" \) -print -exec ls -lh {} \;
+          find .pio/build/t-deck -maxdepth 1 -type f -name "*.bin" -print0 | xargs -0 -r sha256sum
+
+      - name: Upload validated V14 T-Deck artifacts
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MeshOffGridNL-V14-TDeck-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            .pio/build/t-deck/*.bin
+            .pio/build/t-deck/*.elf
+            .pio/build/t-deck/*.mt.json
