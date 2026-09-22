@@ -93,7 +93,8 @@ NRF52Bluetooth *nrf52Bluetooth = nullptr;
 #include "mesh/api/WiFiServerAPI.h"
 #include "mesh/wifi/WiFiAPClient.h"
 #ifdef MESHOFFGRID_V14
-#include "mesh/MeshOffGridDirectLink.h"\n#include "mesh/MeshOffGridConnectivity.h"
+#include "mesh/MeshOffGridDirectLink.h"
+#include "mesh/MeshOffGridConnectivity.h"
 #endif
 #endif
 
@@ -1196,7 +1197,8 @@ void setup()
     initWifi();
 #endif
 #ifdef MESHOFFGRID_V14
-    meshoffgrid::initV14DirectLink();\n    meshoffgrid::initV14ConnectivitySupervisor();
+    meshoffgrid::initV14DirectLink();
+    meshoffgrid::initV14ConnectivitySupervisor();
 #endif
 
 #if HAS_ETHERNET
