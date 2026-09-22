@@ -37,8 +37,8 @@ def main():
     for m in required:
         if m not in main: die("main.cpp missing "+m)
 
-    start=main.find("#if defined(MESH_OFFGRIDNL_V17)", main.find("static void v13WifiBegin"))
-    end=main.find("#endif",start)
+    start=main.find("// Galaxy S21 compatibility path:", main.find("static void v13WifiBegin"))
+    end=main.find("  return;\n",start)
     if start<0 or end<0: die("V17 helper block missing")
     block=main[start:end]
     if "WiFi.begin(" in block: die("V17 still delegates association to WiFi.begin")
