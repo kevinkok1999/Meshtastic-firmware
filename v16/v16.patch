@@ -179,7 +179,15 @@
      /* SNTP: kick off when Wi-Fi associates; once system time syncs, push it
 --- a/src/ui-touch/UITask.cpp
 +++ b/src/ui-touch/UITask.cpp
-@@ -6324,6 +6324,11 @@
+@@ -44,6 +44,7 @@
+   #include <LittleFS.h>
+   #include <esp_heap_caps.h>
+   #include <esp_system.h>
++  #include <esp_wifi.h>
+   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
+   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
+   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
+@@ -6324,6 +6325,11 @@
  static volatile int  s_wifiscan_count   = 0;
  static volatile bool s_wifiscan_request = false;   // UI -> worker: scan now
  static volatile bool s_wifiscan_done    = false;   // worker -> UI: results ready
@@ -282,6 +290,10 @@
 +    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < cap_ms) {
 +#if defined(MESH_OFFGRIDNL_V16)
 +      if (g_v16_wifi_join_in_progress) {
++        // scanDelete() only frees completed results on Arduino-ESP32 2.0.17;
++        // it does NOT stop esp_wifi_scan_start(). Stop the active scan from
++        // this same worker/core, then release Arduino's result buffer.
++        esp_wifi_scan_stop();
 +        WiFi.scanDelete();                        // worker owns this scan: safe abort point
 +        return 0;
 +      }
@@ -304,6 +316,8 @@
 +               (unsigned)(g_v16_wifi_attempt > 3 ? 3 : g_v16_wifi_attempt));
 +      return s_v16_join;
 +    }
++  } else if (g_v16_wifi_phase == 5) {
++    return "retrying in background";
 +  }
 +#endif
    switch (s) {
