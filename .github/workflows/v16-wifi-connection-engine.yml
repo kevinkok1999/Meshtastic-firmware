@@ -1,0 +1,197 @@
+name: V16 Wi-Fi Connection Engine
+
+on:
+  push:
+    branches:
+      - v16-wifi-connection-engine
+    paths:
+      - "v11/**"
+      - "v12/**"
+      - "v13/**"
+      - "v15/**"
+      - "v16/**"
+      - ".github/workflows/v16-wifi-connection-engine.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: true
+
+jobs:
+  build-v16:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: v16-pio-${{ runner.os }}-${{ hashFiles('v11/**', 'v12/**', 'v13/**', 'v15/**', 'v16/**') }}
+
+      - name: Fetch pinned WadaMesh beta_83
+        run: |
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply V11 through V16 Wi-Fi layers
+        run: |
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build once — T-Deck / T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v16.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V16 Wi-Fi Connection Engine"'
+        run: |
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Package firmware, source and manifest
+        run: |
+          mkdir -p dist
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          BOOT_APP0="$(find ~/.platformio/packages -path '*/tools/partitions/boot_app0.bin' -print -quit)"
+          test -f "$BUILD_DIR/bootloader.bin"
+          test -f "$BUILD_DIR/partitions.bin"
+          test -n "$BOOT_APP0"
+          test -f "$BOOT_APP0"
+
+          cp "$BUILD_DIR/bootloader.bin" dist/MeshOffGridNL-V16-bootloader.bin
+          cp "$BUILD_DIR/partitions.bin" dist/MeshOffGridNL-V16-partitions.bin
+          cp "$BOOT_APP0" dist/MeshOffGridNL-V16-boot_app0.bin
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V16-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V16-TDeck-Plus-merged.bin
+          cp upstream-wadamesh/LICENSE dist/WADAMESH-GPL-3.0-LICENSE.txt
+
+          tar --exclude='upstream-wadamesh/.git' --exclude='upstream-wadamesh/.pio' \
+            -czf dist/MeshOffGridNL-V16-corresponding-source.tar.gz upstream-wadamesh
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+
+          d = pathlib.Path("dist")
+          names = {
+              "bootloader": "MeshOffGridNL-V16-bootloader.bin",
+              "partitions": "MeshOffGridNL-V16-partitions.bin",
+              "boot_app0": "MeshOffGridNL-V16-boot_app0.bin",
+              "app": "MeshOffGridNL-V16-TDeck-Plus.bin",
+              "merged": "MeshOffGridNL-V16-TDeck-Plus-merged.bin",
+          }
+          paths = {k: d / v for k, v in names.items()}
+
+          def sha(path):
+              h = hashlib.sha256()
+              with path.open("rb") as f:
+                  for block in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(block)
+              return h.hexdigest()
+
+          manifest = {
+              "schema": 1,
+              "version": "16.0.0-rc1",
+              "label": "MeshOffGridNL V16 Wi-Fi Connection Engine",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "base": {
+                  "meshOffGridNL": "V15",
+                  "wadameshTag": "beta_83",
+                  "wadameshCommit": "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+              },
+              "wifi": {
+                  "hardwareBand": "2.4 GHz",
+                  "singleReconnectOwner": True,
+                  "connectOutranksScan": True,
+                  "activeScanWorkerAbortOnJoin": True,
+                  "selectedApHint": "one-shot-first-attempt",
+                  "allChannelFallback": True,
+                  "associationSleepOverrideRemoved": True,
+                  "baseOwnsWifiBlePowerPolicy": True,
+                  "eraseApOnRetry": False,
+                  "foregroundAttempts": 3,
+                  "retryIntervalMs": 12000,
+                  "backgroundBackoffMs": 60000,
+                  "autoScanDuringJoin": False,
+                  "disconnectReasonDiagnostics": "preserved-across-retries",
+                  "phaseDiagnostics": True,
+                  "androidHotspotFocused": True
+              },
+              "validation": {
+                  "compileAndContractTests": True,
+                  "physicalAndroidHotspotRetestRequired": True
+              },
+              "flashMode": "nvs-preserving-4-component",
+              "flashFiles": [
+                  {"part": "bootloader", "file": names["bootloader"], "address": 0,
+                   "size": paths["bootloader"].stat().st_size, "sha256": sha(paths["bootloader"])},
+                  {"part": "partitions", "file": names["partitions"], "address": 32768,
+                   "size": paths["partitions"].stat().st_size, "sha256": sha(paths["partitions"])},
+                  {"part": "boot_app0", "file": names["boot_app0"], "address": 57344,
+                   "size": paths["boot_app0"].stat().st_size, "sha256": sha(paths["boot_app0"])},
+                  {"part": "app", "file": names["app"], "address": 65536,
+                   "size": paths["app"].stat().st_size, "sha256": sha(paths["app"])}
+              ],
+              "merged": {
+                  "file": names["merged"],
+                  "size": paths["merged"].stat().st_size,
+                  "sha256": sha(paths["merged"]),
+                  "defaultInstaller": False,
+                  "note": "Recovery/full-flash only."
+              }
+          }
+          (d / "v16-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+          sha256sum dist/*
+
+      - name: Publish rolling V16 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v16.0.0-rc1
+        run: |
+          NOTES="V16 rebuilds the T-Deck Wi-Fi join state machine on top of V15: Connect outranks Scan, queued/active scans are cancelled safely, there is one reconnect owner, the BSSID/channel hint is one-shot, retries fall back to all-channel SSID association, disconnect reasons survive retries, and foreground joins are bounded to three 12-second attempts before slow background recovery. V15's Wi-Fi/Bluetooth crash fix, encrypted global chat and LoRa fallback remain. Physical testing on the affected Android hotspot is still required before Stable."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V16 Wi-Fi Connection Engine RC1" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" dist/* --prerelease --target "$GITHUB_SHA" \
+              --title "MeshOffGridNL V16 Wi-Fi Connection Engine RC1" --notes "$NOTES"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V16-TDeck-Plus
+          path: dist/*
+          retention-days: 30
