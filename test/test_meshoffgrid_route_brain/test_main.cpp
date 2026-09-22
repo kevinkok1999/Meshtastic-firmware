@@ -1,6 +1,7 @@
 // Pins the V14 route-selection policy before any hardware transport is integrated. These tests guard
 // against regressions where unavailable links win, route flapping bypasses hysteresis, or a delivery
 // intent accidentally optimizes for the wrong link property.
+#include "TestUtil.h"
 #include "mesh/MeshOffGridRouteBrain.h"
 #include <unity.h>
 
@@ -9,9 +10,8 @@ using namespace meshoffgrid;
 void setUp(void) {}
 void tearDown(void) {}
 
-static RouteCandidate candidate(TransportKind kind, uint8_t reliability, uint8_t latency, uint8_t throughput,
-                                uint8_t energy, uint8_t airtime, uint8_t confidence, bool bulk = false,
-                                bool available = true)
+static RouteCandidate candidate(TransportKind kind, uint8_t reliability, uint8_t latency, uint8_t throughput, uint8_t energy,
+                                uint8_t airtime, uint8_t confidence, bool bulk = false, bool available = true)
 {
     RouteCandidate result;
     result.kind = kind;
@@ -89,8 +89,7 @@ void test_hysteresis_keeps_current_route_for_small_improvement()
         candidate(TransportKind::DirectLink, 92, 82, 72, 80, 80, 92),
     };
 
-    const auto result =
-        RouteBrain::select(links, 2, DeliveryIntent::Reliable, 64, true, TransportKind::LongLink, 80);
+    const auto result = RouteBrain::select(links, 2, DeliveryIntent::Reliable, 64, true, TransportKind::LongLink, 80);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(TransportKind::LongLink), static_cast<uint8_t>(result.primary));
     TEST_ASSERT_TRUE(result.hasBackup);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(TransportKind::DirectLink), static_cast<uint8_t>(result.backup));
@@ -103,8 +102,7 @@ void test_hysteresis_switches_for_material_improvement()
         candidate(TransportKind::DirectLink, 98, 95, 95, 85, 85, 98),
     };
 
-    const auto result =
-        RouteBrain::select(links, 2, DeliveryIntent::Reliable, 64, true, TransportKind::LongLink, 80);
+    const auto result = RouteBrain::select(links, 2, DeliveryIntent::Reliable, 64, true, TransportKind::LongLink, 80);
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(TransportKind::DirectLink), static_cast<uint8_t>(result.primary));
 }
 
@@ -134,8 +132,9 @@ void test_equal_scores_have_stable_transport_order()
     TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(TransportKind::LongLink), static_cast<uint8_t>(result.primary));
 }
 
-int main()
+void setup()
 {
+    initializeTestEnvironment();
     UNITY_BEGIN();
     RUN_TEST(test_unavailable_link_never_wins);
     RUN_TEST(test_reliable_intent_prefers_reliability_and_confidence);
@@ -146,5 +145,7 @@ int main()
     RUN_TEST(test_hysteresis_switches_for_material_improvement);
     RUN_TEST(test_backup_is_best_remaining_available_route);
     RUN_TEST(test_equal_scores_have_stable_transport_order);
-    return UNITY_END();
+    exit(UNITY_END());
 }
+
+void loop() {}
