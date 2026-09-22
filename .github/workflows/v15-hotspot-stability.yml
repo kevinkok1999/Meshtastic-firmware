@@ -128,12 +128,13 @@ jobs:
               "wifi": {
                   "hardwareBand": "2.4 GHz",
                   "singleReconnectOwner": True,
-                  "selectedApHint": "one-shot",
+                  "selectedApHint": "unchanged-from-v13",
                   "allChannelFallback": True,
                   "associationSleepOverrideRemoved": True,
+                  "onlyFunctionalChangeFromV13": True,
                   "baseOwnsWifiBlePowerPolicy": True,
                   "eraseApOnRetry": False,
-                  "retryIntervalMs": 20000,
+                  "retryIntervalMs": 15000,
                   "autoScanWhileConnected": False,
                   "disconnectReasonDiagnostics": True,
                   "androidHotspotFocused": True
@@ -172,7 +173,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: mesh-v15.0.0-rc1
         run: |
-          NOTES="V15 is the focused V13 hotspot-stability fix. It removes the association-time WiFi.setSleep(false) override that can conflict with ESP32-S3 Wi-Fi/BLE power management, makes BSSID/channel hints one-shot, and extends controlled retries to 20 seconds. V11 encrypted global chat, V12/V13 Wi-Fi diagnostics and LoRa fallback remain. V14 DirectLink is not included. Physical testing on the affected Android hotspot is still required before Stable."
+          NOTES="V15 is an exact V13 copy with one functional fix: the association-time WiFi.setSleep(false) override is removed so WadaMesh retains ownership of ESP32-S3 Wi-Fi/Bluetooth coexistence power management. All other V13 Wi-Fi behavior, including BSSID/channel handoff, 15-second retry, diagnostics, encrypted global chat and LoRa fallback, is unchanged. V14 DirectLink is not included. Physical testing on the affected Android hotspot is still required before Stable."
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
             gh release edit "$TAG" --title "MeshOffGridNL V15 Hotspot Stability RC1" --notes "$NOTES" --prerelease
