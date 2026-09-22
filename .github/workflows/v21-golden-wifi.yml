@@ -37,19 +37,38 @@ jobs:
         run: |
           pio run -d v21/golden -e golden-old
           mkdir -p dist/old
-          cp v21/golden/.pio/build/golden-old/bootloader.bin dist/old/
-          cp v21/golden/.pio/build/golden-old/partitions.bin dist/old/
-          cp v21/golden/.pio/build/golden-old/firmware.bin dist/old/MeshOffGridNL-V21-Golden-A-legacy.bin
-          pio pkg list -d v21/golden -e golden-old > dist/old/packages.txt
+          BUILD=v21/golden/.pio/build/golden-old
+          BOOT_APP0="$(find "$HOME/.platformio/packages" -path '*/tools/partitions/boot_app0.bin' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
+          test -f "$BUILD/bootloader.bin"
+          test -f "$BUILD/partitions.bin"
+          test -f "$BUILD/firmware.bin"
+          test -n "$BOOT_APP0"
+          test -f "$BOOT_APP0"
+          cp "$BUILD/bootloader.bin" dist/old/MeshOffGridNL-V21-Golden-A-bootloader.bin
+          cp "$BUILD/partitions.bin" dist/old/MeshOffGridNL-V21-Golden-A-partitions.bin
+          cp "$BOOT_APP0" dist/old/MeshOffGridNL-V21-Golden-A-boot_app0.bin
+          cp "$BUILD/firmware.bin" dist/old/MeshOffGridNL-V21-Golden-A-legacy.bin
+          pio pkg list -d v21/golden -e golden-old > dist/old/MeshOffGridNL-V21-Golden-A-packages.txt
 
       - name: Build Golden B — modern stack
         run: |
           pio run -d v21/golden -e golden-modern
           mkdir -p dist/modern
-          cp v21/golden/.pio/build/golden-modern/bootloader.bin dist/modern/
-          cp v21/golden/.pio/build/golden-modern/partitions.bin dist/modern/
-          cp v21/golden/.pio/build/golden-modern/firmware.bin dist/modern/MeshOffGridNL-V21-Golden-B-modern.bin
-          pio pkg list -d v21/golden -e golden-modern > dist/modern/packages.txt
+          BUILD=v21/golden/.pio/build/golden-modern
+          BOOT_APP0="$(find "$HOME/.platformio/packages" -path '*/tools/partitions/boot_app0.bin' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
+          test -f "$BUILD/bootloader.bin"
+          test -f "$BUILD/partitions.bin"
+          test -f "$BUILD/firmware.bin"
+          test -n "$BOOT_APP0"
+          test -f "$BOOT_APP0"
+          cp "$BUILD/bootloader.bin" dist/modern/MeshOffGridNL-V21-Golden-B-bootloader.bin
+          cp "$BUILD/partitions.bin" dist/modern/MeshOffGridNL-V21-Golden-B-partitions.bin
+          cp "$BOOT_APP0" dist/modern/MeshOffGridNL-V21-Golden-B-boot_app0.bin
+          cp "$BUILD/firmware.bin" dist/modern/MeshOffGridNL-V21-Golden-B-modern.bin
+          if test -f "$BUILD/firmware.factory.bin"; then
+            cp "$BUILD/firmware.factory.bin" dist/modern/MeshOffGridNL-V21-Golden-B-factory.bin
+          fi
+          pio pkg list -d v21/golden -e golden-modern > dist/modern/MeshOffGridNL-V21-Golden-B-packages.txt
 
       - name: Build manifests and hashes
         run: |
@@ -75,9 +94,10 @@ jobs:
               for p in d.glob("*.bin"):
                   h=hashlib.sha256(p.read_bytes()).hexdigest()
                   manifest.setdefault("sha256",{})[p.name]=h
-              (d/"manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+              manifest_name = "MeshOffGridNL-V21-Golden-A-manifest.json" if folder == "old" else "MeshOffGridNL-V21-Golden-B-manifest.json"
+              (d/manifest_name).write_text(json.dumps(manifest,indent=2)+"\n")
           PY
-          find dist -type f -maxdepth 2 -print -exec sha256sum {} \;
+          find dist -maxdepth 2 -type f -print -exec sha256sum {} \;
 
       - name: Publish diagnostic prerelease
         env:
