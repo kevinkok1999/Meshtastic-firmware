@@ -64,7 +64,6 @@ def main():
   // official Arduino/Espressif station path.
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
-  wifiConfigClearApHint();
   const char* v21_pwd = (pwd && pwd[0]) ? pwd : nullptr;
 
   Serial.printf("[V21][wifi] attempt=%u begin ssid='%s' previous_reason=%u\\n",
@@ -99,68 +98,77 @@ def main():
         "V21 retry timing"
     )
 
-    # Add low-cost event diagnostics.  The callbacks only record state; no
-    # connect/disconnect/scan operation is executed from the event task.
+    # V21 must not inherit V13's pre-disconnect retry or V19's redundant
+    # first-boot sanitizer. A full-chip installer reset already provides a clean
+    # starting point, and retries should let the station stack own association.
     main=one(
         main,
-        '''    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
-        g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
-#if defined(MESH_OFFGRIDNL_V16)
-        g_v16_wifi_phase = 4;
+        '''#if defined(MESH_OFFGRIDNL_V13)
+          WiFi.disconnect(false, false);   // keep driver config; never erase AP on a retry
+#else
+          WiFi.disconnect(false, true);
 #endif
-      }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 ''',
-        '''    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
-        g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
-#if defined(MESH_OFFGRIDNL_V16)
-        g_v16_wifi_phase = 4;
+        '''#if defined(MESH_OFFGRIDNL_V21)
+          // V21: no pre-disconnect. The single owner calls v13WifiBegin(), whose
+          // V21 branch performs the one association request.
+#elif defined(MESH_OFFGRIDNL_V13)
+          WiFi.disconnect(false, false);   // legacy V13-V20 behavior
+#else
+          WiFi.disconnect(false, true);
 #endif
-#if defined(MESH_OFFGRIDNL_V21)
-        Serial.printf("[V21][wifi] event=DISCONNECTED reason=%u\\n",
-                      (unsigned)info.wifi_sta_disconnected.reason);
-#endif
-      }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 ''',
-        "V21 disconnect event log"
+        "V21 remove pre-disconnect retry"
     )
     main=one(
         main,
-        '''        } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
-#if defined(MESH_OFFGRIDNL_V16)
-          g_v16_wifi_phase = 2;
-#endif
-        } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        '''#if defined(MESH_OFFGRIDNL_V19)
+  {
+    Preferences v19_factory;
 ''',
-        '''        } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
-#if defined(MESH_OFFGRIDNL_V16)
-          g_v16_wifi_phase = 2;
-#endif
-#if defined(MESH_OFFGRIDNL_V21)
-          Serial.println("[V21][wifi] event=STA_CONNECTED waiting_for=GOT_IP");
-#endif
-        } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+        '''#if defined(MESH_OFFGRIDNL_V19) && !defined(MESH_OFFGRIDNL_V21)
+  {
+    Preferences v19_factory;
 ''',
-        "V21 connected event log"
+        "V21 disable redundant V19 first-boot sanitizer"
     )
     main=one(
         main,
-        '''          g_v16_wifi_phase = 3;
-          g_v16_wifi_join_in_progress = false;
-          g_v16_wifi_attempt = 0;
-#endif
-        }
+        '''#if defined(MESH_OFFGRIDNL_V17)
+  // Galaxy S21 compatibility path: configure ESP-IDF station security
 ''',
-        '''          g_v16_wifi_phase = 3;
-          g_v16_wifi_join_in_progress = false;
-          g_v16_wifi_attempt = 0;
-#endif
-#if defined(MESH_OFFGRIDNL_V21)
-          Serial.printf("[V21][wifi] event=GOT_IP ip=%s rssi=%d channel=%d\\n",
+        '''#if defined(MESH_OFFGRIDNL_V17) && !defined(MESH_OFFGRIDNL_V21)
+  // Legacy V17 only: configure ESP-IDF station security
+''',
+        "V21 compile out obsolete V17 raw-driver fallback"
+    )
+
+    # Event callbacks stay tiny. V21 logs phase changes later from loop(), never
+    # from Arduino's Wi-Fi event task.
+    main=one(
+        main,
+        '''    /* SNTP: kick off when Wi-Fi associates; once system time syncs, push it
+''',
+        '''#if defined(MESH_OFFGRIDNL_V21)
+    {
+      static uint8_t s_v21_last_phase = 255;
+      if (s_v21_last_phase != g_v16_wifi_phase) {
+        s_v21_last_phase = g_v16_wifi_phase;
+        if (g_v16_wifi_phase == 2) {
+          Serial.println("[V21][wifi] phase=STA_CONNECTED waiting_for=GOT_IP");
+        } else if (g_v16_wifi_phase == 3) {
+          Serial.printf("[V21][wifi] phase=GOT_IP ip=%s rssi=%d channel=%d\\n",
                         WiFi.localIP().toString().c_str(), WiFi.RSSI(), WiFi.channel());
-#endif
+        } else if (g_v16_wifi_phase == 4) {
+          Serial.printf("[V21][wifi] phase=DISCONNECTED reason=%u\\n",
+                        (unsigned)g_wifi_last_disc_reason);
         }
+      }
+    }
+#endif
+    /* SNTP: kick off when Wi-Fi associates; once system time syncs, push it
 ''',
-        "V21 got-ip event log"
+        "V21 loop-side phase diagnostics"
     )
     main_p.write_text(main)
 
@@ -265,9 +273,9 @@ def main():
         if bad in block: fail("V21 minimal path contains forbidden behavior: "+bad)
 
     for marker in (
-        "[V21][wifi] event=DISCONNECTED",
-        "[V21][wifi] event=STA_CONNECTED",
-        "[V21][wifi] event=GOT_IP",
+        "[V21][wifi] phase=DISCONNECTED",
+        "[V21][wifi] phase=STA_CONNECTED",
+        "[V21][wifi] phase=GOT_IP",
         "WIFI_RETRY_INTERVAL_MS = 20000",
     ):
         if marker not in main: fail("main missing "+marker)
