@@ -1,0 +1,311 @@
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -648,6 +648,7 @@
+   -D MESH_OFFGRIDNL_V12=1
+   -D MESH_OFFGRIDNL_V13=1
+   -D MESH_OFFGRIDNL_V15=1
++  -D MESH_OFFGRIDNL_V16=1
+   -D MAX_LORA_TX_POWER=22
+   -D V11_GLOBAL_PORT=1883
+   -D TCP_PORT=5000
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -269,6 +269,14 @@
+ // file, so a definition here links on the S3 boards and leaves both P4 targets
+ // with an undefined reference from the UI that reads it.
+ extern volatile uint8_t g_wifi_last_disc_reason;
++#if defined(MESH_OFFGRIDNL_V16)
++// V16 owns the user-initiated join lifecycle. UITask reads these to suppress
++// scans during association and to show an actual phase instead of an endless
++// generic "connecting..." label.
++volatile bool g_v16_wifi_join_in_progress = false;
++volatile uint8_t g_v16_wifi_phase = 0;   // 0 idle, 1 associating, 2 waiting-IP, 3 connected, 4 failed, 5 paused/backoff
++volatile uint8_t g_v16_wifi_attempt = 0;
++#endif
+ #endif
+ 
+ #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
+@@ -1498,14 +1506,32 @@
+     // device with no serial console.
+     WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
+         g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
++#if defined(MESH_OFFGRIDNL_V16)
++        g_v16_wifi_phase = 4;
++#endif
+       }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+     // Without the WIFI_DEBUG_PRINTLN tracing the old copy had: that macro comes
+     // from SerialWifiInterface.h, which is not in scope this early in setup().
+     // The prints were debug-only and compile to nothing in a release build; the
+     // flag is the handler's actual job and is unchanged.
+     WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t){
+-        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)   wifi_needs_reconnect = true;
+-        else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP)    wifi_needs_reconnect = false;
++        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
++          wifi_needs_reconnect = true;
++#if defined(MESH_OFFGRIDNL_V16)
++          g_v16_wifi_phase = 4;
++#endif
++        } else if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
++#if defined(MESH_OFFGRIDNL_V16)
++          g_v16_wifi_phase = 2;
++#endif
++        } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
++          wifi_needs_reconnect = false;
++#if defined(MESH_OFFGRIDNL_V16)
++          g_v16_wifi_phase = 3;
++          g_v16_wifi_join_in_progress = false;
++          g_v16_wifi_attempt = 0;
++#endif
++        }
+     });
+     const bool wifi_mode_ready = WiFi.mode(WIFI_STA);
+ #if defined(TLORA_PAGER)
+@@ -1717,18 +1743,33 @@
+   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+   WiFi.setMinSecurity((pwd && pwd[0]) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN);
+-  g_wifi_last_disc_reason = 0;
++  // V16 intentionally preserves the previous disconnect reason across retries.
++  // Only a NEW user join clears it in UITask, so failed retries stay diagnosable.
+ 
+   int32_t channel = 0;
+   uint8_t bssid[6] = {};
+   uint8_t authmode = 0;
+   if (wifiConfigGetApHint(ssid, &channel, bssid, &authmode) &&
+       channel >= 1 && channel <= 14) {
++#if defined(MESH_OFFGRIDNL_V16)
++    // The scan hint is a first-attempt accelerator, never a permanent lock.
++    // Android hotspots can rotate BSSID/channel; clear it BEFORE begin so the
++    // next retry automatically falls back to an all-channel SSID association.
++    wifiConfigClearApHint();
++    Serial.printf("[V16][wifi] attempt %u: selected AP once ssid='%s' ch=%ld auth=%u\n",
++                  (unsigned)g_v16_wifi_attempt, ssid, (long)channel, (unsigned)authmode);
++#else
+     Serial.printf("[V13][wifi] join selected AP ssid='%s' ch=%ld auth=%u\n",
+                   ssid, (long)channel, (unsigned)authmode);
++#endif
+     WiFi.begin(ssid, (pwd && pwd[0]) ? pwd : nullptr, channel, bssid, true);
+   } else {
++#if defined(MESH_OFFGRIDNL_V16)
++    Serial.printf("[V16][wifi] attempt %u: all-channel ssid='%s'\n",
++                  (unsigned)g_v16_wifi_attempt, ssid);
++#else
+     Serial.printf("[V13][wifi] join ssid='%s' all-channel fallback\n", ssid);
++#endif
+     WiFi.begin(ssid, (pwd && pwd[0]) ? pwd : nullptr);
+   }
+ }
+@@ -1767,7 +1808,10 @@
+ #endif
+   static bool wifi_started = false;
+   static uint32_t last_wifi_retry_ms = 0;
+-#if defined(MESH_OFFGRIDNL_V13)
++#if defined(MESH_OFFGRIDNL_V16)
++  static const uint32_t WIFI_RETRY_INTERVAL_MS = 12000;
++  static const uint32_t WIFI_RETRY_BACKOFF_MS = 60000;
++#elif defined(MESH_OFFGRIDNL_V13)
+   static const uint32_t WIFI_RETRY_INTERVAL_MS = 15000;
+ #else
+   static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
+@@ -1902,6 +1946,13 @@
+     }
+     wifi_started = false;
+     last_wifi_retry_ms = 0;
++#if defined(MESH_OFFGRIDNL_V16)
++    // Any explicit Apply begins a fresh bounded foreground join sequence. Scan
++    // reconnect applies are harmless: if no foreground join is active this just
++    // resets diagnostics before the normal background association.
++    g_v16_wifi_attempt = 0;
++    g_v16_wifi_phase = 0;
++#endif
+   }
+   bool wifi_state_machine_active = wifi_radio_en;
+ #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+@@ -1945,6 +1996,10 @@
+           wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Associating);
+ #endif
+ #if defined(MESH_OFFGRIDNL_V13)
++#if defined(MESH_OFFGRIDNL_V16)
++          if (g_v16_wifi_attempt < 250) ++g_v16_wifi_attempt;
++          g_v16_wifi_phase = 1;
++#endif
+           v13WifiBegin(ssid, pwd);
+ #else
+           WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+@@ -1977,7 +2032,24 @@
+     // abort the in-flight sweep (the scan-while-connected "0 networks" bug).
+     if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED && !wifiScanIsActive()) {
+       uint32_t now = millis();
+-      if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
++#if defined(MESH_OFFGRIDNL_V16)
++      const uint32_t retry_interval =
++          (!g_v16_wifi_join_in_progress && g_v16_wifi_attempt >= 3)
++              ? WIFI_RETRY_BACKOFF_MS : WIFI_RETRY_INTERVAL_MS;
++#else
++      const uint32_t retry_interval = WIFI_RETRY_INTERVAL_MS;
++#endif
++      if ((uint32_t)(now - last_wifi_retry_ms) >= retry_interval) {
++#if defined(MESH_OFFGRIDNL_V16)
++        // Three foreground attempts are enough to stop lying to the user with an
++        // endless "connecting" state. Keep credentials and continue slow
++        // background recovery, but release the UI so Scan/Retry is usable again.
++        if (g_v16_wifi_join_in_progress && g_v16_wifi_attempt >= 3) {
++          g_v16_wifi_join_in_progress = false;
++          g_v16_wifi_phase = 5;
++          last_wifi_retry_ms = now;
++        } else {
++#endif
+         last_wifi_retry_ms = now;
+ #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+         s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
+@@ -2015,11 +2087,18 @@
+           WiFi.disconnect(false, true);
+ #endif
+ #if defined(MESH_OFFGRIDNL_V13)
++#if defined(MESH_OFFGRIDNL_V16)
++          if (g_v16_wifi_attempt < 250) ++g_v16_wifi_attempt;
++          g_v16_wifi_phase = 1;
++#endif
+           v13WifiBegin(ssid, pwd);
+ #else
+           WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
+ #endif
+         }
++#if defined(MESH_OFFGRIDNL_V16)
++        }
++#endif
+       }
+     }
+     /* SNTP: kick off when Wi-Fi associates; once system time syncs, push it
+--- a/src/ui-touch/UITask.cpp
++++ b/src/ui-touch/UITask.cpp
+@@ -6324,6 +6324,11 @@
+ static volatile int  s_wifiscan_count   = 0;
+ static volatile bool s_wifiscan_request = false;   // UI -> worker: scan now
+ static volatile bool s_wifiscan_done    = false;   // worker -> UI: results ready
++#if defined(MESH_OFFGRIDNL_V16)
++extern volatile bool g_v16_wifi_join_in_progress;
++extern volatile uint8_t g_v16_wifi_phase;
++extern volatile uint8_t g_v16_wifi_attempt;
++#endif
+ #if defined(TLORA_PAGER)
+ static bool          s_wifiscan_wait_for_radio = false; // main task must cold-start STA first
+ static uint32_t      s_wifiscan_pager_guard_ms = 0;     // recover if worker never services request
+@@ -17158,6 +17163,9 @@
+ // Wi-Fi page, the setup wizard's Scan button, and the wizard's auto-scan on
+ // arrival. Caller must have already confirmed wifiConfigWantsWifi() (radio up).
+ static void wifiQueueScanWhenReady() {
++#if defined(MESH_OFFGRIDNL_V16)
++  if (g_v16_wifi_join_in_progress) return;   // CONNECT always outranks SCAN
++#endif
+   if (wifiScanIsActive() ||
+       __atomic_load_n(&s_wifiscan_request, __ATOMIC_ACQUIRE) ||
+       s_wifiscan_drop_req || s_wifiscan_drop_ms != 0
+@@ -17270,6 +17278,9 @@
+ // best-effort while associated and never turns a page-open into a reboot.
+ static void wifiKickScan() {
+ #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
++#if defined(MESH_OFFGRIDNL_V16)
++  if (g_v16_wifi_join_in_progress) return;   // never start a scan under WPA/DHCP
++#endif
+   if (wifiScanIsActive() ||
+       __atomic_load_n(&s_wifiscan_request, __ATOMIC_ACQUIRE) ||
+       s_wifiscan_drop_req || s_wifiscan_drop_ms != 0) return;
+@@ -17399,7 +17410,11 @@
+     s_wifiscan_guard_ms = 0;              // normal completion — disarm the stuck-gate deadline
+     wifiScanSetActive(false);
+ #if !defined(TLORA_PAGER)
++#if defined(MESH_OFFGRIDNL_V16)
++    WiFi.setAutoReconnect(false);   // V16: exactly one reconnect owner, even after scans
++#else
+     WiFi.setAutoReconnect(true);
++#endif
+ #endif
+     if (reconnect_after_scan)
+       wifiConfigRequestApply();           // main.cpp re-begins with the stored cred (main task)
+@@ -17507,6 +17522,26 @@
+ // Save the network (passphrase preserved if blank) + connect to it.
+ static void wifiDoJoin(const char* ssid, const char* pwd, bool auto_join) {
+   if (!ssid || !ssid[0]) return;
++#if defined(MESH_OFFGRIDNL_V16)
++  // A manual join is higher priority than discovery. Cancel only scan work the
++  // worker has NOT claimed; an active worker notices the join flag and aborts
++  // its own async scan safely on that same core.
++  g_v16_wifi_join_in_progress = true;
++  g_v16_wifi_phase = 0;
++  g_v16_wifi_attempt = 0;
++  extern volatile uint8_t g_wifi_last_disc_reason;
++  g_wifi_last_disc_reason = 0;
++  bool cancelled_before_worker = false;
++  if (s_wifiscan_drop_req) { s_wifiscan_drop_req = false; cancelled_before_worker = true; }
++  if (s_wifiscan_drop_ms != 0) { s_wifiscan_drop_ms = 0; cancelled_before_worker = true; }
++  if (__atomic_exchange_n(&s_wifiscan_request, false, __ATOMIC_ACQ_REL))
++    cancelled_before_worker = true;
++  if (cancelled_before_worker) {
++    s_wifiscan_reconnect_after = false;
++    s_wifiscan_guard_ms = 0;
++    wifiScanSetActive(false);
++  }
++#endif
+ #if defined(MESH_OFFGRIDNL_V13)
+   // Bind this join attempt to the AP row the user selected. The hint is RAM-only
+   // and is ignored automatically if the active SSID differs later.
+@@ -17524,7 +17559,14 @@
+   wifiSheetClose();
+   hideKb();
+   if (g_lv.task) g_lv.task->showAlert(TR("Connecting\xE2\x80\xA6"), 1400);
++#if defined(MESH_OFFGRIDNL_V16)
++  // Do NOT rebuild the Wi-Fi page here: buildWifiSettings() auto-kicks a scan
++  // while disconnected, which used to race the credential Apply and leave the
++  // device stuck behind wifiScanIsActive(). Status labels are enough.
++  refreshStatusLabels();
++#else
+   wifiRebuildNetworkList();
++#endif
+ }
+ static void wifiJoinConfirmCb(lv_event_t* e) {
+   if (lv_event_get_code(e) != LV_EVENT_CLICKED && lv_event_get_code(e) != LV_EVENT_READY) return;
+@@ -31098,14 +31140,24 @@
+   // warm retry. So loop a few attempts until APs appear; cap_ms bounds EACH attempt.
+   // Returns on the first attempt that finds anything, so a hot scan is still ~3 s.
+   for (int attempt = 0; attempt < 4; ++attempt) {
++#if defined(MESH_OFFGRIDNL_V16)
++    if (g_v16_wifi_join_in_progress) return 0;
++#endif
+     WiFi.scanDelete();
+     const int16_t kick = WiFi.scanNetworks(true, true, false, per_chan_ms, 0);
+     s_swd_kick = kick;
+     if (kick == WIFI_SCAN_FAILED) { s_swd_st = WIFI_SCAN_FAILED; vTaskDelay(pdMS_TO_TICKS(400)); continue; }
+     const uint32_t t0 = millis();
+     int16_t st;
+-    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < cap_ms)
++    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < cap_ms) {
++#if defined(MESH_OFFGRIDNL_V16)
++      if (g_v16_wifi_join_in_progress) {
++        WiFi.scanDelete();                        // worker owns this scan: safe abort point
++        return 0;
++      }
++#endif
+       vTaskDelay(pdMS_TO_TICKS(50));             // yield -> feeds the task watchdog
++    }
+     s_swd_st = st; s_swd_dur = millis() - t0;
+     if (st > 0) return st;                        // found APs — done
+     vTaskDelay(pdMS_TO_TICKS(400));               // empty / -2 / timeout -> warm up + rescan
+@@ -44913,6 +44965,17 @@
+ 
+ #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+ static const char* wifiStaStatusBrief(int s) {
++#if defined(MESH_OFFGRIDNL_V16)
++  if (g_v16_wifi_join_in_progress) {
++    static char s_v16_join[36];
++    if (g_v16_wifi_phase == 2) return "linked, getting IP...";
++    if (g_v16_wifi_phase == 1) {
++      snprintf(s_v16_join, sizeof s_v16_join, "associating... (%u/3)",
++               (unsigned)(g_v16_wifi_attempt > 3 ? 3 : g_v16_wifi_attempt));
++      return s_v16_join;
++    }
++  }
++#endif
+   switch (s) {
+     case WL_CONNECTED: return "connected";
+     case WL_IDLE_STATUS: return "idle";
