@@ -39,13 +39,15 @@ def main():
     if sc.find("baseStationRecoverRadio()") > sc.find("board.reboot()"):
         die("soft recovery must appear before hard reboot")
 
-    # CAD AUTO is disabled in low-power modes unless explicitly requested.
-    if "(baseStationPowerState() == 0 && baseStationPressureLevel() >= 2)" not in h:
-        die("power-aware CAD AUTO missing")
+    # Adaptive CAD is disabled automatically in low-power modes unless the
+    # operator explicitly enabled CAD.
+    if "(p1_power_state == 0 && v2_adaptive_cad)" not in h:
+        die("power-aware adaptive CAD missing")
 
-    # V2 remains exactly on the phase-1 radio contract.
-    for m in ("869.618f","62.5f","_prefs.sf = 8","_prefs.cr = 5"):
-        if m not in cpp: die("EU868 contract regression "+m)
+    # V2 remains exactly on the phase-1 radio/adaptive contract.
+    for m in ("869.618f","62.5f","_prefs.sf = 8","_prefs.cr = 5",
+              "getV2MeshPressureState", "setV2AdaptiveMeshPolicy"):
+        if m not in cpp + "\n" + h: die("EU868/adaptive contract regression "+m)
 
     print("P1 Pro V2 phase-2 contracts OK")
 
