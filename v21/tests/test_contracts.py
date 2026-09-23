@@ -11,8 +11,12 @@ def main():
     main=(root/"src/main.cpp").read_text()
     ui=(root/"src/ui-touch/UITask.cpp").read_text()
     serial_ble_path=root/"src/helpers/esp32/SerialBLEInterface.cpp"
+    serial_ble_header_path=root/"src/helpers/esp32/SerialBLEInterface.h"
     if not serial_ble_path.exists(): die("vendored SerialBLEInterface.cpp missing")
+    if not serial_ble_header_path.exists(): die("vendored SerialBLEInterface.h missing")
     serial_ble=serial_ble_path.read_text()
+    if "class SerialBLEInterface" not in serial_ble_header_path.read_text():
+        die("vendored SerialBLEInterface class missing")
     for marker in ("SerialBLEInterface::begin","SerialBLEInterface::writeFrame","SerialBLEInterface::checkRecvFrame"):
         if marker not in serial_ble: die("vendored SerialBLE implementation missing "+marker)
 

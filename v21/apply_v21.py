@@ -21,7 +21,8 @@ def main():
     main_p=root/"src/main.cpp"
     ui_p=root/"src/ui-touch/UITask.cpp"
     serial_ble_src=pathlib.Path(__file__).resolve().parent/"vendor"/"SerialBLEInterface.cpp"
-    for p in (pio_p,main_p,ui_p,serial_ble_src):
+    serial_ble_hdr=pathlib.Path(__file__).resolve().parent/"vendor"/"SerialBLEInterface.h"
+    for p in (pio_p,main_p,ui_p,serial_ble_src,serial_ble_hdr):
         if not p.exists(): fail("missing "+str(p))
 
     # pioarduino 55.x no longer exposes the old ESP32 platform token to
@@ -30,7 +31,9 @@ def main():
     # pinned core-v1.17.4 implementation into the app source tree so BLE remains
     # linked without altering the rest of the MeshCore library.
     serial_ble_dst=root/"src/helpers/esp32/SerialBLEInterface.cpp"
+    serial_ble_hdr_dst=root/"src/helpers/esp32/SerialBLEInterface.h"
     serial_ble_dst.write_text(serial_ble_src.read_text())
+    serial_ble_hdr_dst.write_text(serial_ble_hdr.read_text())
 
     # ------------------------------------------------------------------
     # 1. Pin the T-Deck target to the modern Arduino 3.3.12 / IDF 5.5.5
@@ -359,6 +362,9 @@ def main():
     # ------------------------------------------------------------------
     pio=pio_p.read_text(); main=main_p.read_text(); ui=ui_p.read_text()
     serial_ble=serial_ble_dst.read_text()
+    serial_ble_header=serial_ble_hdr_dst.read_text()
+    if "class SerialBLEInterface" not in serial_ble_header:
+        fail("vendored SerialBLEInterface header missing class")
     for marker in (
         "SerialBLEInterface::begin",
         "SerialBLEInterface::enable",
