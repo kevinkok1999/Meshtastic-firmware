@@ -167,7 +167,15 @@ jobs:
         run: |
           NOTES="V21 Wi-Fi First replaces the V19 runtime join strategy with the minimal WiFi.begin-only association path and pins the T-Deck build to pioarduino 55.03.312-1 / Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5. It preserves V20 Local AI, LoRa/MeshCore, chats and UI. CI and contracts are software validation only; physical Galaxy S21/T-Deck validation has not been performed."
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
+            # Replace assets deterministically. gh release upload --clobber can
+            # race when several existing assets are replaced in one invocation.
+            for f in dist/*; do
+              name="$(basename "$f")"
+              gh release delete-asset "$TAG" "$name" -y >/dev/null 2>&1 || true
+            done
+            for f in dist/*; do
+              gh release upload "$TAG" "$f"
+            done
             gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC1" --notes "$NOTES" --prerelease
           else
             gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC1" --notes "$NOTES" --prerelease
