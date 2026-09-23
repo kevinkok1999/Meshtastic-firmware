@@ -69,7 +69,7 @@ public:
     )
     s = replace_once(
         s,
-        "  void queueInbound(mesh::Packet* packet, uint32_t scheduled_for) override;\n  mesh::Packet* getNextInbound(uint32_t now) override;\n};\n",
+        "  void queueInbound(mesh::Packet* packet, uint32_t scheduled_for) override;\n  mesh::Packet* getNextInbound(uint32_t now) override;\n};",
         """  void queueInbound(mesh::Packet* packet, uint32_t scheduled_for) override;
   mesh::Packet* getNextInbound(uint32_t now) override;
 #if defined(MESH_OFFGRIDNL_P1PRO_V1)
