@@ -39,3 +39,20 @@ A normal V1 -> V2 update must not require Factory Clean. Factory erase and UF2 s
 3. V2 RC1 release + one-click website installer + physical acceptance
 
 V1 remains untouched and available as fallback.
+
+
+## Phase 2 — Solar Guardian + Trust + staged recovery
+
+Phase 2 adds:
+
+- runtime power states NORMAL / ECO / CRITICAL / PROTECT
+- ECO threshold 3600 mV with 3700 mV recovery hysteresis
+- CRITICAL threshold 3450 mV with 3550 mV recovery hysteresis
+- hard protection at 3300 mV, matching the upstream SenseCAP boot lock
+- two consecutive low readings before runtime protective shutdown
+- low-voltage shutdown reuses upstream LPCOMP + VBUS wake
+- ECO/CRITICAL suppress only background adverts; LoRa forwarding remains enabled
+- CAD AUTO backs off in low-power states unless explicitly enabled
+- first boot replaces only the public upstream admin default `password` with a random per-device credential
+- an operator-set existing password survives upgrades
+- 60-second soft radio recovery before the existing hard reboot safety net

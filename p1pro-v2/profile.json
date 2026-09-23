@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "name": "MeshOffGridNL P1 Pro V2",
-  "status": "phase1-eu868-adaptive-candidate",
+  "status": "phase2-candidate",
   "inherits": "P1 Pro V1 resilience substrate",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
@@ -41,5 +41,30 @@
   "release": {
     "stable": false,
     "requiresPhysicalAcceptance": true
+  },
+  "solarGuardian": {
+    "states": [
+      "NORMAL",
+      "ECO",
+      "CRITICAL",
+      "PROTECT"
+    ],
+    "ecoMv": 3600,
+    "ecoRecoverMv": 3700,
+    "criticalMv": 3450,
+    "criticalRecoverMv": 3550,
+    "protectMv": 3300,
+    "protectSamples": 2,
+    "powerCheckMs": 30000,
+    "lowVoltageWake": "LPCOMP+VBUS"
+  },
+  "trust": {
+    "replacePublishedDefaultAdmin": true,
+    "preserveExistingCredential": true,
+    "perDeviceRandomCredential": true
+  },
+  "recovery": {
+    "softRadioRecoveryMs": 60000,
+    "hardRebootNoProgressMs": 120000
   }
 }
