@@ -280,37 +280,50 @@ bool MyMesh::v2RecoverRadio() {
 """
     s = replace_once(s, old_health, new_health, "V2 health format")
 
-    anchor = """  if (strlen(command) > 4 && command[2] == '|') { // optional prefix (for companion radio CLI)
-    memcpy(reply, command, 3);                    // reflect the prefix back
-    reply += 3;
-    command += 3;
-  }
-
-  // handle ACL related commands
+    # Credential disclosure must never live in MyMesh::handleCommand because remote
+    # admins supply their own message timestamp. Expose only a formatter and call it
+    # from the physical Serial handler in main.cpp.
+    s = mesh_h.read_text()
+    anchor = """  bool getV2BackgroundSuppressed() const { return v2_background_suppressed; }
+  int v2RecoverPacketQueues();
+  bool v2RecoverRadio();
+#endif
 """
-    replacement = """  if (strlen(command) > 4 && command[2] == '|') { // optional prefix (for companion radio CLI)
-    memcpy(reply, command, 3);                    // reflect the prefix back
-    reply += 3;
-    command += 3;
-  }
-
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  // Local USB only: never disclose the management credential over the mesh.
-  if (sender_timestamp == 0 && strcmp(command, "base credential") == 0) {
+    replacement = """  bool getV2BackgroundSuppressed() const { return v2_background_suppressed; }
+  int v2RecoverPacketQueues();
+  bool v2RecoverRadio();
+  void formatV2LocalCredential(char* reply) const {
     snprintf(reply, 160, "credential:%s", _prefs.password);
-    return;
   }
 #endif
-
-  // handle ACL related commands
 """
-    s = replace_once(s, anchor, replacement, "local credential command")
-    mesh_cpp.write_text(s)
+    s = replace_once(s, anchor, replacement, "local credential formatter")
+    mesh_h.write_text(s)
+
 
     # ------------------------------------------------------------------
     # Main loop: Solar Guardian runs alongside adaptive mesh + supervisor.
+    # Credential readback is intercepted here, before MyMesh::handleCommand,
+    # so it is physically local to the USB serial console.
     # ------------------------------------------------------------------
     s = main_cpp.read_text()
+    serial_anchor = """#else
+    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+#endif
+"""
+    serial_replacement = """#else
+#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+    if (strcmp(command, "base credential") == 0) {
+      the_mesh.formatV2LocalCredential(reply);
+    } else {
+      the_mesh.handleCommand(0, command, reply);  // physical Serial CLI
+    }
+#else
+    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+#endif
+#endif
+"""
+    s = replace_once(s, serial_anchor, serial_replacement, "USB-only credential route")
     s = replace_once(
         s,
         '#include "AdaptiveMeshController.h"\n',
@@ -374,7 +387,6 @@ static SolarGuardian v2_solar_guardian(board, the_mesh);
         ],
         "examples/simple_repeater/MyMesh.cpp": [
             "random_secret[7]",
-            '"base credential"',
             "v2RecoverPacketQueues",
             "v2RecoverRadio",
             "P1V2 free:",
@@ -383,10 +395,13 @@ static SolarGuardian v2_solar_guardian(board, the_mesh);
             "v2_power_airtime_factor",
             "setV2PowerPolicy",
             "v2_background_suppressed",
+            "formatV2LocalCredential",
         ],
         "examples/simple_repeater/main.cpp": [
             "SolarGuardian",
             "v2_solar_guardian.loop()",
+            'strcmp(command, "base credential") == 0',
+            "formatV2LocalCredential",
         ],
         "examples/simple_repeater/BaseStationSupervisor.cpp": [
             "V2_RECOVERY_STAGE_MS",

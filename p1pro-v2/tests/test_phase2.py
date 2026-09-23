@@ -47,11 +47,19 @@ def main() -> None:
     for marker in (
         'strcmp(_prefs.password, "password") == 0',
         "random_secret[7]",
-        'strcmp(command, "base credential") == 0',
-        "sender_timestamp == 0",
     ):
         if marker not in mesh_cpp:
-            die("unique/local credential contract missing: "+marker)
+            die("unique credential generation missing: "+marker)
+
+    for marker in (
+        "formatV2LocalCredential",
+        'strcmp(command, "base credential") == 0',
+    ):
+        if marker not in mesh_h+"\n"+main:
+            die("USB-only credential route missing: "+marker)
+
+    if 'strcmp(command, "base credential") == 0' in mesh_cpp:
+        die("credential command must not be reachable through MyMesh remote command path")
 
     for marker in (
         "#define V2_RECOVERY_STAGE_MS 60000UL",
