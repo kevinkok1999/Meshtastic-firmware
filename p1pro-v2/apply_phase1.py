@@ -196,6 +196,18 @@ def main() -> None:
 """,
         """  bool setRxBoostedGain(bool enable) override;
 
+#if defined(MESH_OFFGRIDNL_P1PRO_V1)
+  int baseStationFreePackets() const;
+  int baseStationTxQueued() const;
+  int baseStationRxQueued() const;
+  uint32_t baseStationDroppedTx() const;
+  uint32_t baseStationDroppedRx() const;
+  uint16_t baseStationPeakTx() const;
+  uint16_t baseStationPeakRx() const;
+  bool baseStationCongested() const;
+  void formatBaseStationHealth(char* reply) const;
+#endif
+
 #if defined(MESH_OFFGRIDNL_P1PRO_V2)
   void setV2AdaptiveMeshPolicy(float airtime_factor, bool cad, uint8_t pressure_state) {
     v2_adaptive_airtime_factor = airtime_factor < 9.0f ? 9.0f : airtime_factor;
