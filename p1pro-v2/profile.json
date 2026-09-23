@@ -1,0 +1,46 @@
+{
+  "schema": 2,
+  "name": "MeshOffGridNL P1 Pro V2 EU868 Adaptive Base Station",
+  "status": "phase1-candidate",
+  "inherits": "P1 Pro V1 RC1 resilience baseline",
+  "upstream": {
+    "project": "meshcore-dev/MeshCore",
+    "commit": "e94125987ed87497e706a0b54d1e80c709343980",
+    "target": "SenseCap_Solar_repeater"
+  },
+  "hardware": {
+    "mcu": "nRF52840",
+    "radio": "SX1262",
+    "band": "EU868-only",
+    "txPowerCeilingDbm": 22
+  },
+  "radioProfile": {
+    "frequencyMHz": 869.618,
+    "bandwidthKHz": 62.5,
+    "spreadingFactor": 8,
+    "codingRate": 5,
+    "locked": true,
+    "tDeckCompatibility": "MeshOffGridNL T-Deck V19"
+  },
+  "routing": {
+    "scopedFloodMax": 48,
+    "unscopedFloodMax": 6,
+    "advertFloodMax": 8,
+    "pathHashBytes": 1
+  },
+  "adaptiveMesh": {
+    "pressureLevels": [
+      "NORMAL",
+      "BUSY",
+      "SEVERE",
+      "CRITICAL"
+    ],
+    "cadAutoFrom": "SEVERE",
+    "periodicAdvertSuppressionFrom": "BUSY",
+    "packetPool": 32
+  },
+  "release": {
+    "stable": false,
+    "requiresPhysicalV19Compatibility": true
+  }
+}
