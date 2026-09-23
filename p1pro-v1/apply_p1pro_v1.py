@@ -84,11 +84,11 @@ build_flags =
 """
     load_replacement = """  _cli.loadPrefs(_fs);
 #if defined(MESH_OFFGRIDNL_P1PRO_V1)
-  if (_prefs.flood_max == 0 || _prefs.flood_max > MESH_OFFGRIDNL_P1PRO_FLOOD_MAX)
+  if (_prefs.flood_max > MESH_OFFGRIDNL_P1PRO_FLOOD_MAX)
     _prefs.flood_max = MESH_OFFGRIDNL_P1PRO_FLOOD_MAX;
-  if (_prefs.flood_max_unscoped == 0 || _prefs.flood_max_unscoped > MESH_OFFGRIDNL_P1PRO_UNSCOPED_MAX)
+  if (_prefs.flood_max_unscoped > MESH_OFFGRIDNL_P1PRO_UNSCOPED_MAX)
     _prefs.flood_max_unscoped = MESH_OFFGRIDNL_P1PRO_UNSCOPED_MAX;
-  if (_prefs.flood_max_advert == 0 || _prefs.flood_max_advert > MESH_OFFGRIDNL_P1PRO_ADVERT_MAX)
+  if (_prefs.flood_max_advert > MESH_OFFGRIDNL_P1PRO_ADVERT_MAX)
     _prefs.flood_max_advert = MESH_OFFGRIDNL_P1PRO_ADVERT_MAX;
   _prefs.path_hash_mode = 0;
   // Do not rely on loop_detect for one-byte paths: collisions are possible.
