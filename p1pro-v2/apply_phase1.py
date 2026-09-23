@@ -188,13 +188,23 @@ def main() -> None:
 """,
         "adaptive CAD getter",
     )
-    s = replace_once(
-        s,
-        """  bool setRxBoostedGain(bool enable) override;
+    v1_health_anchor = """  bool setRxBoostedGain(bool enable) override;
+
+#if defined(MESH_OFFGRIDNL_P1PRO_V1)
+  int baseStationFreePackets() const;
+  int baseStationTxQueued() const;
+  int baseStationRxQueued() const;
+  uint32_t baseStationDroppedTx() const;
+  uint32_t baseStationDroppedRx() const;
+  uint16_t baseStationPeakTx() const;
+  uint16_t baseStationPeakRx() const;
+  bool baseStationCongested() const;
+  void formatBaseStationHealth(char* reply) const;
+#endif
 
   #if defined(USE_LR2021)
-""",
-        """  bool setRxBoostedGain(bool enable) override;
+"""
+    v2_api = """  bool setRxBoostedGain(bool enable) override;
 
 #if defined(MESH_OFFGRIDNL_P1PRO_V1)
   int baseStationFreePackets() const;
@@ -220,9 +230,8 @@ def main() -> None:
 #endif
 
   #if defined(USE_LR2021)
-""",
-        "adaptive public API",
-    )
+"""
+    s = replace_once(s, v1_health_anchor, v2_api, "adaptive public API")
     mesh_h.write_text(s)
 
     # ------------------------------------------------------------------
