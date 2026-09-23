@@ -1,26 +1,21 @@
 {
   "schema": 2,
-  "name": "MeshOffGridNL P1 Pro V2 EU868 Adaptive Base Station",
-  "status": "phase1-candidate",
-  "inherits": "P1 Pro V1 RC1 resilience baseline",
+  "name": "MeshOffGridNL P1 Pro V2",
+  "status": "phase1-eu868-adaptive-candidate",
+  "inherits": "P1 Pro V1 resilience substrate",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
     "commit": "e94125987ed87497e706a0b54d1e80c709343980",
     "target": "SenseCap_Solar_repeater"
   },
-  "hardware": {
-    "mcu": "nRF52840",
-    "radio": "SX1262",
-    "band": "EU868-only",
-    "txPowerCeilingDbm": 22
-  },
   "radioProfile": {
+    "band": "EU868-only",
     "frequencyMHz": 869.618,
     "bandwidthKHz": 62.5,
     "spreadingFactor": 8,
     "codingRate": 5,
-    "locked": true,
-    "tDeckCompatibility": "MeshOffGridNL T-Deck V19"
+    "txPowerMaxDbm": 22,
+    "locked": true
   },
   "routing": {
     "scopedFloodMax": 48,
@@ -28,19 +23,23 @@
     "advertFloodMax": 8,
     "pathHashBytes": 1
   },
-  "adaptiveMesh": {
-    "pressureLevels": [
-      "NORMAL",
-      "BUSY",
-      "SEVERE",
-      "CRITICAL"
-    ],
-    "cadAutoFrom": "SEVERE",
-    "periodicAdvertSuppressionFrom": "BUSY",
-    "packetPool": 32
+  "airtime": {
+    "baselineDutyCyclePercent": 10,
+    "adaptiveStates": {
+      "normal": 10,
+      "busy": 5,
+      "congested": 2,
+      "severe": 1
+    },
+    "cad": "auto-under-pressure",
+    "recoveryQuietSeconds": 30
+  },
+  "installer": {
+    "normalPath": "one-click update; no mandatory factory erase",
+    "recoveryPath": "factory clean + UF2/DFU under advanced recovery"
   },
   "release": {
     "stable": false,
-    "requiresPhysicalV19Compatibility": true
+    "requiresPhysicalAcceptance": true
   }
 }

@@ -1,49 +1,41 @@
 # MeshOffGridNL P1 Pro V2 — EU868 Adaptive Base Station
 
-Status: Phase 1 candidate. V1/RC1 remains untouched and is the rollback line.
+Status: Phase 1 candidate.
 
-## Non-negotiable radio contract
+V2 is intentionally **EU868-only** and stays directly aligned with the proven T-Deck V19 radio profile:
 
-P1 Pro V2 is an **EU868-only** product line and remains compatible with the proven T-Deck V19 radio defaults:
+- 869.618 MHz
+- 62.5 kHz
+- SF8
+- CR5
+- TX setting capped at 22 dBm
+- scoped flood ceiling 48 hops
+- unscoped 6
+- adverts 8
 
-- frequency: 869.618 MHz
-- bandwidth: 62.5 kHz
-- spreading factor: SF8
-- coding rate: CR5
-- TX power ceiling: 22 dBm
-- scoped flood ceiling: 48
-- unscoped flood ceiling: 6
-- advert flood ceiling: 8
-- path hashes: 1 byte
+## What V2 adds over V1
 
-V2 rejects persistent or temporary radio commands that attempt to move the station away from this radio profile. TX power may be reduced but never raised above 22 dBm.
+- persisted radio settings are forced back to the V19-compatible EU868 profile
+- CLI cannot switch V2 to 915 MHz or another radio profile
+- TX commands cannot exceed the 22 dBm hardware target
+- baseline airtime budget is limited to 10%
+- adaptive congestion states tighten the budget to 5%, 2% or 1%
+- CAD is automatically enabled only under mesh pressure
+- escalation is immediate; recovery requires 30 seconds of quiet samples
+- V1's fixed 32-packet pool, queue telemetry, safe prefs transaction and hard-stall supervisor remain inherited
 
-## Phase 1 — EU868 Adaptive Mesh
+## Installer contract
 
-V2 inherits the proven V1 base and resilience overlays, then adds:
+Normal V2 installation is designed as:
 
-- EU868/V19 radio hard lock after persisted configuration is loaded
-- remote/local CLI guards for radio, frequency, temporary-radio and TX-power changes
-- four pressure levels based on bounded pool/queue occupancy
-- background adverts suppressed from BUSY upward
-- hardware CAD automatically enabled only at SEVERE/CRITICAL pressure, while an operator may still explicitly enable CAD earlier
-- no packet-pool enlargement
-- no increase in hop ceiling or TX power
-- no protocol-format change
+**Connect -> Install V2**
 
-Pressure levels:
+A normal V1 -> V2 update must not require Factory Clean. Factory erase and UF2 stay available only under Advanced / Recovery.
 
-- 0 NORMAL
-- 1 BUSY
-- 2 SEVERE
-- 3 CRITICAL
+## Three phases
 
-48 hops remains an emergency ceiling, never a routing target.
-
-## Three V2 phases
-
-1. EU868 Adaptive Mesh
+1. EU868 hard lock + Adaptive Mesh
 2. Solar Guardian + staged self-healing + trust/provisioning
-3. RC1 release + one-click P1 installer + production website
+3. V2 RC1 release + one-click website installer + physical acceptance
 
-V2 is never promoted to Stable until physical P1 Pro <-> T-Deck V19 acceptance testing succeeds.
+V1 remains untouched and available as fallback.
