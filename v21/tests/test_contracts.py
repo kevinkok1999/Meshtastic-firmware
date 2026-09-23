@@ -10,6 +10,11 @@ def main():
     pio=(root/"platformio.ini").read_text()
     main=(root/"src/main.cpp").read_text()
     ui=(root/"src/ui-touch/UITask.cpp").read_text()
+    serial_ble_path=root/"src/helpers/esp32/SerialBLEInterface.cpp"
+    if not serial_ble_path.exists(): die("vendored SerialBLEInterface.cpp missing")
+    serial_ble=serial_ble_path.read_text()
+    for marker in ("SerialBLEInterface::begin","SerialBLEInterface::writeFrame","SerialBLEInterface::checkRecvFrame"):
+        if marker not in serial_ble: die("vendored SerialBLE implementation missing "+marker)
 
     for flag in (
         "MESH_OFFGRIDNL_V19=1","MESH_OFFGRIDNL_V20=1","MESH_OFFGRIDNL_V21=1",
