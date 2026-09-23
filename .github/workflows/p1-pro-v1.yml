@@ -1,8 +1,14 @@
 name: P1 Pro V1 Base Station
 
-# Phase 1 is intentionally manual-only. This protects the single shared runner
-# while the hardware contract is still under development.
+# Phase 1 uses one branch-scoped build. Concurrency keeps the single shared
+# firmware runner serialized with the rest of MeshOffGridNL.
 on:
+  push:
+    branches:
+      - p1-pro-v1-base-station
+    paths:
+      - "p1pro-v1/**"
+      - ".github/workflows/p1-pro-v1.yml"
   workflow_dispatch:
 
 permissions:
