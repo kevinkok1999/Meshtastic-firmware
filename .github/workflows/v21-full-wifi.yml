@@ -87,7 +87,7 @@ jobs:
       - name: Build full V21 T-Deck
         env:
           PLATFORMIO_BUILD_FLAGS: >-
-            -DFIRMWARE_RELEASE_TAG='"mog-v21.0.0-rc1"'
+            -DFIRMWARE_RELEASE_TAG='"mog-v21.0.0-rc2"'
             -DFIRMWARE_VERSION='"MeshOffGridNL V21 Wi-Fi First"'
         run: |
           cd upstream-wadamesh
@@ -129,7 +129,7 @@ jobs:
             h=hashlib.sha256(); h.update(p.read_bytes()); return h.hexdigest()
           manifest={
             "schema":1,
-            "version":"21.0.0-rc1",
+            "version":"21.0.0-rc2",
             "label":"MeshOffGridNL V21 Wi-Fi First",
             "board":"lilygo-t-deck-plus",
             "framework":{"arduino":"3.3.12","espIdf":"5.5.5","pioarduino":"55.03.312-1"},
@@ -163,23 +163,14 @@ jobs:
       - name: Publish V21 software-validated prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: mesh-v21.0.0-rc1
+          TAG: mesh-v21.0.0-rc2
         run: |
           NOTES="V21 Wi-Fi First replaces the V19 runtime join strategy with the minimal WiFi.begin-only association path and pins the T-Deck build to pioarduino 55.03.312-1 / Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5. It preserves V20 Local AI, LoRa/MeshCore, chats and UI. CI and contracts are software validation only; physical Galaxy S21/T-Deck validation has not been performed."
           if gh release view "$TAG" >/dev/null 2>&1; then
-            # Replace assets deterministically. gh release upload --clobber can
-            # race when several existing assets are replaced in one invocation.
-            for f in dist/*; do
-              name="$(basename "$f")"
-              gh release delete-asset "$TAG" "$name" -y >/dev/null 2>&1 || true
-            done
-            for f in dist/*; do
-              gh release upload "$TAG" "$f"
-            done
-            gh release edit "$TAG" --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC1" --notes "$NOTES" --prerelease
-          else
-            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC1" --notes "$NOTES" --prerelease
+            echo "Release $TAG already exists; refusing to mutate immutable RC assets." >&2
+            exit 2
           fi
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "MeshOffGridNL V21 Wi-Fi First RC2" --notes "$NOTES" --prerelease
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
