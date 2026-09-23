@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "MeshOffGridNL P1 Pro V1 Base Station",
-  "status": "design-contract",
+  "status": "phase2-resilience-candidate",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
     "commit": "e94125987ed87497e706a0b54d1e80c709343980",
@@ -29,5 +29,21 @@
     "requiresPhysicalV19Compatibility": true,
     "requiresSoakTest": true,
     "requiresRecoveryTest": true
+  },
+  "resilience": {
+    "packetPool": 32,
+    "congestion": {
+      "freePacketThreshold": 6,
+      "queueThreshold": 24,
+      "suppressPeriodicAdverts": true
+    },
+    "stallRecovery": {
+      "freePacketsMustEqual": 0,
+      "noProgressMs": 120000,
+      "action": "board-reboot"
+    },
+    "configSafety": "temp-backup-rename-rollback",
+    "powerSavingDefault": true,
+    "gpsForcedOn": false
   }
 }
