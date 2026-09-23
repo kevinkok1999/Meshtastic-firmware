@@ -1,8 +1,7 @@
 {
   "schema": 2,
   "name": "MeshOffGridNL P1 Pro V2",
-  "status": "phase1-eu868-adaptive-candidate",
-  "inherits": "P1 Pro V1 resilience substrate",
+  "status": "phase2-autonomous-candidate",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
     "commit": "e94125987ed87497e706a0b54d1e80c709343980",
@@ -23,9 +22,8 @@
     "advertFloodMax": 8,
     "pathHashBytes": 1
   },
-  "airtime": {
-    "baselineDutyCyclePercent": 10,
-    "adaptiveStates": {
+  "adaptiveMesh": {
+    "dutyCyclePercent": {
       "normal": 10,
       "busy": 5,
       "congested": 2,
@@ -34,9 +32,36 @@
     "cad": "auto-under-pressure",
     "recoveryQuietSeconds": 30
   },
+  "powerGuardian": {
+    "sampleSeconds": 30,
+    "states": {
+      "normalMinMv": 3700,
+      "ecoMinMv": 3500,
+      "survivalMinMv": 3350,
+      "criticalBelowMv": 3350,
+      "protectedShutdownMv": 3300
+    },
+    "protectedShutdownSamples": 3,
+    "voltageWake": "existing SenseCAP LPCOMP + VBUS"
+  },
+  "recovery": {
+    "stageSeconds": 60,
+    "stages": [
+      "queue-recovery",
+      "radio-reinit",
+      "mcu-reboot"
+    ]
+  },
+  "trust": {
+    "sharedDefaultPasswordRemoved": true,
+    "credentialRandomBytes": 7,
+    "credentialReadback": "local USB command only",
+    "preserveCustomPassword": true
+  },
   "installer": {
-    "normalPath": "one-click update; no mandatory factory erase",
-    "recoveryPath": "factory clean + UF2/DFU under advanced recovery"
+    "normalPath": "one primary Connect & Install button",
+    "normalUpdateErase": false,
+    "recovery": "advanced factory-clean + UF2/DFU"
   },
   "release": {
     "stable": false,
