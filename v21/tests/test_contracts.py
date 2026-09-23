@@ -18,7 +18,7 @@ def main():
 
     for flag in (
         "MESH_OFFGRIDNL_V19=1","MESH_OFFGRIDNL_V20=1","MESH_OFFGRIDNL_V21=1",
-        "MESH_V21_WIFI_SINGLE_OWNER=1","MESH_V21_WIFI_PRIORITY=1","  -D ESP32\n"
+        "MESH_V21_WIFI_SINGLE_OWNER=1","MESH_V21_WIFI_PRIORITY=1"
     ):
         if flag not in pio: die("missing "+flag)
 
@@ -28,6 +28,8 @@ def main():
         die("framework SD override missing")
     if "-Wno-error=return-type" not in pio:
         die("modern compiler upstream return-type compatibility flag missing")
+    if "  -D ESP32\n" in pio:
+        die("V21 must not force ESP32 into MeshCore build filter; BLE implementation is vendored explicitly")
 
     start=main.find("#if defined(MESH_OFFGRIDNL_V21)",main.find("static void v13WifiBegin"))
     end=main.find("#elif defined(MESH_OFFGRIDNL_V19)",start)
