@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "name": "MeshOffGridNL P1 Pro V2",
-  "status": "phase2-autonomous-candidate",
+  "status": "phase3-final-rc1",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
     "commit": "e94125987ed87497e706a0b54d1e80c709343980",
@@ -50,21 +50,28 @@
       "queue-recovery",
       "radio-reinit",
       "mcu-reboot"
-    ]
+    ],
+    "safePrefsTransaction": true
   },
   "trust": {
     "sharedDefaultPasswordRemoved": true,
     "credentialRandomBytes": 7,
-    "credentialReadback": "local USB command only",
+    "credentialCharacters": 14,
+    "credentialReadback": "physical USB serial only",
     "preserveCustomPassword": true
   },
   "installer": {
-    "normalPath": "one primary Connect & Install button",
-    "normalUpdateErase": false,
-    "recovery": "advanced factory-clean + UF2/DFU"
+    "normalPath": "one button: Connect & install; verified DFU application update; no factory erase",
+    "normalUpdateRequiresErase": false,
+    "recoveryPath": "Advanced: Factory Clean + manual DFU + UF2",
+    "automaticBootloaderUpgrade": false
   },
   "release": {
+    "tag": "p1pro-v2.0.0-rc1",
     "stable": false,
+    "oneClickInstaller": true,
+    "normalUpdateRequiresErase": false,
+    "v1Fallback": "p1pro-v1.0.0-rc1",
     "requiresPhysicalAcceptance": true
   }
 }
