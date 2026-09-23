@@ -279,6 +279,7 @@ bool MyMesh::v2RecoverRadio() {
 #endif
 """
     s = replace_once(s, old_health, new_health, "V2 health format")
+    mesh_cpp.write_text(s)
 
     # Credential disclosure must never live in MyMesh::handleCommand because remote
     # admins supply their own message timestamp. Expose only a formatter and call it
