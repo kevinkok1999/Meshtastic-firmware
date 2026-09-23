@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "name": "MeshOffGridNL P1 Pro V1 Base Station",
+  "status": "design-contract",
+  "upstream": {
+    "project": "meshcore-dev/MeshCore",
+    "commit": "e94125987ed87497e706a0b54d1e80c709343980",
+    "target": "SenseCap_Solar_repeater"
+  },
+  "hardware": {
+    "mcu": "nRF52840",
+    "radio": "SX1262",
+    "txPowerCeilingDbm": 22
+  },
+  "routing": {
+    "scopedFloodMax": 48,
+    "unscopedFloodMax": 6,
+    "advertFloodMax": 8,
+    "pathHashMode": 0,
+    "pathHashBytes": 1,
+    "policy": "48-is-a-ceiling-not-a-target"
+  },
+  "memory": {
+    "packetPool": 32,
+    "increaseRequiresMeasuredHardwareReview": true
+  },
+  "release": {
+    "automaticRelease": false,
+    "requiresPhysicalV19Compatibility": true,
+    "requiresSoakTest": true,
+    "requiresRecoveryTest": true
+  }
+}
