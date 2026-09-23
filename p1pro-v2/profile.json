@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "name": "MeshOffGridNL P1 Pro V2",
-  "status": "phase2-candidate",
+  "status": "phase3-rc1",
   "inherits": "P1 Pro V1 resilience substrate",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
@@ -39,7 +39,10 @@
     "recoveryPath": "factory clean + UF2/DFU under advanced recovery"
   },
   "release": {
+    "tag": "p1pro-v2.0.0-rc1",
     "stable": false,
+    "oneClickInstaller": true,
+    "v1Fallback": "p1pro-v1.0.0-rc1",
     "requiresPhysicalAcceptance": true
   },
   "solarGuardian": {

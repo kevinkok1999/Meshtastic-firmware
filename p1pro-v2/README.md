@@ -56,3 +56,20 @@ Phase 2 adds:
 - first boot replaces only the public upstream admin default `password` with a random per-device credential
 - an operator-set existing password survives upgrades
 - 60-second soft radio recovery before the existing hard reboot safety net
+
+
+## Phase 3 — RC1 release
+
+The RC1 release pipeline produces:
+- Nordic DFU ZIP
+- UF2 fallback
+- factory-clean erase package
+- SHA-256 manifest/checksums
+- source archive
+- prerelease only
+
+Website policy:
+- V2 is the recommended P1 route.
+- V1 remains available as rollback.
+- V2 installer is designed as connect -> one primary install action.
+- No Stable label until physical V19/P1 acceptance passes.
