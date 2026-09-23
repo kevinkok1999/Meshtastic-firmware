@@ -1,0 +1,56 @@
+name: V22 Wi-Fi compatibility rebuild
+on:
+  push:
+    branches: [v22-wifi-first-rebuild]
+    paths: [v22/**, .github/workflows/v22-wifi.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: true
+jobs:
+  v22:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+      - name: Fetch pinned WadaMesh
+        run: |
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          test "$(cd upstream-wadamesh && git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+      - name: Apply V11-V22 contracts
+        run: |
+          for v in v11 v12 v13 v15 v16 v17 v18 v19 v20 v21; do
+            python "$v/apply_\${v}.py" upstream-wadamesh
+            python "$v/tests/test_contracts.py" upstream-wadamesh
+          done
+          python v22/apply_v22.py upstream-wadamesh
+          python v22/tests/test_contracts.py upstream-wadamesh
+      - name: Build T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_RELEASE_TAG="mog-v22.0.0-rc1" -DFIRMWARE_VERSION="MeshOffGridNL V22 Wi-Fi compatibility rebuild"'
+        run: cd upstream-wadamesh && pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+      - name: Package manifest
+        run: |
+          mkdir -p dist
+          b=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          cp "$b/firmware-merged.bin" dist/MeshOffGridNL-V22-TDeck-Plus-merged.bin
+          cp "$b/firmware.bin" dist/MeshOffGridNL-V22-TDeck-Plus.bin
+          test -s dist/MeshOffGridNL-V22-TDeck-Plus-merged.bin
+          python - <<'PY'
+          import hashlib,json,pathlib
+          d=pathlib.Path('dist'); p=d/'MeshOffGridNL-V22-TDeck-Plus-merged.bin'
+          m={'schema':2,'version':'22.0.0-rc1','board':'lilygo-t-deck-plus','file':p.name,'size':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'status':'software-validated-rc1','physicalValidation':{'tDeckPlus':False,'galaxyS21':False}}
+          (d/'v22-manifest.json').write_text(json.dumps(m,indent=2)+'\n')
+          PY
+      - name: Publish immutable prerelease
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: gh release create mesh-v22.0.0-rc1 dist/* --target "$GITHUB_SHA" --title "MeshOffGridNL V22 Wi-Fi compatibility rebuild RC1" --notes "Software contracts and build only; physical phone/T-Deck matrix remains required." --prerelease
+      - uses: actions/upload-artifact@v4
+        with: {name: MeshOffGridNL-V22-WiFi, path: dist/*, retention-days: 30}
