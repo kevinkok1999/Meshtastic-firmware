@@ -1,0 +1,97 @@
+name: P1 Pro V1 Base Station
+
+# Phase 1 is intentionally manual-only. This protects the single shared runner
+# while the hardware contract is still under development.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: false
+
+jobs:
+  build-p1-pro-v1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout MeshOffGridNL firmware workspace
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned MeshCore
+        run: |
+          rm -rf upstream-meshcore
+          git clone https://github.com/meshcore-dev/MeshCore.git upstream-meshcore
+          cd upstream-meshcore
+          git checkout e94125987ed87497e706a0b54d1e80c709343980
+          test "$(git rev-parse HEAD)" = "e94125987ed87497e706a0b54d1e80c709343980"
+
+      - name: Apply P1 Pro V1 phase-1 overlay
+        run: |
+          python p1pro-v1/apply_p1pro_v1.py upstream-meshcore
+          python p1pro-v1/tests/test_contracts.py upstream-meshcore
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build only SenseCAP Solar repeater
+        run: |
+          cd upstream-meshcore
+          pio run -e SenseCap_Solar_repeater
+
+      - name: Convert nRF52840 HEX to UF2
+        run: |
+          cd upstream-meshcore
+          python3 bin/uf2conv/uf2conv.py             .pio/build/SenseCap_Solar_repeater/firmware.hex             -c             -o .pio/build/SenseCap_Solar_repeater/firmware.uf2             -f 0xADA52840
+
+      - name: Package candidate (not a release)
+        run: |
+          mkdir -p dist
+          cp upstream-meshcore/.pio/build/SenseCap_Solar_repeater/firmware.uf2              dist/MeshOffGridNL-P1-Pro-V1-CANDIDATE.uf2
+          cp upstream-meshcore/.pio/build/SenseCap_Solar_repeater/firmware.hex              dist/MeshOffGridNL-P1-Pro-V1-CANDIDATE.hex
+          python - <<'PY'
+          import hashlib, json, pathlib
+          d = pathlib.Path("dist")
+          uf2 = d / "MeshOffGridNL-P1-Pro-V1-CANDIDATE.uf2"
+          hexf = d / "MeshOffGridNL-P1-Pro-V1-CANDIDATE.hex"
+          def sha(p):
+              return hashlib.sha256(p.read_bytes()).hexdigest()
+          manifest = {
+              "schema": 1,
+              "status": "candidate-not-for-production",
+              "product": "MeshOffGridNL P1 Pro V1 Base Station",
+              "board": "sensecap-solar-p1-pro",
+              "target": "SenseCap_Solar_repeater",
+              "mcu": "nRF52840",
+              "radio": "SX1262",
+              "meshcoreCommit": "e94125987ed87497e706a0b54d1e80c709343980",
+              "routing": {
+                  "scopedFloodMax": 48,
+                  "unscopedFloodMax": 6,
+                  "advertFloodMax": 8,
+                  "pathHashBytes": 1
+              },
+              "artifacts": [
+                  {"file": uf2.name, "size": uf2.stat().st_size, "sha256": sha(uf2)},
+                  {"file": hexf.name, "size": hexf.stat().st_size, "sha256": sha(hexf)}
+              ]
+          }
+          (d / "p1-pro-v1-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+          sha256sum dist/*
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-P1-Pro-V1-Candidate
+          path: dist/*
+          retention-days: 14
