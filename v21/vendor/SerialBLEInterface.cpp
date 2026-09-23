@@ -1,4 +1,4 @@
-#include "SerialBLEInterface.h"
+#include <helpers/esp32/SerialBLEInterface.h>
 #include "esp_mac.h"
 
 // See the following for generating UUIDs:
