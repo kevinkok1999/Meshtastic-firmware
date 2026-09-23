@@ -2,7 +2,6 @@
   "schema": 2,
   "name": "MeshOffGridNL P1 Pro V2",
   "status": "phase3-rc1",
-  "inherits": "P1 Pro V1 resilience substrate",
   "upstream": {
     "project": "meshcore-dev/MeshCore",
     "commit": "e94125987ed87497e706a0b54d1e80c709343980",
@@ -23,9 +22,8 @@
     "advertFloodMax": 8,
     "pathHashBytes": 1
   },
-  "airtime": {
-    "baselineDutyCyclePercent": 10,
-    "adaptiveStates": {
+  "adaptiveMesh": {
+    "dutyCyclePercent": {
       "normal": 10,
       "busy": 5,
       "congested": 2,
@@ -34,9 +32,39 @@
     "cad": "auto-under-pressure",
     "recoveryQuietSeconds": 30
   },
+  "powerGuardian": {
+    "sampleSeconds": 30,
+    "states": {
+      "normalMinMv": 3700,
+      "ecoMinMv": 3500,
+      "survivalMinMv": 3350,
+      "criticalBelowMv": 3350,
+      "protectedShutdownMv": 3300
+    },
+    "protectedShutdownSamples": 3,
+    "voltageWake": "existing SenseCAP LPCOMP + VBUS"
+  },
+  "recovery": {
+    "stageSeconds": 60,
+    "stages": [
+      "queue-recovery",
+      "radio-reinit",
+      "mcu-reboot"
+    ]
+  },
+  "trust": {
+    "sharedDefaultPasswordRemoved": true,
+    "credentialRandomBytes": 7,
+    "credentialReadback": "local USB command only",
+    "preserveCustomPassword": true
+  },
   "installer": {
-    "normalPath": "one-click update; no mandatory factory erase",
-    "recoveryPath": "factory clean + UF2/DFU under advanced recovery"
+    "normalPath": "connect -> one primary Install P1 Pro V2 action",
+    "firstInstallFactoryClean": true,
+    "normalUpdateErase": false,
+    "autoDfuReacquire": true,
+    "recovery": "UF2 + advanced DFU recovery",
+    "automaticBootloaderUpgrade": false
   },
   "release": {
     "tag": "p1pro-v2.0.0-rc1",
@@ -44,30 +72,5 @@
     "oneClickInstaller": true,
     "v1Fallback": "p1pro-v1.0.0-rc1",
     "requiresPhysicalAcceptance": true
-  },
-  "solarGuardian": {
-    "states": [
-      "NORMAL",
-      "ECO",
-      "CRITICAL",
-      "PROTECT"
-    ],
-    "ecoMv": 3600,
-    "ecoRecoverMv": 3700,
-    "criticalMv": 3450,
-    "criticalRecoverMv": 3550,
-    "protectMv": 3300,
-    "protectSamples": 2,
-    "powerCheckMs": 30000,
-    "lowVoltageWake": "LPCOMP+VBUS"
-  },
-  "trust": {
-    "replacePublishedDefaultAdmin": true,
-    "preserveExistingCredential": true,
-    "perDeviceRandomCredential": true
-  },
-  "recovery": {
-    "softRadioRecoveryMs": 60000,
-    "hardRebootNoProgressMs": 120000
   }
 }

@@ -157,12 +157,13 @@ jobs:
                   "packetPool": 32
               },
               "solarGuardian": {
-                  "ecoMv": 3600,
-                  "ecoRecoverMv": 3700,
-                  "criticalMv": 3450,
-                  "criticalRecoverMv": 3550,
+                  "ecoMv": 3700,
+                  "survivalMv": 3500,
+                  "criticalMv": 3350,
                   "protectMv": 3300,
-                  "protectSamples": 2,
+                  "protectSamples": 3,
+                  "worseSamples": 2,
+                  "betterSamples": 4,
                   "powerCheckMs": 30000,
                   "wake": "LPCOMP+VBUS"
               },
@@ -172,8 +173,8 @@ jobs:
                   "perDeviceRandomCredential": True
               },
               "recovery": {
-                  "softRadioRecoveryMs": 60000,
-                  "hardRebootNoProgressMs": 120000,
+                  "stageSeconds": 60,
+                  "stages": ["queue-recovery", "radio-reinit", "mcu-reboot"],
                   "safePrefsTransaction": True
               },
               "installer": {
@@ -228,6 +229,8 @@ jobs:
           assert m["installer"]["oneClickFlow"] is True
           assert m["installer"]["automaticBootloaderUpgrade"] is False
           assert m["solarGuardian"]["protectMv"] == 3300
+          assert m["solarGuardian"]["protectSamples"] == 3
+          assert m["recovery"]["stages"] == ["queue-recovery", "radio-reinit", "mcu-reboot"]
           assert m["trust"]["perDeviceRandomCredential"] is True
 
           for item in m["artifacts"]:
@@ -256,9 +259,10 @@ jobs:
           - adaptive CAD with hysteresis
           - 48/6/8 scoped/unscoped/advert hop ceilings
           - fixed 32-packet pool
-          - Solar Guardian with 3300 mV protection and LPCOMP/VBUS recovery
-          - per-device random admin credential when upstream default is still active
-          - staged soft radio recovery before hard reboot
+          - Solar Guardian with NORMAL/ECO/SURVIVAL/CRITICAL states and 3300 mV protection
+          - combined mesh + power airtime budgeting
+          - per-device random admin credential with USB-only readback
+          - queue recovery -> radio re-init -> MCU reboot staged recovery
           - safe config transaction/rollback
           - one-click web installer contract with UF2 fallback
           - no automatic bootloader update

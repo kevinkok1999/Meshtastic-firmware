@@ -1,180 +1,274 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import pathlib, sys
 
-def fail(msg): raise SystemExit("P1 Pro V2 phase-2 patch failed: "+msg)
-def once(text,old,new,label):
-    n=text.count(old)
-    if n!=1: fail(f"{label}: expected 1 anchor, found {n}")
-    return text.replace(old,new,1)
+import pathlib
+import shutil
+import sys
 
-def main():
-    if len(sys.argv)!=2: fail("usage: apply_phase2.py <phase1-patched MeshCore>")
-    root=pathlib.Path(sys.argv[1]).resolve()
-    board_h=root/"variants/sensecap_solar/SenseCapSolarBoard.h"
-    mesh_cpp=root/"examples/simple_repeater/MyMesh.cpp"
-    mesh_h=root/"examples/simple_repeater/MyMesh.h"
-    sup_h=root/"examples/simple_repeater/BaseStationSupervisor.h"
-    sup_cpp=root/"examples/simple_repeater/BaseStationSupervisor.cpp"
-    for p in (board_h,mesh_cpp,mesh_h,sup_h,sup_cpp):
-        if not p.exists(): fail("missing "+str(p))
 
-    # Expose one board-specific protective shutdown that reuses upstream's
-    # LOW_VOLTAGE reason, LPCOMP wake and VBUS wake path.
-    s=board_h.read_text()
-    anchor="""  void powerOff() override {
-    digitalWrite(LED_WHITE, LOW);
-    digitalWrite(LED_BLUE, LOW);
+def fail(message: str) -> None:
+    raise SystemExit("P1 Pro V2 phase-2 patch failed: " + message)
 
-#ifdef PIN_USER_BTN
-"""
-    replacement="""#if defined(MESH_OFFGRIDNL_P1PRO_V2) && defined(NRF52_POWER_MANAGEMENT)
-  void lowVoltageProtect() {
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        fail(f"{label}: expected exactly one anchor, found {count}")
+    return text.replace(old, new, 1)
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        fail("usage: apply_phase2.py <V2-phase1-patched MeshCore checkout>")
+
+    root = pathlib.Path(sys.argv[1]).resolve()
+    here = pathlib.Path(__file__).resolve().parent
+
+    board_h = root / "variants/sensecap_solar/SenseCapSolarBoard.h"
+    mgr_h = root / "src/helpers/StaticPoolPacketManager.h"
+    mgr_cpp = root / "src/helpers/StaticPoolPacketManager.cpp"
+    mesh_h = root / "examples/simple_repeater/MyMesh.h"
+    mesh_cpp = root / "examples/simple_repeater/MyMesh.cpp"
+    main_cpp = root / "examples/simple_repeater/main.cpp"
+
+    for p in (board_h, mgr_h, mgr_cpp, mesh_h, mesh_cpp, main_cpp):
+        if not p.exists():
+            fail("missing expected MeshCore file: " + str(p))
+
+    overlay_dir = here / "phase2-overlay"
+    for src in overlay_dir.rglob("*"):
+        if src.is_dir():
+            continue
+        rel = src.relative_to(overlay_dir)
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    # ------------------------------------------------------------------
+    # SenseCAP: expose the existing protected low-voltage shutdown path.
+    # It already arms LPCOMP + VBUS wake for SHUTDOWN_REASON_LOW_VOLTAGE.
+    # ------------------------------------------------------------------
+    s = board_h.read_text()
+    s = replace_once(
+        s,
+        """  SenseCapSolarBoard() : NRF52Board("SENSECAP_SOLAR_OTA") {}
+  void begin();
+
+""",
+        """  SenseCapSolarBoard() : NRF52Board("SENSECAP_SOLAR_OTA") {}
+  void begin();
+
+#if defined(MESH_OFFGRIDNL_P1PRO_V2) && defined(NRF52_POWER_MANAGEMENT)
+  void enterV2LowVoltageProtection() {
     shutdownPeripherals();
     initiateShutdown(SHUTDOWN_REASON_LOW_VOLTAGE);
   }
 #endif
 
-  void powerOff() override {
-    digitalWrite(LED_WHITE, LOW);
-    digitalWrite(LED_BLUE, LOW);
-
-#ifdef PIN_USER_BTN
-"""
-    s=once(s,anchor,replacement,"SenseCAP low-voltage protection hook")
+""",
+        "SenseCAP low-voltage wrapper",
+    )
     board_h.write_text(s)
 
-    s=mesh_h.read_text()
-    s=once(s,
-      """  float v2_adaptive_airtime_factor = 9.0f;
+    # ------------------------------------------------------------------
+    # Bounded queue soft recovery: drop queued work back into the existing
+    # fixed pool before considering a radio reset or MCU reboot.
+    # ------------------------------------------------------------------
+    s = mgr_h.read_text()
+    anchor = """  uint16_t getPeakRxQueue() const { return peak_rx_queue; }
+#endif
+};
+"""
+    replacement = """  uint16_t getPeakRxQueue() const { return peak_rx_queue; }
+#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  int recoverQueues();
+#endif
+#endif
+};
+"""
+    s = replace_once(s, anchor, replacement, "queue recovery declaration")
+    mgr_h.write_text(s)
+
+    s = mgr_cpp.read_text()
+    anchor = """mesh::Packet* StaticPoolPacketManager::getNextInbound(uint32_t now) {
+  return rx_queue.get(now);
+}
+"""
+    replacement = """mesh::Packet* StaticPoolPacketManager::getNextInbound(uint32_t now) {
+  return rx_queue.get(now);
+}
+
+#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+int StaticPoolPacketManager::recoverQueues() {
+  int recovered = 0;
+  mesh::Packet* packet = nullptr;
+  while ((packet = send_queue.removeByIdx(0)) != nullptr) {
+    free(packet);
+    recovered++;
+  }
+  while ((packet = rx_queue.removeByIdx(0)) != nullptr) {
+    free(packet);
+    recovered++;
+  }
+  return recovered;
+}
+#endif
+"""
+    s = replace_once(s, anchor, replacement, "queue recovery implementation")
+    mgr_cpp.write_text(s)
+
+    # ------------------------------------------------------------------
+    # MyMesh: combine adaptive-mesh + power budgets, unique credential,
+    # and staged recovery hooks.
+    # ------------------------------------------------------------------
+    s = mesh_h.read_text()
+    anchor = """#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  float v2_adaptive_airtime_factor = 9.0f;
   bool v2_adaptive_cad = false;
   uint8_t v2_mesh_pressure_state = 0;
-""",
-      """  float v2_adaptive_airtime_factor = 9.0f;
+#endif
+"""
+    replacement = """#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  float v2_adaptive_airtime_factor = 9.0f;
+  float v2_power_airtime_factor = 9.0f;
   bool v2_adaptive_cad = false;
+  bool v2_background_suppressed = false;
   uint8_t v2_mesh_pressure_state = 0;
-  uint8_t p1_power_state = 0;
-""",
-      "power state field")
-    s=once(s,
-      """  float getV2AdaptiveAirtimeFactor() const { return v2_adaptive_airtime_factor; }
+  uint8_t v2_power_state = 0;
+  uint16_t v2_last_battery_mv = 0;
+#endif
+"""
+    s = replace_once(s, anchor, replacement, "V2 power state members")
+
+    anchor = """  float getAirtimeBudgetFactor() const override {
+#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+    return _prefs.airtime_factor > v2_adaptive_airtime_factor
+        ? _prefs.airtime_factor : v2_adaptive_airtime_factor;
+#else
+    return _prefs.airtime_factor;
+#endif
+  }
+"""
+    replacement = """  float getAirtimeBudgetFactor() const override {
+#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+    float factor = _prefs.airtime_factor;
+    if (v2_adaptive_airtime_factor > factor) factor = v2_adaptive_airtime_factor;
+    if (v2_power_airtime_factor > factor) factor = v2_power_airtime_factor;
+    return factor;
+#else
+    return _prefs.airtime_factor;
+#endif
+  }
+"""
+    s = replace_once(s, anchor, replacement, "combined airtime policy")
+
+    anchor = """  float getV2AdaptiveAirtimeFactor() const { return v2_adaptive_airtime_factor; }
   bool getV2AdaptiveCad() const { return v2_adaptive_cad; }
   uint8_t getV2MeshPressureState() const { return v2_mesh_pressure_state; }
 #endif
-""",
-      """  float getV2AdaptiveAirtimeFactor() const { return v2_adaptive_airtime_factor; }
+"""
+    replacement = """  float getV2AdaptiveAirtimeFactor() const { return v2_adaptive_airtime_factor; }
   bool getV2AdaptiveCad() const { return v2_adaptive_cad; }
   uint8_t getV2MeshPressureState() const { return v2_mesh_pressure_state; }
-  void setBaseStationPowerState(uint8_t state) { p1_power_state = state; }
-  uint8_t baseStationPowerState() const { return p1_power_state; }
-  bool baseStationRecoverRadio();
+
+  void setV2PowerPolicy(float airtime_factor, bool suppress_background,
+                        uint8_t power_state, uint16_t battery_mv) {
+    v2_power_airtime_factor = airtime_factor < 9.0f ? 9.0f : airtime_factor;
+    v2_background_suppressed = suppress_background;
+    v2_power_state = power_state;
+    v2_last_battery_mv = battery_mv;
+  }
+  uint8_t getV2PowerState() const { return v2_power_state; }
+  uint16_t getV2BatteryMv() const { return v2_last_battery_mv; }
+  bool getV2BackgroundSuppressed() const { return v2_background_suppressed; }
+  int v2RecoverPacketQueues();
+  bool v2RecoverRadio();
 #endif
-""",
-      "phase2 station API")
-    s=once(s,
-      """    return _prefs.cad_enabled || v2_adaptive_cad;
-""",
-      """    return _prefs.cad_enabled ||
-           (p1_power_state == 0 && v2_adaptive_cad);
-""",
-      "power-aware CAD AUTO")
+"""
+    s = replace_once(s, anchor, replacement, "V2 power/recovery API")
     mesh_h.write_text(s)
 
-    s=mesh_cpp.read_text()
-    # First-boot trust: never leave the published upstream default password active.
-    anchor="""#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  // V2 is intentionally EU868 + T-Deck V19 compatible only.
-  _prefs.freq = 869.618f;
-  _prefs.bw = 62.5f;
-  _prefs.sf = 8;
-  _prefs.cr = 5;
-  if (_prefs.tx_power_dbm > 22) _prefs.tx_power_dbm = 22;
-  // Never relax a stricter user-set airtime limit.
-  if (_prefs.airtime_factor < 9.0f) _prefs.airtime_factor = 9.0f;
+    s = mesh_cpp.read_text()
+
+    # First-boot credential hardening. Preserve an already-custom password.
+    anchor = """  if (_prefs.airtime_factor < 9.0f) _prefs.airtime_factor = 9.0f;
 #endif
   acl.load(_fs, self_id);
 """
-    repl="""#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  // V2 is intentionally EU868 + T-Deck V19 compatible only.
-  _prefs.freq = 869.618f;
-  _prefs.bw = 62.5f;
-  _prefs.sf = 8;
-  _prefs.cr = 5;
-  if (_prefs.tx_power_dbm > 22) _prefs.tx_power_dbm = 22;
-  // Never relax a stricter user-set airtime limit.
-  if (_prefs.airtime_factor < 9.0f) _prefs.airtime_factor = 9.0f;
+    replacement = """  if (_prefs.airtime_factor < 9.0f) _prefs.airtime_factor = 9.0f;
 
-  // Replace only the published upstream factory default. Existing operator
-  // credentials survive a V1 -> V2 upgrade.
-  if (strcmp(_prefs.password, "password") == 0 || _prefs.password[0] == 0) {
-    uint8_t entropy[8];
-    char hex[17];
-    getRNG()->random(entropy, sizeof(entropy));
-    mesh::Utils::toHex(hex, entropy, sizeof(entropy));
-    snprintf(_prefs.password, sizeof(_prefs.password), "P1-%s", hex);
+  // Replace the upstream shared default with a device-local random credential.
+  // Existing non-default passwords are preserved across V1 -> V2 upgrades.
+  if (_prefs.password[0] == 0 || strcmp(_prefs.password, "password") == 0) {
+    uint8_t random_secret[7];
+    char generated[15];
+    getRNG()->random(random_secret, sizeof(random_secret));
+    mesh::Utils::toHex(generated, random_secret, sizeof(random_secret));
+    StrHelper::strncpy(_prefs.password, generated, sizeof(_prefs.password));
     _cli.savePrefs(_fs);
   }
 #endif
   acl.load(_fs, self_id);
 """
-    s=once(s,anchor,repl,"unique admin first boot")
+    s = replace_once(s, anchor, replacement, "unique V2 admin credential")
 
-    s=once(s,
-      """bool MyMesh::baseStationCongested() const {
+    anchor = """bool MyMesh::baseStationCongested() const {
   return p1_base_station_pool.getFreeCount() <= 6 ||
          p1_base_station_pool.getOutboundTotal() >= 24 ||
          p1_base_station_pool.getInboundTotal() >= 24;
-}
-""",
-      """bool MyMesh::baseStationCongested() const {
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  // Preserve V1 queue protection and shed background adverts in ECO/CRITICAL.
-  return p1_base_station_pool.getFreeCount() <= 6 ||
-         p1_base_station_pool.getOutboundTotal() >= 24 ||
-         p1_base_station_pool.getInboundTotal() >= 24 ||
-         baseStationPowerState() >= 1;
-#else
-  return p1_base_station_pool.getFreeCount() <= 6 ||
-         p1_base_station_pool.getOutboundTotal() >= 24 ||
-         p1_base_station_pool.getInboundTotal() >= 24;
-#endif
-}
-""",
-      "power-aware background shedding")
-
-    old="""void MyMesh::formatBaseStationHealth(char* reply) const {
-  snprintf(reply, 160,
-           "P1V1 free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu",
-           baseStationFreePackets(), baseStationTxQueued(), baseStationRxQueued(),
-           (unsigned long)baseStationDroppedTx(), (unsigned long)baseStationDroppedRx(),
-           (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
-           (unsigned long)getTotalAirTime());
 }
 """
-    new="""bool MyMesh::baseStationRecoverRadio() {
+    replacement = """bool MyMesh::baseStationCongested() const {
 #if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  if (v2_background_suppressed) return true;
+#endif
+  return p1_base_station_pool.getFreeCount() <= 6 ||
+         p1_base_station_pool.getOutboundTotal() >= 24 ||
+         p1_base_station_pool.getInboundTotal() >= 24;
+}
+"""
+    s = replace_once(s, anchor, replacement, "power-aware background suppression")
+
+    insert_anchor = """bool MyMesh::baseStationCongested() const {
+"""
+    insert_at = s.find(insert_anchor)
+    if insert_at < 0:
+        fail("baseStationCongested insertion point missing")
+    recovery_impl = r'''#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+int MyMesh::v2RecoverPacketQueues() {
+  return p1_base_station_pool.recoverQueues();
+}
+
+bool MyMesh::v2RecoverRadio() {
   radio_driver.powerOff();
   delay(20);
   if (!radio_init()) return false;
+
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
-  radio_driver.setTxPower(_prefs.tx_power_dbm);
+  radio_driver.setTxPower(_prefs.tx_power_dbm > 22 ? 22 : _prefs.tx_power_dbm);
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain);
   return true;
-#else
-  return false;
-#endif
 }
+#endif
 
-void MyMesh::formatBaseStationHealth(char* reply) const {
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  snprintf(reply, 190,
-           "P1V2 mesh:%u power:%u free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu cad:%s",
-           (unsigned)getV2MeshPressureState(), (unsigned)baseStationPowerState(),
+'''
+    s = s[:insert_at] + recovery_impl + s[insert_at:]
+
+    old_health = """  snprintf(reply, 160,
+           "P1V1 free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu",
            baseStationFreePackets(), baseStationTxQueued(), baseStationRxQueued(),
            (unsigned long)baseStationDroppedTx(), (unsigned long)baseStationDroppedRx(),
            (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
-           (unsigned long)getTotalAirTime(),
-           getCADEnabled() ? "on" : "off");
+           (unsigned long)getTotalAirTime());
+"""
+    new_health = """#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  snprintf(reply, 160,
+           "P1V2 free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u mesh:%u pwr:%u mv:%u",
+           baseStationFreePackets(), baseStationTxQueued(), baseStationRxQueued(),
+           (unsigned long)baseStationDroppedTx(), (unsigned long)baseStationDroppedRx(),
+           (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
+           (unsigned)getV2MeshPressureState(), (unsigned)getV2PowerState(),
+           (unsigned)getV2BatteryMv());
 #else
   snprintf(reply, 160,
            "P1V1 free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu",
@@ -183,190 +277,152 @@ void MyMesh::formatBaseStationHealth(char* reply) const {
            (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
            (unsigned long)getTotalAirTime());
 #endif
-}
 """
-    s=once(s,old,new,"radio recovery + power health")
+    s = replace_once(s, old_health, new_health, "V2 health format")
     mesh_cpp.write_text(s)
 
-    s=sup_h.read_text()
-    s=once(s,
-      """  uint32_t congestion_events = 0;
-  uint32_t pool_stall_recoveries = 0;
-""",
-      """  uint32_t congestion_events = 0;
-  uint32_t pool_stall_recoveries = 0;
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  uint32_t next_power_check = 0;
-  uint8_t power_state = 0; // 0 normal, 1 eco, 2 critical, 3 protect
-  uint8_t low_voltage_samples = 0;
-  bool soft_radio_recovery_attempted = false;
+    # Credential disclosure must never live in MyMesh::handleCommand because remote
+    # admins supply their own message timestamp. Expose only a formatter and call it
+    # from the physical Serial handler in main.cpp.
+    s = mesh_h.read_text()
+    anchor = """  bool getV2BackgroundSuppressed() const { return v2_background_suppressed; }
+  int v2RecoverPacketQueues();
+  bool v2RecoverRadio();
 #endif
-""",
-      "solar/recovery fields")
-    s=once(s,
-      """  uint32_t getPoolStallRecoveries() const { return pool_stall_recoveries; }
-};
-""",
-      """  uint32_t getPoolStallRecoveries() const { return pool_stall_recoveries; }
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  uint8_t getPowerState() const { return power_state; }
-#endif
-};
-""",
-      "power state getter")
-    sup_h.write_text(s)
-
-    s=sup_cpp.read_text()
-    s=once(s,
-      """#define P1_SUPERVISOR_INTERVAL_MS 5000UL
-#define P1_POOL_STALL_REBOOT_MS 120000UL
-""",
-      """#define P1_SUPERVISOR_INTERVAL_MS 5000UL
-#define P1_POOL_STALL_REBOOT_MS 120000UL
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-#define P1_POOL_SOFT_RECOVERY_MS 60000UL
-#define P1_POWER_CHECK_MS 30000UL
-#define P1_POWER_ECO_MV 3600
-#define P1_POWER_ECO_RECOVER_MV 3700
-#define P1_POWER_CRITICAL_MV 3450
-#define P1_POWER_CRITICAL_RECOVER_MV 3550
-#define P1_POWER_PROTECT_MV 3300
-#endif
-""",
-      "phase2 thresholds")
-
-    s=once(s,
-      """  last_traffic_total =
-      mesh.getNumSentFlood() + mesh.getNumSentDirect() +
-      mesh.getNumRecvFlood() + mesh.getNumRecvDirect();
-}
-""",
-      """  last_traffic_total =
-      mesh.getNumSentFlood() + mesh.getNumSentDirect() +
-      mesh.getNumRecvFlood() + mesh.getNumRecvDirect();
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  next_power_check = now;
-  power_state = 0;
-  low_voltage_samples = 0;
-  soft_radio_recovery_attempted = false;
-  mesh.setBaseStationPowerState(power_state);
-#endif
-}
-""",
-      "phase2 begin")
-
-    marker="""  if (mesh.baseStationCongested()) {
-    congestion_events++;
-  }
-
 """
-    add=marker+"""#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  if ((int32_t)(now - next_power_check) >= 0) {
-    next_power_check = now + P1_POWER_CHECK_MS;
-    const uint16_t mv = ::board.getBattMilliVolts();
+    replacement = """  bool getV2BackgroundSuppressed() const { return v2_background_suppressed; }
+  int v2RecoverPacketQueues();
+  bool v2RecoverRadio();
+  void formatV2LocalCredential(char* reply) const {
+    snprintf(reply, 160, "credential:%s", _prefs.password);
+  }
+#endif
+"""
+    s = replace_once(s, anchor, replacement, "local credential formatter")
+    mesh_h.write_text(s)
 
-    if (::board.isExternalPowered() || mv <= 1000) {
-      power_state = 0;
-      low_voltage_samples = 0;
+
+    # ------------------------------------------------------------------
+    # Main loop: Solar Guardian runs alongside adaptive mesh + supervisor.
+    # Credential readback is intercepted here, before MyMesh::handleCommand,
+    # so it is physically local to the USB serial console.
+    # ------------------------------------------------------------------
+    s = main_cpp.read_text()
+    serial_anchor = """#else
+    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+#endif
+"""
+    serial_replacement = """#else
+#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+    if (strcmp(command, "base credential") == 0) {
+      the_mesh.formatV2LocalCredential(reply);
     } else {
-      if (mv < P1_POWER_PROTECT_MV) {
-        if (low_voltage_samples < 255) low_voltage_samples++;
-      } else {
-        low_voltage_samples = 0;
-      }
-
-      if (low_voltage_samples >= 2) {
-        power_state = 3;
-        mesh.setBaseStationPowerState(power_state);
-        MESH_DEBUG_PRINTLN("P1 V2 Solar Guardian: %u mV -> protective shutdown", mv);
-        ::board.lowVoltageProtect();
-        return;
-      }
-
-      if (power_state == 0) {
-        if (mv < P1_POWER_ECO_MV) power_state = 1;
-      } else if (power_state == 1) {
-        if (mv >= P1_POWER_ECO_RECOVER_MV) power_state = 0;
-        else if (mv < P1_POWER_CRITICAL_MV) power_state = 2;
-      } else if (power_state == 2) {
-        if (mv >= P1_POWER_CRITICAL_RECOVER_MV) power_state = 1;
-      }
-    }
-    mesh.setBaseStationPowerState(power_state);
-  }
-#endif
-
-"""
-    s=once(s,marker,add,"Solar Guardian loop")
-
-    old="""    if (pool_stalled && no_progress) {
-      pool_stall_recoveries++;
-      MESH_DEBUG_PRINTLN(
-          "P1 supervisor: packet pool stalled (tx=%d rx=%d), rebooting",
-          tx_queued, rx_queued);
-      board.reboot();
-    }
-  } else {
-    zero_free_since = 0;
-  }
-}
-"""
-    new="""#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-    const bool soft_recovery_due =
-        (uint32_t)(now - zero_free_since) >= P1_POOL_SOFT_RECOVERY_MS &&
-        no_progress && !soft_radio_recovery_attempted;
-
-    if (soft_recovery_due) {
-      soft_radio_recovery_attempted = true;
-      if (mesh.baseStationRecoverRadio()) {
-        pool_stall_recoveries++;
-        last_progress_at = now; // grant the recovered radio a fresh observation window
-        MESH_DEBUG_PRINTLN("P1 V2 supervisor: soft radio recovery applied");
-      }
-    }
-
-    if (pool_stalled && no_progress && soft_radio_recovery_attempted) {
-      MESH_DEBUG_PRINTLN(
-          "P1 V2 supervisor: hard stall remains (tx=%d rx=%d), rebooting",
-          tx_queued, rx_queued);
-      board.reboot();
+      the_mesh.handleCommand(0, command, reply);  // physical Serial CLI
     }
 #else
-    if (pool_stalled && no_progress) {
-      pool_stall_recoveries++;
-      MESH_DEBUG_PRINTLN(
-          "P1 supervisor: packet pool stalled (tx=%d rx=%d), rebooting",
-          tx_queued, rx_queued);
-      board.reboot();
-    }
+    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
 #endif
-  } else {
-    zero_free_since = 0;
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-    soft_radio_recovery_attempted = false;
 #endif
-  }
-}
 """
-    s=once(s,old,new,"staged recovery")
-    sup_cpp.write_text(s)
+    s = replace_once(s, serial_anchor, serial_replacement, "USB-only credential route")
+    s = replace_once(
+        s,
+        '#include "AdaptiveMeshController.h"\n',
+        '#include "AdaptiveMeshController.h"\n#include "SolarGuardian.h"\n',
+        "Solar Guardian include",
+    )
+    s = replace_once(
+        s,
+        """static AdaptiveMeshController v2_adaptive_mesh(the_mesh);
+#endif
+#endif
+""",
+        """static AdaptiveMeshController v2_adaptive_mesh(the_mesh);
+static SolarGuardian v2_solar_guardian(board, the_mesh);
+#endif
+#endif
+""",
+        "Solar Guardian instance",
+    )
+    s = replace_once(
+        s,
+        """  v2_adaptive_mesh.begin();
+#endif
+#endif
+}
+""",
+        """  v2_adaptive_mesh.begin();
+  v2_solar_guardian.begin();
+#endif
+#endif
+}
+""",
+        "Solar Guardian begin",
+    )
+    s = replace_once(
+        s,
+        """  v2_adaptive_mesh.loop();
+#endif
+#endif
+  sensors.loop();
+""",
+        """  v2_adaptive_mesh.loop();
+  v2_solar_guardian.loop();
+#endif
+#endif
+  sensors.loop();
+""",
+        "Solar Guardian loop",
+    )
+    main_cpp.write_text(s)
 
-    checks={
-      "board":board_h.read_text(),
-      "meshcpp":mesh_cpp.read_text(),
-      "meshh":mesh_h.read_text(),
-      "suph":sup_h.read_text(),
-      "supcpp":sup_cpp.read_text(),
+    checks = {
+        "variants/sensecap_solar/SenseCapSolarBoard.h": [
+            "enterV2LowVoltageProtection",
+            "SHUTDOWN_REASON_LOW_VOLTAGE",
+        ],
+        "src/helpers/StaticPoolPacketManager.cpp": [
+            "recoverQueues()",
+            "send_queue.removeByIdx(0)",
+            "rx_queue.removeByIdx(0)",
+        ],
+        "examples/simple_repeater/MyMesh.cpp": [
+            "random_secret[7]",
+            "v2RecoverPacketQueues",
+            "v2RecoverRadio",
+            "P1V2 free:",
+        ],
+        "examples/simple_repeater/MyMesh.h": [
+            "v2_power_airtime_factor",
+            "setV2PowerPolicy",
+            "v2_background_suppressed",
+            "formatV2LocalCredential",
+        ],
+        "examples/simple_repeater/main.cpp": [
+            "SolarGuardian",
+            "v2_solar_guardian.loop()",
+            'strcmp(command, "base credential") == 0',
+            "formatV2LocalCredential",
+        ],
+        "examples/simple_repeater/BaseStationSupervisor.cpp": [
+            "V2_RECOVERY_STAGE_MS",
+            "v2RecoverPacketQueues",
+            "v2RecoverRadio",
+        ],
+        "examples/simple_repeater/SolarGuardian.cpp": [
+            "V2_POWER_BOOTLOCK_MV",
+            "enterV2LowVoltageProtection",
+            "setV2PowerPolicy",
+        ],
     }
-    for m in ("lowVoltageProtect()","SHUTDOWN_REASON_LOW_VOLTAGE"):
-        if m not in checks["board"]: fail("board power hook missing "+m)
-    for m in ('strcmp(_prefs.password, "password") == 0',"getRNG()->random(entropy","P1-%s",
-              "baseStationRecoverRadio()","mesh:%u power:%u"):
-        if m not in checks["meshcpp"]: fail("trust/recovery marker missing "+m)
-    for m in ("P1_POWER_PROTECT_MV 3300","low_voltage_samples >= 2","P1_POOL_SOFT_RECOVERY_MS 60000UL",
-              "soft_radio_recovery_attempted","::board.lowVoltageProtect()"):
-        if m not in checks["supcpp"]: fail("supervisor marker missing "+m)
+    for rel, markers in checks.items():
+        data = (root / rel).read_text()
+        for marker in markers:
+            if marker not in data:
+                fail(f"{rel}: missing marker {marker}")
 
-    print("P1 Pro V2 phase 2 applied: Solar Guardian + staged recovery + unique admin")
+    print("P1 Pro V2 phase 2 applied: Solar Guardian + staged recovery + unique credential")
 
-if __name__=="__main__": main()
+
+if __name__ == "__main__":
+    main()

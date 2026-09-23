@@ -1,54 +1,93 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import pathlib,sys
+import pathlib, sys
 
-def die(x): raise SystemExit("P1 Pro V2 phase-2 contract failure: "+x)
+def die(msg: str) -> None:
+    raise SystemExit("P1 Pro V2 phase-2 contract failure: " + msg)
 
-def main():
-    if len(sys.argv)!=2: die("usage: test_phase2.py <patched MeshCore>")
-    root=pathlib.Path(sys.argv[1])
+def main() -> None:
+    if len(sys.argv) != 2:
+        die("usage: test_phase2.py <V2-phase2-patched MeshCore checkout>")
+
+    root=pathlib.Path(sys.argv[1]).resolve()
     board=(root/"variants/sensecap_solar/SenseCapSolarBoard.h").read_text()
-    cpp=(root/"examples/simple_repeater/MyMesh.cpp").read_text()
-    h=(root/"examples/simple_repeater/MyMesh.h").read_text()
-    sh=(root/"examples/simple_repeater/BaseStationSupervisor.h").read_text()
-    sc=(root/"examples/simple_repeater/BaseStationSupervisor.cpp").read_text()
+    mgr_h=(root/"src/helpers/StaticPoolPacketManager.h").read_text()
+    mgr_cpp=(root/"src/helpers/StaticPoolPacketManager.cpp").read_text()
+    mesh_h=(root/"examples/simple_repeater/MyMesh.h").read_text()
+    mesh_cpp=(root/"examples/simple_repeater/MyMesh.cpp").read_text()
+    supervisor=(root/"examples/simple_repeater/BaseStationSupervisor.cpp").read_text()
+    solar=(root/"examples/simple_repeater/SolarGuardian.cpp").read_text()
+    main=(root/"examples/simple_repeater/main.cpp").read_text()
 
-    # Hard safety threshold must match SenseCAP upstream boot protection.
-    variant=(root/"variants/sensecap_solar/variant.h").read_text()
-    assert "PWRMGT_VOLTAGE_BOOTLOCK (3300)" in variant
-    for m in ("#define P1_POWER_PROTECT_MV 3300","low_voltage_samples >= 2",
-              "::board.lowVoltageProtect()","SHUTDOWN_REASON_LOW_VOLTAGE"):
-        if m not in sc+"\n"+board: die("low-voltage contract missing "+m)
+    for marker in (
+        "enterV2LowVoltageProtection",
+        "SHUTDOWN_REASON_LOW_VOLTAGE",
+        "shutdownPeripherals()",
+    ):
+        if marker not in board: die("protected low-voltage path missing: "+marker)
 
-    # Load shedding has hysteresis and does not disable the LoRa dataplane.
-    for m in ("P1_POWER_ECO_MV 3600","P1_POWER_ECO_RECOVER_MV 3700",
-              "P1_POWER_CRITICAL_MV 3450","P1_POWER_CRITICAL_RECOVER_MV 3550",
-              "setBaseStationPowerState"):
-        if m not in sc+"\n"+h: die("power-state contract missing "+m)
-    if "disable_fwd = 1" in sc: die("Solar Guardian must not disable routing")
+    for marker in (
+        "recoverQueues()",
+        "send_queue.removeByIdx(0)",
+        "rx_queue.removeByIdx(0)",
+    ):
+        if marker not in mgr_h+"\n"+mgr_cpp:
+            die("bounded queue recovery missing: "+marker)
 
-    # Published upstream default admin credential is replaced locally on first boot.
-    for m in ('strcmp(_prefs.password, "password") == 0',
-              "getRNG()->random(entropy", 'snprintf(_prefs.password', '"P1-%s"', "_cli.savePrefs(_fs)"):
-        if m not in cpp: die("unique admin generation missing "+m)
+    for marker in (
+        "v2_power_airtime_factor",
+        "v2_background_suppressed",
+        "setV2PowerPolicy",
+        "v2RecoverPacketQueues",
+        "v2RecoverRadio",
+    ):
+        if marker not in mesh_h+"\n"+mesh_cpp:
+            die("V2 power/recovery API missing: "+marker)
 
-    # A soft radio recovery must precede the existing hard reboot path.
-    for m in ("P1_POOL_SOFT_RECOVERY_MS 60000UL","baseStationRecoverRadio()",
-              "soft_radio_recovery_attempted","P1_POOL_STALL_REBOOT_MS 120000UL","board.reboot()"):
-        if m not in sc+"\n"+cpp: die("staged recovery missing "+m)
-    if sc.find("baseStationRecoverRadio()") > sc.find("board.reboot()"):
-        die("soft recovery must appear before hard reboot")
+    for marker in (
+        'strcmp(_prefs.password, "password") == 0',
+        "random_secret[7]",
+    ):
+        if marker not in mesh_cpp:
+            die("unique credential generation missing: "+marker)
 
-    # Adaptive CAD is disabled automatically in low-power modes unless the
-    # operator explicitly enabled CAD.
-    if "(p1_power_state == 0 && v2_adaptive_cad)" not in h:
-        die("power-aware adaptive CAD missing")
+    for marker in (
+        "formatV2LocalCredential",
+        'strcmp(command, "base credential") == 0',
+    ):
+        if marker not in mesh_h+"\n"+main:
+            die("USB-only credential route missing: "+marker)
 
-    # V2 remains exactly on the phase-1 radio/adaptive contract.
-    for m in ("869.618f","62.5f","_prefs.sf = 8","_prefs.cr = 5",
-              "getV2MeshPressureState", "setV2AdaptiveMeshPolicy"):
-        if m not in cpp + "\n" + h: die("EU868/adaptive contract regression "+m)
+    if 'strcmp(command, "base credential") == 0' in mesh_cpp:
+        die("credential command must not be reachable through MyMesh remote command path")
+
+    for marker in (
+        "#define V2_RECOVERY_STAGE_MS 60000UL",
+        "v2RecoverPacketQueues()",
+        "v2RecoverRadio()",
+        "staged recovery exhausted",
+        "board.reboot()",
+    ):
+        if marker not in supervisor:
+            die("staged recovery missing: "+marker)
+
+    for marker in (
+        "#define V2_POWER_ECO_MV           3700",
+        "#define V2_POWER_SURVIVAL_MV      3500",
+        "#define V2_POWER_CRITICAL_MV      3350",
+        "#define V2_POWER_BOOTLOCK_MV      3300",
+        "V2_POWER_SHUTDOWN_SAMPLES 3",
+        "factors[] = {9.0f, 19.0f, 49.0f, 99.0f}",
+        "state >= SURVIVAL",
+        "enterV2LowVoltageProtection",
+    ):
+        if marker not in solar:
+            die("Solar Guardian contract missing: "+marker)
+
+    if "v2_solar_guardian.loop();" not in main:
+        die("Solar Guardian not serviced")
 
     print("P1 Pro V2 phase-2 contracts OK")
 
-if __name__=="__main__": main()
+if __name__=="__main__":
+    main()
