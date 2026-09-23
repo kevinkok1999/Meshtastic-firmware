@@ -46,31 +46,36 @@ def main():
 
     s=mesh_h.read_text()
     s=once(s,
-      "  bool _logging;\n",
-      """  bool _logging;
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+      """  float v2_adaptive_airtime_factor = 9.0f;
+  bool v2_adaptive_cad = false;
+  uint8_t v2_mesh_pressure_state = 0;
+""",
+      """  float v2_adaptive_airtime_factor = 9.0f;
+  bool v2_adaptive_cad = false;
+  uint8_t v2_mesh_pressure_state = 0;
   uint8_t p1_power_state = 0;
-#endif
 """,
       "power state field")
     s=once(s,
-      """  uint8_t baseStationPressureLevel() const;
-  bool baseStationCongested() const;
-  void formatBaseStationHealth(char* reply) const;
+      """  float getV2AdaptiveAirtimeFactor() const { return v2_adaptive_airtime_factor; }
+  bool getV2AdaptiveCad() const { return v2_adaptive_cad; }
+  uint8_t getV2MeshPressureState() const { return v2_mesh_pressure_state; }
+#endif
 """,
-      """  uint8_t baseStationPressureLevel() const;
-  bool baseStationCongested() const;
+      """  float getV2AdaptiveAirtimeFactor() const { return v2_adaptive_airtime_factor; }
+  bool getV2AdaptiveCad() const { return v2_adaptive_cad; }
+  uint8_t getV2MeshPressureState() const { return v2_mesh_pressure_state; }
   void setBaseStationPowerState(uint8_t state) { p1_power_state = state; }
   uint8_t baseStationPowerState() const { return p1_power_state; }
   bool baseStationRecoverRadio();
-  void formatBaseStationHealth(char* reply) const;
+#endif
 """,
       "phase2 station API")
     s=once(s,
-      """    return _prefs.cad_enabled || baseStationPressureLevel() >= 2;
+      """    return _prefs.cad_enabled || v2_adaptive_cad;
 """,
       """    return _prefs.cad_enabled ||
-           (baseStationPowerState() == 0 && baseStationPressureLevel() >= 2);
+           (p1_power_state == 0 && v2_adaptive_cad);
 """,
       "power-aware CAD AUTO")
     mesh_h.write_text(s)
@@ -78,21 +83,26 @@ def main():
     s=mesh_cpp.read_text()
     # First-boot trust: never leave the published upstream default password active.
     anchor="""#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  // V2 is intentionally EU868 + T-Deck V19 compatible only.
   _prefs.freq = 869.618f;
   _prefs.bw = 62.5f;
   _prefs.sf = 8;
   _prefs.cr = 5;
   if (_prefs.tx_power_dbm > 22) _prefs.tx_power_dbm = 22;
-#endif
+  // Never relax a stricter user-set airtime limit.
+  if (_prefs.airtime_factor < 9.0f) _prefs.airtime_factor = 9.0f;
 #endif
   acl.load(_fs, self_id);
 """
     repl="""#if defined(MESH_OFFGRIDNL_P1PRO_V2)
+  // V2 is intentionally EU868 + T-Deck V19 compatible only.
   _prefs.freq = 869.618f;
   _prefs.bw = 62.5f;
   _prefs.sf = 8;
   _prefs.cr = 5;
   if (_prefs.tx_power_dbm > 22) _prefs.tx_power_dbm = 22;
+  // Never relax a stricter user-set airtime limit.
+  if (_prefs.airtime_factor < 9.0f) _prefs.airtime_factor = 9.0f;
 
   // Replace only the published upstream factory default. Existing operator
   // credentials survive a V1 -> V2 upgrade.
@@ -105,37 +115,41 @@ def main():
     _cli.savePrefs(_fs);
   }
 #endif
-#endif
   acl.load(_fs, self_id);
 """
     s=once(s,anchor,repl,"unique admin first boot")
 
     s=once(s,
       """bool MyMesh::baseStationCongested() const {
-  return baseStationPressureLevel() >= 1;
+  return p1_base_station_pool.getFreeCount() <= 6 ||
+         p1_base_station_pool.getOutboundTotal() >= 24 ||
+         p1_base_station_pool.getInboundTotal() >= 24;
 }
 """,
       """bool MyMesh::baseStationCongested() const {
 #if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  // ECO/CRITICAL power states shed background adverts even if queues are quiet.
-  return baseStationPressureLevel() >= 1 || baseStationPowerState() >= 1;
+  // Preserve V1 queue protection and shed background adverts in ECO/CRITICAL.
+  return p1_base_station_pool.getFreeCount() <= 6 ||
+         p1_base_station_pool.getOutboundTotal() >= 24 ||
+         p1_base_station_pool.getInboundTotal() >= 24 ||
+         baseStationPowerState() >= 1;
 #else
-  return baseStationPressureLevel() >= 1;
+  return p1_base_station_pool.getFreeCount() <= 6 ||
+         p1_base_station_pool.getOutboundTotal() >= 24 ||
+         p1_base_station_pool.getInboundTotal() >= 24;
 #endif
 }
 """,
       "power-aware background shedding")
 
     old="""void MyMesh::formatBaseStationHealth(char* reply) const {
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-  snprintf(reply, 180,
-           "P1V2 p:%u free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu cad:%s",
-           (unsigned)baseStationPressureLevel(),
+  snprintf(reply, 160,
+           "P1V1 free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu",
            baseStationFreePackets(), baseStationTxQueued(), baseStationRxQueued(),
            (unsigned long)baseStationDroppedTx(), (unsigned long)baseStationDroppedRx(),
            (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
-           (unsigned long)getTotalAirTime(),
-           getCADEnabled() ? "on" : "off");
+           (unsigned long)getTotalAirTime());
+}
 """
     new="""bool MyMesh::baseStationRecoverRadio() {
 #if defined(MESH_OFFGRIDNL_P1PRO_V2)
@@ -154,13 +168,22 @@ def main():
 void MyMesh::formatBaseStationHealth(char* reply) const {
 #if defined(MESH_OFFGRIDNL_P1PRO_V2)
   snprintf(reply, 190,
-           "P1V2 p:%u power:%u free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu cad:%s",
-           (unsigned)baseStationPressureLevel(), (unsigned)baseStationPowerState(),
+           "P1V2 mesh:%u power:%u free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu cad:%s",
+           (unsigned)getV2MeshPressureState(), (unsigned)baseStationPowerState(),
            baseStationFreePackets(), baseStationTxQueued(), baseStationRxQueued(),
            (unsigned long)baseStationDroppedTx(), (unsigned long)baseStationDroppedRx(),
            (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
            (unsigned long)getTotalAirTime(),
            getCADEnabled() ? "on" : "off");
+#else
+  snprintf(reply, 160,
+           "P1V1 free:%d tx:%d rx:%d drop:%lu/%lu peak:%u/%u air:%lu",
+           baseStationFreePackets(), baseStationTxQueued(), baseStationRxQueued(),
+           (unsigned long)baseStationDroppedTx(), (unsigned long)baseStationDroppedRx(),
+           (unsigned)baseStationPeakTx(), (unsigned)baseStationPeakRx(),
+           (unsigned long)getTotalAirTime());
+#endif
+}
 """
     s=once(s,old,new,"radio recovery + power health")
     mesh_cpp.write_text(s)
@@ -234,10 +257,6 @@ void MyMesh::formatBaseStationHealth(char* reply) const {
 
     marker="""  if (mesh.baseStationCongested()) {
     congestion_events++;
-#if defined(MESH_OFFGRIDNL_P1PRO_V2)
-    MESH_DEBUG_PRINTLN("P1 V2 pressure=%u free=%d tx=%d rx=%d",
-        (unsigned)mesh.baseStationPressureLevel(), free_packets, tx_queued, rx_queued);
-#endif
   }
 
 """
@@ -342,7 +361,7 @@ void MyMesh::formatBaseStationHealth(char* reply) const {
     for m in ("lowVoltageProtect()","SHUTDOWN_REASON_LOW_VOLTAGE"):
         if m not in checks["board"]: fail("board power hook missing "+m)
     for m in ('strcmp(_prefs.password, "password") == 0',"getRNG()->random(entropy","P1-%s",
-              "baseStationRecoverRadio()","power:%u"):
+              "baseStationRecoverRadio()","mesh:%u power:%u"):
         if m not in checks["meshcpp"]: fail("trust/recovery marker missing "+m)
     for m in ("P1_POWER_PROTECT_MV 3300","low_voltage_samples >= 2","P1_POOL_SOFT_RECOVERY_MS 60000UL",
               "soft_radio_recovery_attempted","::board.lowVoltageProtect()"):
