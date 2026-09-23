@@ -86,3 +86,30 @@ P1 Pro V1 is not Stable until all of these pass:
 - duplicate/queue stress
 - long-running soak test
 - installer recovery test
+
+
+## Phase 2 implementation status
+
+The resilience branch adds the following without changing the MeshCore wire format:
+
+- fixed 32-packet pool retained
+- inbound/outbound queue drop counters
+- TX/RX queue high-water marks
+- P1 `base health` diagnostics command
+- periodic advert suppression under queue pressure
+- conservative packet-pool stall recovery:
+  - pool must remain fully exhausted
+  - traffic counters must show no progress
+  - both conditions must persist for 120 seconds
+  - only then is a board reboot allowed
+- nRF52 power-saving enabled for fresh P1 V1 installs
+- GPS remains off by default
+- preferences use temp/backup/rename with boot fallback instead of delete-before-write
+
+Phase 2 deliberately does **not**:
+- enlarge the packet pool
+- increase RF output power
+- force CAD/interference thresholds without site measurements
+- force continuous GPS
+- change the MeshCore packet format
+- publish a production release
