@@ -120,6 +120,13 @@ jobs:
               "target": os.environ["TARGET"],
               "mcu": "nRF52840",
               "radio": "SX1262",
+              "radioProfile": {
+                  "frequencyMHz": 869.618,
+                  "bandwidthKHz": 62.5,
+                  "spreadingFactor": 8,
+                  "codingRate": 5,
+                  "txPowerDbm": 22
+              },
               "protocol": "MeshCore",
               "role": "repeater-base-station",
               "meshcoreCommit": os.environ["MESHCORE_COMMIT"],
@@ -210,6 +217,7 @@ jobs:
           - unscoped ceiling 6 hops
           - advert ceiling 8 hops
           - one-byte path mode
+          - V19 radio defaults: 869.618 MHz / 62.5 kHz / SF8 / CR5 / 22 dBm
           - fixed 32-packet pool
           - queue drop/high-water diagnostics
           - congestion-aware periodic adverts

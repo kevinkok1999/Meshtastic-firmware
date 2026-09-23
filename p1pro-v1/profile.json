@@ -45,5 +45,16 @@
     "configSafety": "temp-backup-rename-rollback",
     "powerSavingDefault": true,
     "gpsForcedOn": false
+  },
+  "compatibility": {
+    "tDeckLine": "MeshOffGridNL T-Deck V19"
+  },
+  "radioProfile": {
+    "frequencyMHz": 869.618,
+    "bandwidthKHz": 62.5,
+    "spreadingFactor": 8,
+    "codingRate": 5,
+    "txPowerDbm": 22,
+    "source": "WadaMesh beta_83 T-Deck V19 build defaults"
   }
 }

@@ -40,6 +40,11 @@ def main() -> None:
         "MESH_OFFGRIDNL_P1PRO_FLOOD_MAX=48",
         "MESH_OFFGRIDNL_P1PRO_UNSCOPED_MAX=6",
         "MESH_OFFGRIDNL_P1PRO_ADVERT_MAX=8",
+        "-D LORA_FREQ=869.618",
+        "-D LORA_BW=62.5",
+        "-D LORA_SF=8",
+        "-D LORA_CR=5",
+        "-D LORA_TX_POWER=22",
         "_prefs.path_hash_mode = 0;",
     ):
         if marker not in variant + "\n" + repeater:

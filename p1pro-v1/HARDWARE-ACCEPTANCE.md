@@ -18,7 +18,13 @@ RC1 may be published for controlled hardware validation. It MUST NOT be promoted
 - After a cold power cycle, the node returns without manual intervention.
 
 ## Gate B — V19 radio compatibility
-Use the exact radio profile currently used by the proven T-Deck V19 network.
+Use the exact pinned V19 fresh-install radio profile:
+
+- 869.618 MHz
+- 62.5 kHz bandwidth
+- SF8
+- CR5
+- 22 dBm TX target
 
 - T-Deck V19 can hear/discover the P1 Pro V1 repeater.
 - P1 Pro V1 can receive traffic originating from T-Deck V19.

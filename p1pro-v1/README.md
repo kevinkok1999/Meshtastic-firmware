@@ -113,3 +113,19 @@ Phase 2 deliberately does **not**:
 - force continuous GPS
 - change the MeshCore packet format
 - publish a production release
+
+
+## V19 radio compatibility lock
+
+A factory-clean P1 Pro V1 install starts on the exact LoRa defaults used by the pinned
+MeshOffGridNL T-Deck V19 WadaMesh build:
+
+- frequency: 869.618 MHz
+- bandwidth: 62.5 kHz
+- spreading factor: SF8
+- coding rate: CR5
+- TX power target: 22 dBm (hardware/region constraints still apply)
+
+These values are build-time fresh-install defaults only. Persisted user configuration is
+not silently overwritten on later boots. The website RC1 flow requires the factory-clean
+erase step so first pairing with V19 is deterministic.

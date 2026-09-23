@@ -43,6 +43,10 @@ build_flags =
   -D MESH_OFFGRIDNL_P1PRO_FLOOD_MAX=48
   -D MESH_OFFGRIDNL_P1PRO_UNSCOPED_MAX=6
   -D MESH_OFFGRIDNL_P1PRO_ADVERT_MAX=8
+  -D LORA_FREQ=869.618
+  -D LORA_BW=62.5
+  -D LORA_SF=8
+  -D LORA_CR=5
 """
     v = replace_once(v, anchor, replacement, "SenseCAP Solar V1 build flags")
     variant.write_text(v)
