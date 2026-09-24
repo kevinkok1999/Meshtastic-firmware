@@ -126,6 +126,42 @@ def main() -> None:
         if cmd not in ws:
             die("existing browser chat command missing " + cmd)
 
+    # Secure short-code private-channel lifecycle must be complete end to end.
+    for marker in (
+        "JOIN_BUNDLE_LEN = 84",
+        "M28J",
+        "MOG28-JOIN-BUNDLE",
+        "deriveDmKeyAny",
+        "v28CalcSharedSecretAny",
+        "WORK_INVITE_CREATE",
+        "WORK_INVITE_REQUEST",
+        "WORK_INVITE_LIST",
+        "WORK_INVITE_DECIDE",
+        "WORK_INVITE_STATUS",
+        "invite_status",
+        "createChannelInvite",
+        "requestChannelJoin",
+        "decideJoinRequest",
+    ):
+        if marker not in bridge_h + "\n" + bridge_cpp + "\n" + mesh:
+            die("secure short-code join marker missing " + marker)
+
+    for marker in (
+        "XXXX-XXXX",
+        "Approve join request",
+        "Create securely",
+        "Request access",
+        "@vc ",
+        "@vj ",
+        "@vl",
+        "@va ",
+        "@vd ",
+        "v28Channels",
+        "v28Event",
+    ):
+        if marker not in ui + "\n" + ws:
+            die("short-code UX/browser marker missing " + marker)
+
     # Privacy may secure the secondary Internet copy but never tear down RF/Wi-Fi.
     for forbidden in (".setInsecure(","WiFi.disconnect(true","WiFi.mode(WIFI_OFF)","esp_wifi_stop()"):
         if forbidden in bridge_cpp:
