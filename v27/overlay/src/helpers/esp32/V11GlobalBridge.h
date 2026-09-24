@@ -33,9 +33,11 @@ public:
     bool noteLoRaDM(const uint8_t senderPub[32], uint32_t timestamp, const char* text);
 
     bool connected() { return _mqtt.connected(); }
+    bool tryGlobalFirstDM(const ContactInfo& recipient, uint32_t timestamp, const char* text);
 
 private:
-    static constexpr uint8_t PROTOCOL_VERSION = 2;
+    static constexpr uint8_t PROTOCOL_VERSION = 3;
+    static constexpr size_t MSG_ID_LEN = 16;
     static constexpr uint8_t KIND_DM = 1;
     static constexpr uint8_t KIND_CHANNEL = 2;
     static constexpr size_t MAX_TEXT = 160;
@@ -44,9 +46,9 @@ private:
     // 0..3   magic MG27
     // 4      protocol version
     // 5      kind
-    // 6..13  keyed opaque message id
-    // 14..21 randomized unlinkability padding (no sender identity hint)
-    // 22..33 random GCM nonce
+    // 6..21  keyed opaque 128-bit message id
+    // 22..29 randomized unlinkability padding (no sender identity hint)
+    // 30..41 random GCM nonce
     // 34..   fixed-size ciphertext:
     //        common fixed-size plaintext budget[262]. DM uses:
     //        sender pub[32] | timestamp[4] | text_len[2] | text/padding.
@@ -57,8 +59,8 @@ private:
     //
     // Exact timestamp, full sender key and exact text length are therefore not
     // visible to the broker. Every V27 envelope has the same on-wire payload size.
-    static constexpr size_t HEADER_LEN = 34;
-    static constexpr size_t AAD_LEN = 22;
+    static constexpr size_t HEADER_LEN = 42;
+    static constexpr size_t AAD_LEN = 30;
     static constexpr size_t PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT;
     static constexpr size_t TAG_LEN = 16;
     static constexpr size_t MAX_WIRE = HEADER_LEN + PLAIN_LEN + TAG_LEN;
@@ -71,7 +73,7 @@ private:
     static constexpr uint32_t RETRY_MAX_MS = 60000;
     static constexpr uint32_t RX_RATE_WINDOW_MS = 10000;
     static constexpr uint16_t RX_RATE_MAX_PER_WINDOW = 100;
-    static_assert(MAX_WIRE == 312, "V27 privacy envelope size changed unexpectedly");
+    static_assert(MAX_WIRE == 320, "V27 privacy envelope size changed unexpectedly");
     static_assert(MAX_WIRE < 400, "V27 envelope must stay comfortably inside the MQTT client buffer");
 
     struct Pending {
@@ -113,8 +115,12 @@ private:
     uint8_t _subChannelIdx = 0;
     uint32_t _rxWindowStartMs = 0;
     uint16_t _rxWindowCount = 0;
-    uint64_t _dedup[DEDUP_CAP] = {};
+    uint8_t _dedup[DEDUP_CAP][MSG_ID_LEN] = {};
     uint8_t _dedupNext = 0;
+    static constexpr int GLOBAL_PEER_CAP = 32;
+    uint8_t _globalPeers[GLOBAL_PEER_CAP][PUB_KEY_SIZE] = {};
+    uint8_t _globalPeerCount = 0;
+    uint8_t _globalPeerNext = 0;
 
     static V11GlobalBridge* s_instance;
     static void mqttThunk(char* topic, uint8_t* payload, unsigned int len);
@@ -139,12 +145,14 @@ private:
 
     void routeTopicFor(const uint8_t pub[32], char* out, size_t outCap) const;
     void routeTopicForChannel(const uint8_t secret[PUB_KEY_SIZE], char* out, size_t outCap) const;
-    bool messageIdFor(const uint8_t peerPub[32], uint32_t timestamp, const char* text, uint8_t out[8]) const;
-    bool channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text, uint8_t out[8]) const;
+    bool messageIdFor(const uint8_t peerPub[32], uint32_t timestamp, const char* text, uint8_t out[MSG_ID_LEN]) const;
+    bool channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text, uint8_t out[MSG_ID_LEN]) const;
     bool deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) const;
     bool deriveChannelKey(const uint8_t secret[PUB_KEY_SIZE], uint8_t key[32]) const;
     bool allowInbound();
-    bool seenOrRemember(const uint8_t id[8]);
+    bool seenOrRemember(const uint8_t id[MSG_ID_LEN]);
+    bool hasGlobalPeer(const uint8_t pub[PUB_KEY_SIZE]) const;
+    void markGlobalPeer(const uint8_t pub[PUB_KEY_SIZE]);
 };
 
 extern V11GlobalBridge v11_global_bridge;
