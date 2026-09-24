@@ -1,0 +1,102 @@
+name: V26 RF Validation
+
+on:
+  push:
+    branches:
+      - v26-rf-intelligence
+    paths:
+      - "v26/release-trigger.txt"
+  workflow_dispatch:
+
+concurrency:
+  group: meshoffgridnl-v26-rf-validation
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-v26:
+    name: V19 base + V26 RF + T-Deck build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned WadaMesh beta_83
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply V11 through V26
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+          python v17/apply_v17.py upstream-wadamesh
+          python v17/tests/test_contracts.py upstream-wadamesh
+          python v18/apply_v18.py upstream-wadamesh
+          python v18/tests/test_contracts.py upstream-wadamesh
+          python v19/apply_v19.py upstream-wadamesh
+          python v19/tests/test_contracts.py upstream-wadamesh
+          python v26/apply_v26.py upstream-wadamesh
+          python v26/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U --no-build-isolation --no-cache-dir "setuptools<72"
+          pip install -U platformio --no-build-isolation
+
+      - name: Build V26 T-Deck / T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v26.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V26 RF Intelligence"'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Verify V26 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          test -f "$BUILD_DIR/firmware.bin"
+          test -f "$BUILD_DIR/firmware-merged.bin"
+          mkdir -p dist
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V26-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin
+          sha256sum dist/*
+
+      - name: Upload validation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MeshOffGridNL-V26-TDeck-Plus-validation
+          path: dist/*
+          retention-days: 30

@@ -1,0 +1,63 @@
+name: Publish MeshOffGridNL V26
+
+on:
+  push:
+    branches:
+      - v26-rf-intelligence
+    paths:
+      - "v26/publish-trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: meshoffgridnl-v26-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Download exact validated V26 artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download 35943848978             --repo kevinkok1999/Meshtastic-firmware             --name MeshOffGridNL-V26-TDeck-Plus-validation             --dir dist
+          test -f dist/MeshOffGridNL-V26-TDeck-Plus.bin
+          test -f dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin
+
+      - name: Verify immutable validated bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -c%s dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin)" = "3473280"
+          echo "7ef8a6a37f26237506d07f5b74b90cd61335ad90579756e5ce02ed5baa5c80c5  dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin" | sha256sum -c -
+          echo "66404edb45b691eda96fb1813f04b215cecc0f9890608e8fa1d747e4983261e0  dist/MeshOffGridNL-V26-TDeck-Plus.bin" | sha256sum -c -
+          (
+            cd dist
+            sha256sum MeshOffGridNL-V26-TDeck-Plus.bin MeshOffGridNL-V26-TDeck-Plus-merged.bin
+          ) > dist/v26-sha256.txt
+
+      - name: Publish validated prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="mesh-v26.0.0-rc1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               dist/MeshOffGridNL-V26-TDeck-Plus.bin               dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin               dist/v26-sha256.txt               --clobber
+          else
+            gh release create "$TAG"               dist/MeshOffGridNL-V26-TDeck-Plus.bin               dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin               dist/v26-sha256.txt               --target "01d259b765790de48ce97373fe67074ebbb14615"               --title "MeshOffGridNL V26 RF Intelligence RC1"               --notes "Exact bytes from successful validation run 35943848978. V26 is based directly on the proven V19 WadaMesh beta_83 stack and adds conservative SX1262 RF health monitoring plus bounded AGC/calibration recovery without changing frequency, bandwidth, spreading factor, coding rate or RX boosted-gain policy."               --prerelease
+          fi

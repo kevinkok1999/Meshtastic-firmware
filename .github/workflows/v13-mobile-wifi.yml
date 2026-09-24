@@ -1,0 +1,197 @@
+name: V13 Mobile Wi-Fi Reliability
+
+on:
+  push:
+    branches:
+      - v13-mobile-wifi
+    paths:
+      - "v11/**"
+      - "v12/**"
+      - "v13/**"
+      - ".github/workflows/v13-mobile-wifi.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v13-mobile-wifi-firmware
+  cancel-in-progress: true
+
+jobs:
+  build-v13:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: v13-pio-${{ runner.os }}-${{ hashFiles('v11/**', 'v12/**', 'v13/**') }}
+
+      - name: Fetch pinned WadaMesh beta_83
+        run: |
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply V11, V12 and V13 layers
+        run: |
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Build once — T-Deck / T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v13.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V13 Mobile Wi-Fi"'
+        run: |
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Package firmware, source and manifest
+        run: |
+          mkdir -p dist
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          BOOT_APP0="$(find ~/.platformio/packages -path '*/tools/partitions/boot_app0.bin' -print -quit)"
+          test -f "$BUILD_DIR/bootloader.bin"
+          test -f "$BUILD_DIR/partitions.bin"
+          test -n "$BOOT_APP0"
+          test -f "$BOOT_APP0"
+
+          cp "$BUILD_DIR/bootloader.bin" dist/MeshOffGridNL-V13-bootloader.bin
+          cp "$BUILD_DIR/partitions.bin" dist/MeshOffGridNL-V13-partitions.bin
+          cp "$BOOT_APP0" dist/MeshOffGridNL-V13-boot_app0.bin
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V13-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V13-TDeck-Plus-merged.bin
+          cp upstream-wadamesh/LICENSE dist/WADAMESH-GPL-3.0-LICENSE.txt
+
+          tar             --exclude='upstream-wadamesh/.git'             --exclude='upstream-wadamesh/.pio'             -czf dist/MeshOffGridNL-V13-corresponding-source.tar.gz             upstream-wadamesh
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+
+          d = pathlib.Path("dist")
+          bootloader = d / "MeshOffGridNL-V13-bootloader.bin"
+          partitions = d / "MeshOffGridNL-V13-partitions.bin"
+          boot_app0 = d / "MeshOffGridNL-V13-boot_app0.bin"
+          app = d / "MeshOffGridNL-V13-TDeck-Plus.bin"
+          merged = d / "MeshOffGridNL-V13-TDeck-Plus-merged.bin"
+
+          def sha(path):
+              h = hashlib.sha256()
+              with path.open("rb") as f:
+                  for block in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(block)
+              return h.hexdigest()
+
+          manifest = {
+              "schema": 1,
+              "version": "13.0.0-rc1",
+              "label": "MeshOffGridNL V13 Mobile Wi-Fi",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "base": {
+                  "meshOffGridNL": "V12",
+                  "wadameshTag": "beta_83",
+                  "wadameshCommit": "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+              },
+              "wifi": {
+                  "hardwareBand": "2.4 GHz",
+                  "singleReconnectOwner": True,
+                  "selectedApBssidChannelHint": True,
+                  "allChannelFallback": True,
+                  "awakeDuringAssociation": True,
+                  "eraseApOnRetry": False,
+                  "retryIntervalMs": 15000,
+                  "autoScanWhileConnected": False,
+                  "disconnectReasonDiagnostics": True,
+                  "androidHotspotFocused": True
+              },
+              "globalTransport": {
+                  "inheritedFromV11": True,
+                  "activeWhenWifiConnected": True,
+                  "sameChatUi": True,
+                  "payloadEncryption": "AES-256-GCM",
+                  "loraCompatibilityPath": True,
+                  "duplicateSuppression": True,
+                  "status": "beta"
+              },
+              "radio": {
+                  "frequencyMHz": 869.618,
+                  "bandwidthKHz": 62.5,
+                  "spreadingFactor": 8,
+                  "txPowerDbm": 22,
+                  "maxTxPowerDbm": 22,
+                  "unchangedFromV12": True
+              },
+              "validation": {
+                  "compileAndContractTests": True,
+                  "physicalAndroidHotspotTestRequired": True
+              },
+              "flashMode": "nvs-preserving-4-component",
+              "flashFiles": [
+                  {"file": bootloader.name, "address": 0, "addressHex": "0x0000",
+                   "size": bootloader.stat().st_size, "sha256": sha(bootloader)},
+                  {"file": partitions.name, "address": 32768, "addressHex": "0x8000",
+                   "size": partitions.stat().st_size, "sha256": sha(partitions)},
+                  {"file": boot_app0.name, "address": 57344, "addressHex": "0xE000",
+                   "size": boot_app0.stat().st_size, "sha256": sha(boot_app0)},
+                  {"file": app.name, "address": 65536, "addressHex": "0x10000",
+                   "size": app.stat().st_size, "sha256": sha(app)}
+              ],
+              "merged": {
+                  "file": merged.name,
+                  "size": merged.stat().st_size,
+                  "sha256": sha(merged),
+                  "defaultInstaller": False,
+                  "note": "Recovery/full-flash only."
+              }
+          }
+          (d / "v13-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+          sha256sum dist/*
+
+      - name: Publish rolling V13 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: mesh-v13.0.0-rc1
+        run: |
+          NOTES="V13 focuses on T-Deck Android-hotspot reliability: one reconnect owner, exact selected AP BSSID/channel handoff, all-channel fallback, no eraseap on retry, awake radio during association, no automatic rescan over a healthy link, and visible ESP32 disconnect reasons. V11 encrypted worldwide DMs and V12 Wi-Fi list scrolling remain intact. Physical Android-hotspot validation is still required before calling this stable."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG"               --title "MeshOffGridNL V13 Mobile Wi-Fi RC1"               --notes "$NOTES"               --prerelease
+          else
+            gh release create "$TAG" dist/*               --prerelease               --target "$GITHUB_SHA"               --title "MeshOffGridNL V13 Mobile Wi-Fi RC1"               --notes "$NOTES"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V13-TDeck-Plus
+          path: dist/*
+          retention-days: 30
