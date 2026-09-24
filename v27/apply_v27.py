@@ -153,6 +153,21 @@ void MyMesh::v11InjectGlobalDm"""
     if mesh_cpp_text.count(old_cpp) != 1:
         fail("MyMesh V27 contact lookup anchor drifted")
     mesh_cpp_text = mesh_cpp_text.replace(old_cpp, new_cpp, 1)
+    # V11 considered an Internet RAM-queue acceptance equivalent to a send.
+    # V27 keeps the UI honest: if RF failed, the global path only counts when
+    # it was published immediately. Hidden delayed delivery is never reported
+    # as a successful send. If RF succeeded, a bounded global mirror may queue.
+    dm_old = """      (attempt == 0 && recipient.type == ADV_TYPE_CHAT)
+          ? v11_global_bridge.mirrorDM(recipient, timestamp, text)
+          : false;"""
+    dm_new = """      (attempt == 0 && recipient.type == ADV_TYPE_CHAT)
+          ? v11_global_bridge.mirrorDM(recipient, timestamp, text,
+                                       result != MSG_SEND_FAILED)
+          : false;"""
+    if mesh_cpp_text.count(dm_old) != 1:
+        fail("V27 DM honest-send-state anchor drifted")
+    mesh_cpp_text = mesh_cpp_text.replace(dm_old, dm_new, 1)
+
     # Mirror every locally-originated group text at the single shared MeshCore
     # choke point used by touch UI, companion apps and other senders.
     group_send_old = """void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
