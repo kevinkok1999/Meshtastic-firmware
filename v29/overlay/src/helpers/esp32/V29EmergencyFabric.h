@@ -80,26 +80,54 @@ public:
     MemoryStats memoryStats() const;
 
 private:
-    static constexpr uint8_t PROTOCOL_VERSION = 1;
+    static constexpr uint8_t PROTOCOL_VERSION = 2;
     static constexpr size_t WIRE_MAX = MAX_PACKET_PAYLOAD;
-    static constexpr size_t HEADER_LEN = 80;
+    static constexpr size_t HEADER_LEN = 82;
     static constexpr size_t TAG_LEN = 16;
     static constexpr size_t SIG_LEN = SIGNATURE_SIZE;
     static constexpr size_t BODY_MAX = WIRE_MAX - HEADER_LEN - TAG_LEN - SIG_LEN;
     static constexpr size_t ID_LEN = 16;
     static constexpr size_t RECIPIENT_HINT_LEN = 8;
-    static constexpr uint8_t DEFAULT_MAX_CARRY = 4;
-    static constexpr uint8_t DEFAULT_TTL_HOURS = 24;
+
+    static constexpr size_t AGE_MINUTES_OFFSET = 12;
+    static constexpr size_t MSG_ID_OFFSET = 14;
+    static constexpr size_t ORIGIN_OFFSET = 30;
+    static constexpr size_t RECIPIENT_HINT_OFFSET = 62;
+    static constexpr size_t NONCE_OFFSET = 70;
+
+    static constexpr uint8_t DEFAULT_TTL_HOURS = 192;
     static constexpr uint8_t LOCAL_FORWARD_LIMIT = 3;
     static constexpr uint16_t MIN_QUEUE_RECORDS = 24;
-    static constexpr uint16_t MAX_QUEUE_RECORDS = 128;
-    static constexpr uint16_t SEEN_CAP = 64;
+    static constexpr uint16_t MAX_QUEUE_RECORDS = 512;
+    static constexpr uint16_t SEEN_CAP = 256;
     static constexpr uint16_t EVENT_CAP = 8;
+    static constexpr uint8_t MAX_CRITICAL_PER_ORIGIN = 8;
     static constexpr uint32_t STORAGE_TARGET_PERMILLE = 800;
     static constexpr uint32_t MEMORY_TARGET_PERMILLE = 800;
     static constexpr uint32_t MEMORY_RESERVE_PERMILLE = 200;
+
     static_assert(WIRE_MAX == 184, "V29 wire contract assumes MeshCore 184-byte payload");
-    static_assert(BODY_MAX == 24, "V29 structured emergency body contract changed");
+    static_assert(HEADER_LEN == NONCE_OFFSET + 12, "V29 header/nonce layout changed");
+    static_assert(BODY_MAX == 22, "V29 structured emergency body contract changed");
+
+    static uint16_t wireAgeMinutes(const uint8_t* wire) {
+        return wire ? (uint16_t)wire[AGE_MINUTES_OFFSET] |
+                      ((uint16_t)wire[AGE_MINUTES_OFFSET + 1] << 8) : 0;
+    }
+    static void setWireAgeMinutes(uint8_t* wire, uint16_t age) {
+        if (!wire) return;
+        wire[AGE_MINUTES_OFFSET] = (uint8_t)(age & 0xff);
+        wire[AGE_MINUTES_OFFSET + 1] = (uint8_t)(age >> 8);
+    }
+    static uint8_t carryBudgetFor(Priority p) {
+        switch (p) {
+            case Priority::Critical: return 8;
+            case Priority::High: return 6;
+            case Priority::Normal: return 4;
+            case Priority::Bulk: return 2;
+        }
+        return 2;
+    }
 
     struct Record {
         bool used = false;
@@ -150,6 +178,7 @@ private:
     bool allocateQueue();
     void freeQueue();
     bool queueWire(const uint8_t* wire, size_t len);
+    void trimCriticalOrigin(const uint8_t* wire);
     bool evictFor(Priority incoming);
     int findRecordById(const uint8_t id[ID_LEN]) const;
     int selectForwardRecord(uint32_t now) const;

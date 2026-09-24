@@ -64,6 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           python v29/tests/test_contracts.py upstream-wadamesh
+          python v29/tests/test_resilience_model.py upstream-wadamesh
           python v28/tests/test_contracts.py upstream-wadamesh
           python v26/tests/test_contracts.py upstream-wadamesh
 

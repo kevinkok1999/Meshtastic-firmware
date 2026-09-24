@@ -33,11 +33,20 @@ def main() -> None:
             die("missing " + flag)
 
     for marker in (
-        "BODY_MAX == 24",
+        "BODY_MAX == 22",
         "MEMORY_TARGET_PERMILLE = 800",
         "MEMORY_RESERVE_PERMILLE = 200",
         "STORAGE_TARGET_PERMILLE = 800",
-        "DEFAULT_MAX_CARRY = 4",
+        "PROTOCOL_VERSION = 2",
+        "HEADER_LEN = 82",
+        "AGE_MINUTES_OFFSET = 12",
+        "MSG_ID_OFFSET = 14",
+        "ORIGIN_OFFSET = 30",
+        "RECIPIENT_HINT_OFFSET = 62",
+        "NONCE_OFFSET = 70",
+        "DEFAULT_TTL_HOURS = 192",
+        "MAX_QUEUE_RECORDS = 512",
+        "MAX_CRITICAL_PER_ORIGIN = 8",
         "LOCAL_FORWARD_LIMIT = 3",
         "CheckInState",
         "PowerMode",
@@ -67,6 +76,11 @@ def main() -> None:
         "snapshotValid",
         "flushSnapshot",
         "remaining <= maxCarry",
+        "wireAgeMinutes",
+        "setWireAgeMinutes",
+        "MSG_ID_OFFSET",
+        "trimCriticalOrigin",
+        "MAX_CRITICAL_PER_ORIGIN",
         "PowerMode::Critical",
         "PowerMode::Emergency",
     ):
@@ -139,6 +153,10 @@ def main() -> None:
         if forbidden in portal_h + "\n" + portal_cpp:
             die("local emergency portal must not depend on Internet/cloud: " + forbidden)
 
+    for forbidden in ("href='/safe", "href='/help", "href='/moving", "href='/meeting"):
+        if forbidden in portal_cpp:
+            die("state-changing portal action must not be a GET link: " + forbidden)
+
     for marker in (
         "const bool v29_portal_active",
         "wifiConfigWantsWifi() || v29_portal_active",
@@ -162,6 +180,10 @@ def main() -> None:
         "/moving?",
         "/meeting?",
         "millis() + 300UL",
+        "method='post'",
+        "const bool isPost",
+        "Allow: POST",
+        "form-action 'self'",
     ):
         if marker not in portal_h + "\n" + portal_cpp:
             die("V29 portal hardening marker missing " + marker)

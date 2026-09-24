@@ -106,3 +106,14 @@ V29 must pass five workstreams before release:
 5. 192h Power, Storage & Recovery (#20)
 
 A failure in any release gate blocks V29 publication.
+
+
+## V29.2 resilience hardening
+- Protocol v2 carries cumulative relay age so the 192-hour lifetime cannot reset at a new carrier.
+- Cumulative age and remaining carry budget are mutable but normalized out of AEAD AAD and the origin signature.
+- Carry budget is priority-aware: critical traffic may cross more carriers than bulk traffic.
+- Relay nodes de-duplicate before recipient/carry routing.
+- A single signed origin cannot retain more than eight critical objects per node; newest supersedes oldest.
+- Portal actions Safe, Help, Moving and Meeting Point are POST-only, session-token protected and rate limited.
+- GET captive-portal probes can render/status only and can never emit an emergency action.
+- Double-buffer SPIFFS snapshots remain the reboot/brownout recovery path.

@@ -172,7 +172,9 @@ bool V29EmergencyFabric::normalizedAuthData(const uint8_t* wire, size_t signedLe
                                             uint8_t* out, size_t outCap) const {
     if (!wire || !out || signedLen > outCap || signedLen < HEADER_LEN) return false;
     memcpy(out, wire, signedLen);
-    out[5] = 0; // remaining carry budget is mutable; maxCarry at byte 8 is signed.
+    out[5] = 0;
+    out[AGE_MINUTES_OFFSET] = 0;
+    out[AGE_MINUTES_OFFSET + 1] = 0;
     return true;
 }
 
@@ -191,18 +193,20 @@ bool V29EmergencyFabric::buildDirectWire(
     out[2] = '9';
     out[3] = 'E';
     out[4] = PROTOCOL_VERSION;
-    out[5] = DEFAULT_MAX_CARRY;
+    const uint8_t carryBudget = carryBudgetFor(priority);
+    out[5] = carryBudget;
     out[6] = (uint8_t)kind;
     out[7] = (uint8_t)priority;
-    out[8] = DEFAULT_MAX_CARRY;
+    out[8] = carryBudget;
     out[9] = DEFAULT_TTL_HOURS;
     out[10] = (uint8_t)len;
     out[11] = 0;
+    setWireAgeMinutes(out, 0);
 
-    esp_fill_random(out + 12, ID_LEN);
-    memcpy(out + 28, _mesh->getSelfPubKey(), PUB_KEY_SIZE);
-    memcpy(out + 60, recipient, RECIPIENT_HINT_LEN);
-    esp_fill_random(out + 68, 12);
+    esp_fill_random(out + MSG_ID_OFFSET, ID_LEN);
+    memcpy(out + ORIGIN_OFFSET, _mesh->getSelfPubKey(), PUB_KEY_SIZE);
+    memcpy(out + RECIPIENT_HINT_OFFSET, recipient, RECIPIENT_HINT_LEN);
+    esp_fill_random(out + NONCE_OFFSET, 12);
 
     uint8_t key[32] = {};
     if (!deriveDirectKey(recipient, key)) return false;
@@ -210,6 +214,8 @@ bool V29EmergencyFabric::buildDirectWire(
     uint8_t aad[HEADER_LEN] = {};
     memcpy(aad, out, HEADER_LEN);
     aad[5] = 0;
+    aad[AGE_MINUTES_OFFSET] = 0;
+    aad[AGE_MINUTES_OFFSET + 1] = 0;
 
     uint8_t tag[TAG_LEN] = {};
     mbedtls_gcm_context gcm;
@@ -218,7 +224,7 @@ bool V29EmergencyFabric::buildDirectWire(
     if (rc == 0) {
         rc = mbedtls_gcm_crypt_and_tag(
             &gcm, MBEDTLS_GCM_ENCRYPT, len,
-            out + 68, 12,
+            out + NONCE_OFFSET, 12,
             aad, sizeof(aad),
             body, out + HEADER_LEN,
             TAG_LEN, tag);
@@ -262,12 +268,15 @@ bool V29EmergencyFabric::verifyWire(const uint8_t* wire, size_t len) const {
     const uint8_t priority = wire[7];
     const uint8_t maxCarry = wire[8];
     const uint8_t bodyLen = wire[10];
+    const uint16_t ageMinutes = wireAgeMinutes(wire);
+    const uint32_t ttlMinutes = (uint32_t)wire[9] * 60UL;
 
     if (maxCarry == 0 || maxCarry > 8) return false;
     if (!(remaining <= maxCarry)) return false;
     if (kind < (uint8_t)Kind::CheckIn || kind > (uint8_t)Kind::System) return false;
     if (priority > (uint8_t)Priority::Bulk) return false;
     if (bodyLen == 0 || bodyLen > BODY_MAX) return false;
+    if (ttlMinutes && ageMinutes >= ttlMinutes) return false;
 
     const size_t signedLen = HEADER_LEN + bodyLen + TAG_LEN;
     if (signedLen + SIG_LEN != len) return false;
@@ -275,7 +284,7 @@ bool V29EmergencyFabric::verifyWire(const uint8_t* wire, size_t len) const {
     uint8_t auth[HEADER_LEN + BODY_MAX + TAG_LEN] = {};
     if (!normalizedAuthData(wire, signedLen, auth, sizeof(auth))) return false;
 
-    mesh::Identity signer(wire + 28);
+    mesh::Identity signer(wire + ORIGIN_OFFSET);
     const bool ok = signer.verify(wire + signedLen, auth, (int)signedLen);
     memset(auth, 0, sizeof(auth));
     return ok;
@@ -283,7 +292,7 @@ bool V29EmergencyFabric::verifyWire(const uint8_t* wire, size_t len) const {
 
 bool V29EmergencyFabric::recipientIsSelf(const uint8_t* wire) const {
     return _mesh && wire &&
-           memcmp(wire + 60, _mesh->getSelfPubKey(), RECIPIENT_HINT_LEN) == 0;
+           memcmp(wire + RECIPIENT_HINT_OFFSET, _mesh->getSelfPubKey(), RECIPIENT_HINT_LEN) == 0;
 }
 
 bool V29EmergencyFabric::decryptForSelf(const uint8_t* wire, size_t len,
@@ -292,11 +301,13 @@ bool V29EmergencyFabric::decryptForSelf(const uint8_t* wire, size_t len,
 
     const uint8_t bodyLen = wire[10];
     uint8_t key[32] = {};
-    if (!deriveDirectKey(wire + 28, key)) return false;
+    if (!deriveDirectKey(wire + ORIGIN_OFFSET, key)) return false;
 
     uint8_t aad[HEADER_LEN] = {};
     memcpy(aad, wire, HEADER_LEN);
     aad[5] = 0;
+    aad[AGE_MINUTES_OFFSET] = 0;
+    aad[AGE_MINUTES_OFFSET + 1] = 0;
 
     uint8_t plain[BODY_MAX] = {};
     mbedtls_gcm_context gcm;
@@ -305,7 +316,7 @@ bool V29EmergencyFabric::decryptForSelf(const uint8_t* wire, size_t len,
     if (rc == 0) {
         rc = mbedtls_gcm_auth_decrypt(
             &gcm, bodyLen,
-            wire + 68, 12,
+            wire + NONCE_OFFSET, 12,
             aad, sizeof(aad),
             wire + HEADER_LEN + bodyLen, TAG_LEN,
             wire + HEADER_LEN, plain);
@@ -321,7 +332,7 @@ bool V29EmergencyFabric::decryptForSelf(const uint8_t* wire, size_t len,
     memset(&event, 0, sizeof(event));
     event.kind = (Kind)wire[6];
     event.priority = (Priority)wire[7];
-    memcpy(event.origin, wire + 28, PUB_KEY_SIZE);
+    memcpy(event.origin, wire + ORIGIN_OFFSET, PUB_KEY_SIZE);
     memcpy(event.body, plain, bodyLen);
     event.bodyLen = bodyLen;
     memset(plain, 0, sizeof(plain));
@@ -404,10 +415,34 @@ uint8_t V29EmergencyFabric::sendHelpToEmergencyContacts(uint8_t helpType,
 int V29EmergencyFabric::findRecordById(const uint8_t id[ID_LEN]) const {
     if (!_records || !id) return -1;
     for (uint16_t i = 0; i < _capacity; ++i) {
-        if (_records[i].used && memcmp(_records[i].wire + 12, id, ID_LEN) == 0)
+        if (_records[i].used && memcmp(_records[i].wire + MSG_ID_OFFSET, id, ID_LEN) == 0)
             return (int)i;
     }
     return -1;
+}
+
+void V29EmergencyFabric::trimCriticalOrigin(const uint8_t* wire) {
+    if (!_records || !wire || (Priority)wire[7] != Priority::Critical) return;
+
+    uint8_t same = 0;
+    int oldest = -1;
+    uint32_t oldestAge = 0;
+    const uint32_t now = millis();
+
+    for (uint16_t i = 0; i < _capacity; ++i) {
+        const Record& r = _records[i];
+        if (!r.used || (Priority)r.wire[7] != Priority::Critical) continue;
+        if (memcmp(r.wire + ORIGIN_OFFSET, wire + ORIGIN_OFFSET, PUB_KEY_SIZE) != 0)
+            continue;
+        if (same < 0xff) ++same;
+        const uint32_t age = recordAgeMinutes(r, now);
+        if (oldest < 0 || age > oldestAge) {
+            oldest = (int)i;
+            oldestAge = age;
+        }
+    }
+    if (same >= MAX_CRITICAL_PER_ORIGIN && oldest >= 0)
+        removeRecord((uint16_t)oldest);
 }
 
 bool V29EmergencyFabric::evictFor(Priority incoming) {
@@ -442,9 +477,10 @@ bool V29EmergencyFabric::evictFor(Priority incoming) {
 
 bool V29EmergencyFabric::queueWire(const uint8_t* wire, size_t len) {
     if (!_records || !verifyWire(wire, len)) return false;
-    if (findRecordById(wire + 12) >= 0) return true;
+    if (findRecordById(wire + MSG_ID_OFFSET) >= 0) return true;
 
     const Priority incoming = (Priority)wire[7];
+    if (incoming == Priority::Critical) trimCriticalOrigin(wire);
     if (_used >= _capacity && !evictFor(incoming)) return false;
 
     for (uint16_t i = 0; i < _capacity; ++i) {
@@ -453,6 +489,7 @@ bool V29EmergencyFabric::queueWire(const uint8_t* wire, size_t len) {
         memset(&r, 0, sizeof(r));
         r.used = true;
         r.len = (uint8_t)len;
+        r.ageMinutesBase = wireAgeMinutes(wire);
         r.firstSeenMs = millis();
         memcpy(r.wire, wire, len);
         ++_used;
@@ -590,8 +627,9 @@ bool V29EmergencyFabric::onRawFrame(const uint8_t* data, size_t len) {
     // frames never leak into the generic raw-data companion stream.
     if (!_started || !verifyWire(data, len)) return true;
 
+    if (seenOrRemember(data + MSG_ID_OFFSET)) return true;
+
     if (recipientIsSelf(data)) {
-        if (seenOrRemember(data + 12)) return true;
         Event ev{};
         if (decryptForSelf(data, len, ev)) pushEvent(ev);
         return true;
@@ -623,6 +661,10 @@ void V29EmergencyFabric::loop() {
             elapsed(now, r.lastForwardMs, 60UL * 60UL * 1000UL)) {
             r.forwards = 0;
         }
+
+        uint32_t age = recordAgeMinutes(r, now);
+        if (age > 0xffffU) age = 0xffffU;
+        setWireAgeMinutes(r.wire, (uint16_t)age);
 
         if (_mesh->v29SendEmergencyRaw(r.wire, r.len)) {
             if (r.forwards < 0xff) ++r.forwards;
@@ -789,6 +831,8 @@ bool V29EmergencyFabric::loadSnapshot(const char* path) {
             return false;
         }
         if (!verifyWire(p.wire, p.len)) continue;
+        const uint32_t ttlMinutes = (uint32_t)p.wire[9] * 60UL;
+        if (ttlMinutes && (uint32_t)p.ageMinutes >= ttlMinutes) continue;
 
         Record& r = _records[_used];
         r.used = true;

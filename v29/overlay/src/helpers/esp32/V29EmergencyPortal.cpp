@@ -118,7 +118,8 @@ void V29EmergencyPortal::sendResponseHeader(WiFiClient& c, const char* type) {
     c.print("HTTP/1.1 200 OK\r\n");
     c.print("Cache-Control: no-store\r\n");
     c.print("X-Content-Type-Options: nosniff\r\n");
-    c.print("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\n");
+    c.print("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'\r\n");
+    c.print("Referrer-Policy: no-referrer\r\n");
     c.print("Content-Type: ");
     c.print(type);
     c.print("\r\nConnection: close\r\n\r\n");
@@ -129,18 +130,18 @@ void V29EmergencyPortal::sendPage(WiFiClient& c, const char* notice) {
     c.print("<!doctype html><html lang='nl'><meta name='viewport' content='width=device-width,initial-scale=1'>");
     c.print("<title>MeshOffGridNL Noodmodus</title><style>body{font:17px system-ui;margin:0;background:#101214;color:#f3f5f6}"
             "main{max-width:520px;margin:auto;padding:22px}h1{font-size:25px}p{line-height:1.45}.card{background:#1b1f22;padding:16px;border-radius:16px;margin:12px 0}"
-            "a{display:block;text-decoration:none;text-align:center;padding:16px;margin:12px 0;border-radius:14px;background:#e7ecef;color:#111;font-weight:750}"
-            ".help{background:#ffd8d8}.small{font-size:14px;color:#b8c0c5}</style><main>");
+            "a,button{display:block;width:100%;box-sizing:border-box;text-decoration:none;text-align:center;padding:16px;margin:12px 0;border:0;border-radius:14px;background:#e7ecef;color:#111;font:inherit;font-weight:750}"
+            "form{margin:0}.help{background:#ffd8d8}.small{font-size:14px;color:#b8c0c5}</style><main>");
     c.print("<h1>MeshOffGridNL Noodmodus</h1><p class='small'>Lokaal netwerk - geen internet nodig.</p>");
     if (notice && notice[0]) {
         c.print("<div class='card'><b>");
         c.print(notice);
         c.print("</b></div>");
     }
-    c.print("<a href='/safe?t="); c.print(_token); c.print("'>Ik ben veilig</a>");
-    c.print("<a class='help' href='/help?t="); c.print(_token); c.print("'>Ik heb hulp nodig</a>");
-    c.print("<a href='/moving?t="); c.print(_token); c.print("'>Ik ben onderweg</a>");
-    c.print("<a href='/meeting?t="); c.print(_token); c.print("'>Bij verzamelpunt</a>");
+    c.print("<form method='post' action='/safe?t="); c.print(_token); c.print("'><button type='submit'>Ik ben veilig</button></form>");
+    c.print("<form method='post' action='/help?t="); c.print(_token); c.print("'><button class='help' type='submit'>Ik heb hulp nodig</button></form>");
+    c.print("<form method='post' action='/moving?t="); c.print(_token); c.print("'><button type='submit'>Ik ben onderweg</button></form>");
+    c.print("<form method='post' action='/meeting?t="); c.print(_token); c.print("'><button type='submit'>Bij verzamelpunt</button></form>");
     c.print("<a href='/status?t="); c.print(_token); c.print("'>Netwerkstatus</a>");
     c.print("<div class='card small'>Een hulpvraag gaat via het lokale mesh-netwerk. 112 wordt niet automatisch gebeld."
             " Als telefonie werkt en er direct gevaar is, gebruik 112.</div>");
@@ -171,12 +172,14 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
         delay(1);
     }
 
-    if (strncmp(line, "GET ", 4) != 0) {
-        c.print("HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\n\r\n");
+    const bool isGet = strncmp(line, "GET ", 4) == 0;
+    const bool isPost = strncmp(line, "POST ", 5) == 0;
+    if (!isGet && !isPost) {
+        c.print("HTTP/1.1 405 Method Not Allowed\r\nAllow: GET, POST\r\nConnection: close\r\n\r\n");
         return;
     }
 
-    char* path = line + 4;
+    char* path = line + (isPost ? 5 : 4);
     char* end = strchr(path, ' ');
     if (!end) {
         sendNotFound(c);
@@ -188,6 +191,10 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
     if (strcmp(path, "/") == 0 || strncmp(path, "/generate_204", 13) == 0 ||
         strncmp(path, "/hotspot-detect.html", 20) == 0 ||
         strncmp(path, "/connecttest.txt", 16) == 0) {
+        if (!isGet) {
+            c.print("HTTP/1.1 405 Method Not Allowed\r\nAllow: GET\r\nConnection: close\r\n\r\n");
+            return;
+        }
         sendPage(c);
         return;
     }
@@ -201,6 +208,10 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
         strncmp(path, "/help?", 6) == 0 ||
         strncmp(path, "/moving?", 8) == 0 ||
         strncmp(path, "/meeting?", 9) == 0) {
+        if (!isPost) {
+            c.print("HTTP/1.1 405 Method Not Allowed\r\nAllow: POST\r\nConnection: close\r\n\r\n");
+            return;
+        }
         const uint32_t now = millis();
         if (!actionAllowed(now)) {
             sendPage(c, "Actie al ontvangen - probeer over enkele seconden opnieuw.");
@@ -242,6 +253,10 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
     }
 
     if (strncmp(path, "/status?", 8) == 0) {
+        if (!isGet) {
+            c.print("HTTP/1.1 405 Method Not Allowed\r\nAllow: GET\r\nConnection: close\r\n\r\n");
+            return;
+        }
         const auto st = v29_emergency_fabric.memoryStats();
         const uint8_t contacts = v29_emergency_fabric.emergencyContactCount();
         char notice[112];
