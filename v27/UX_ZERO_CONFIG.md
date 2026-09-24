@@ -58,6 +58,12 @@ Deduplication is mandatory before UI insertion.
 Retries cannot create extra visible bubbles.
 Transport changes do not split history into different threads.
 
+## Channel privacy semantics
+- Private/custom channels inherit confidentiality from their existing MeshCore channel secret.
+- A deliberately public/well-known channel is not a private conversation and must never be labelled private merely because relay transport is encrypted.
+- Global channel sender identity is device-signed in V27, but a display name is still a user-chosen label; cryptographic identity and human identity are not the same thing.
+- No extra group password is introduced by V27: the existing channel secret remains the trust root.
+
 ## Privacy defaults
 - Global message payloads are end-to-end encrypted.
 - No plaintext message body in relay logs.
