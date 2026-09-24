@@ -95,15 +95,15 @@ private:
     uint32_t _nextConnectAt = 0;
     uint32_t _retryDelayMs = RETRY_MIN_MS;
     uint8_t _selfPub[32] = {};
-    char _dmTopic[64] = {};
     Pending _pending[PENDING_CAP];
     uint8_t _pendingHead = 0;
     uint8_t _pendingCount = 0;
     PendingChannel _pendingChannel[PENDING_CHANNEL_CAP];
     uint8_t _pendingChannelHead = 0;
     uint8_t _pendingChannelCount = 0;
-    uint32_t _lastChannelCheckMs = 0;
+    uint32_t _lastConfigCheckMs = 0;
     uint32_t _channelFingerprint = 0;
+    uint32_t _contactFingerprint = 0;
     uint32_t _rxWindowStartMs = 0;
     uint16_t _rxWindowCount = 0;
     uint64_t _dedup[DEDUP_CAP] = {};
@@ -122,8 +122,11 @@ private:
     bool publishChannelNow(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text);
     bool enqueueChannel(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text);
     void flushOneChannel();
+    bool subscribeContacts();
     bool subscribeChannels();
+    uint32_t contactFingerprint() const;
     uint32_t channelFingerprint() const;
+    bool findContactForTopic(const char* topic, ContactInfo& out) const;
     bool findChannelForTopic(const char* topic, mesh::GroupChannel& out) const;
     bool channelStillConfigured(const uint8_t secret[PUB_KEY_SIZE]) const;
 
