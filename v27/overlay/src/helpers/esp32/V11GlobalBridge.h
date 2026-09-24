@@ -65,6 +65,10 @@ private:
     static constexpr uint32_t PENDING_TTL_MS = 6UL * 60UL * 60UL * 1000UL;
     static constexpr uint32_t RETRY_MIN_MS = 3000;
     static constexpr uint32_t RETRY_MAX_MS = 60000;
+    static constexpr uint32_t RX_RATE_WINDOW_MS = 10000;
+    static constexpr uint16_t RX_RATE_MAX_PER_WINDOW = 100;
+    static_assert(MAX_WIRE == 248, "V27 privacy envelope size changed unexpectedly");
+    static_assert(MAX_WIRE < 400, "V27 envelope must stay comfortably inside the MQTT client buffer");
 
     struct Pending {
         bool used = false;
@@ -100,6 +104,8 @@ private:
     uint8_t _pendingChannelCount = 0;
     uint32_t _lastChannelCheckMs = 0;
     uint32_t _channelFingerprint = 0;
+    uint32_t _rxWindowStartMs = 0;
+    uint16_t _rxWindowCount = 0;
     uint64_t _dedup[DEDUP_CAP] = {};
     uint8_t _dedupNext = 0;
 
@@ -127,6 +133,7 @@ private:
     bool channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text, uint8_t out[8]) const;
     bool deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) const;
     bool deriveChannelKey(const uint8_t secret[PUB_KEY_SIZE], uint8_t key[32]) const;
+    bool allowInbound();
     bool seenOrRemember(const uint8_t id[8]);
 };
 
