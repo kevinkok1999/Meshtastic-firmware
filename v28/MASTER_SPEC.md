@@ -9,8 +9,10 @@ V28 starts from the frozen V27 RC1 release commit. V27 and all earlier releases 
 V28 is one worldwide communications platform with a consumer-grade user experience.
 
 Primary behavior:
-- Internet/Wi-Fi is route 1 for worldwide V28 messaging whenever a safe global path is available.
-- RF/LoRa remains route 2/fallback and the compatibility path for legacy/P1 where required.
+- RF/LoRa is route 1 for V28 messaging and is always attempted first.
+- If Wi-Fi/global connectivity is available, the encrypted Internet path is route 2 after the RF attempt.
+- Both routes carry the same logical message identity so RF + Internet delivery never creates two visible chat bubbles.
+- P1/legacy continues to use its existing RF compatibility path without modification.
 - The user sees one chat history and never manually chooses a transport.
 - Privacy must cooperate with functionality. A failed privacy/global path may reject that path, but must never disable Wi-Fi association, local UI, RF fallback, or legacy/P1 compatibility.
 
@@ -71,7 +73,8 @@ Examples:
 - empty Contacts -> Add / Discover contacts;
 - empty Apps -> Explain no apps + Browse/Back;
 - unavailable hardware function -> explain unavailable and provide Back;
-- failed network action -> Retry / Continue with RF.
+- failed Internet action -> continue via RF without blocking the user;
+- failed RF attempt -> Internet route may still deliver when Wi-Fi/global connectivity is available.
 
 ## 5. Browser / Companion chat shell
 
@@ -129,6 +132,8 @@ Simple default flow:
 Manual approval is an optional stricter setting, not the normal default UX.
 
 ## 8. Production global relay
+
+The production global relay is V28 route 2. It never replaces RF as the first send attempt.
 
 V28 Stable must not depend on the public development MQTT broker.
 
@@ -302,8 +307,10 @@ Every release candidate must validate:
 - public hashtag join;
 - existing DM send/receive;
 - existing #channel send/receive;
-- global send/fallback;
-- RF send/fallback;
+- RF-first direct-message send order;
+- RF-first #channel send order;
+- Internet route only after/alongside the completed RF attempt when Wi-Fi/global is available;
+- RF/global duplicate suppression;
 - no duplicate message;
 - Wi-Fi reconnect;
 - open-Wi-Fi sandbox failure;
