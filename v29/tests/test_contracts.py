@@ -102,6 +102,9 @@ def main() -> None:
         "Netwerkstatus",
         "112 is niet automatisch gebeld",
         "Werkt lokaal zonder internet",
+        "Noodcontact meldt: ik ben veilig",
+        "Hulpvraag ontvangen via lokaal netwerk",
+        "v29_emergency_fabric.takeEvent",
     ):
         if marker not in ui:
             die("simple emergency UI marker missing " + marker)
