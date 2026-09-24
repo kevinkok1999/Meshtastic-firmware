@@ -23,8 +23,9 @@ Hardware truth:
 6. Wi-Fi association, DHCP, Internet and relay health are separate states.
 7. No router-specific permanent hacks.
 8. AP/BSSID/channel hints are one-shot and releasable for roaming.
-9. No automatic open-network joining by default.
-10. WEP is not a V27 target.
+9. Opportunistic open-network joining is allowed when no trusted network is usable, but only inside the V27 Untrusted Internet sandbox.
+10. Unknown open networks are never promoted to trusted/saved networks automatically.
+11. WEP is not a V27 target.
 11. Every retry ladder is bounded and ends in quiet backoff.
 12. RF remains usable throughout all Wi-Fi failures.
 
@@ -145,6 +146,67 @@ If link is established but IP never arrives:
 
 This prevents unnecessary WPA renegotiation on routers with slow DHCP.
 
+## Opportunistic Open Wi-Fi / Untrusted Internet Mode
+
+Goal:
+- keep V27 globally functional with the least user interaction possible;
+- when no explicitly trusted/saved network can provide Internet, V27 may automatically try a suitable unknown open network.
+
+Priority order:
+1. explicitly saved trusted network;
+2. trusted Master Gateway;
+3. explicitly saved phone hotspot;
+4. unknown open network in Untrusted Internet Mode;
+5. RF-only operation.
+
+Unknown open-network selection:
+- scan only after trusted candidates fail or are unavailable;
+- require actual open authentication in scan metadata;
+- rank candidates by signal quality and recent reachability success;
+- do not assume SSID names imply trust;
+- temporarily suppress APs that repeatedly fail DHCP/Internet checks;
+- never permanently save an unknown open SSID/BSSID without explicit user action;
+- periodically leave/re-evaluate an open AP when a trusted network returns.
+
+Untrusted Internet sandbox:
+- global messaging may use the connection only after verified TLS succeeds;
+- E2E payload encryption remains mandatory;
+- no plaintext MQTT/HTTP fallback;
+- no insecure certificate bypass;
+- no local admin/configuration service exposed to the untrusted WLAN;
+- no firmware update accepted merely because the WLAN is connected;
+- no private keys, Wi-Fi credentials, channel secrets or relay credentials logged;
+- no LAN peer discovery needed for global messaging;
+- local network services are disabled or firewalled unless explicitly required by a separately reviewed feature;
+- treat DNS results as untrusted until the TLS hostname/certificate validation succeeds;
+- if secure relay establishment fails, mark the AP unusable for global chat and continue searching/backing off.
+
+Captive portals:
+- detect likely captive/redirected connectivity;
+- do not attempt to bypass login/terms;
+- temporarily suppress that AP for autonomous global messaging;
+- continue RF;
+- optionally show a simple notice if the user opens Wi-Fi settings.
+
+Enhanced Open / OWE:
+- where ESP32-S3 SDK support is enabled and the AP offers Enhanced Open/OWE or transition mode, prefer it over a completely unencrypted open association;
+- do not advertise OWE support unless it is actually compiled and validated.
+
+Privacy reality:
+- E2E + verified TLS protects message content, but the open AP/operator can still observe network-level metadata such as device presence, timing and destination infrastructure;
+- V27 must never claim an unknown open WLAN provides anonymity.
+
+Resource behavior:
+- open-network scanning is bounded and rate-limited;
+- no constant roam/scanning loop;
+- if several open networks fail, enter backoff and keep RF operational;
+- battery policy may reduce opportunistic scan frequency at low battery.
+
+User control:
+- normal operation requires no prompt per network;
+- a simple master toggle can disable Opportunistic Open Wi-Fi for users who do not want it;
+- Diagnostics shows that the current connection is "Untrusted open Wi-Fi" without exposing low-level transport settings.
+
 ## Authentication support policy
 
 Primary:
@@ -155,14 +217,13 @@ Primary:
 Compatibility:
 - WPA/WPA2 mixed mode where supported and explicitly selected by the user
 
-Not automatic targets:
+Not supported/automatic targets:
 - WEP
-- anonymous open auto-join
 - captive-portal credential bypass
 
 Open network:
-- user may explicitly select one if product policy later permits it;
-- never silently auto-join unknown open networks.
+- unknown open networks may be auto-tried only through the Untrusted Internet Mode contract above;
+- they never become trusted merely because connection succeeds.
 
 Enterprise:
 - WPA2-Enterprise is a separate future capability because credentials, certificate validation and UX differ from home-router PSK networks.
@@ -314,6 +375,11 @@ V27 Stable requires real tests covering at minimum:
 - slow-DHCP router
 
 ### Special
+- unknown open WLAN with normal Internet access
+- unknown open WLAN with malicious/invalid TLS interception attempt
+- multiple unknown open WLAN candidates
+- captive open WLAN
+- trusted Wi-Fi returning while connected to unknown open WLAN
 - Android hotspot
 - iPhone hotspot where available
 - hidden SSID
@@ -349,7 +415,10 @@ Stable requires:
 - successful fallback between compatibility profiles;
 - RF chat remains responsive throughout;
 - previously proven P1 V8 path unchanged;
-- modern and older test classes both pass at agreed release threshold.
+- modern and older test classes both pass at agreed release threshold;
+- unknown-open auto-connect cannot bypass TLS/certificate validation;
+- trusted networks always outrank opportunistic open networks;
+- an open AP failure never disables RF fallback.
 
 ## Master review ownership
 
