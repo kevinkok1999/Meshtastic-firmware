@@ -1,0 +1,33 @@
+name: V26 RF Validation
+
+on:
+  push:
+    branches:
+      - v26-rf-intelligence
+  workflow_dispatch:
+
+concurrency:
+  group: v26-rf-validation
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: V26 RF unit test + T-Deck build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup native test toolchain
+        uses: ./.github/actions/setup-native-test
+
+      - name: Run V26 RF intelligence tests
+        run: platformio test -e native -f test_rf_intelligence
+
+      - name: Compile T-Deck TFT firmware
+        run: platformio run -e t-deck-tft
