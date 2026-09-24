@@ -45,7 +45,7 @@ private:
     // 4      protocol version
     // 5      kind
     // 6..13  keyed opaque message id
-    // 14..21 truncated sender contact prefix (routing hint only)
+    // 14..21 randomized unlinkability padding (no sender identity hint)
     // 22..33 random GCM nonce
     // 34..   fixed-size ciphertext:
     //        common fixed-size plaintext budget[262]. DM uses:
@@ -56,7 +56,7 @@ private:
     // tail   GCM tag[16]
     //
     // Exact timestamp, full sender key and exact text length are therefore not
-    // visible to the broker. Every DM has the same on-wire payload size.
+    // visible to the broker. Every V27 envelope has the same on-wire payload size.
     static constexpr size_t HEADER_LEN = 34;
     static constexpr size_t AAD_LEN = 22;
     static constexpr size_t PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT;
