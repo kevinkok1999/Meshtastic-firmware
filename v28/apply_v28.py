@@ -512,8 +512,8 @@ static void v28ApproveJoinCb(lv_event_t* e) {
     # V28 UX changes presentation/navigation only. Native message format,
     # storage and chat behavior remain unchanged; the only MyMesh difference
     # allowed by V28 is RF-first / Internet-second route ordering.
-    ui = ui_path.read_text()
-
+    # IMPORTANT: continue modifying the same in-memory UI source so the secure
+    # short-code/approval patches above are preserved until the single write.
     cb_anchor = """static void homeUnreadClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   goToTab(CHAT_INBOX_TAB_INDEX);
