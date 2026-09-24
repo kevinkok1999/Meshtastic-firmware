@@ -34,6 +34,8 @@ def main() -> None:
         "V27_PRIVACY_PRO=1",
         "V27_P1_V8_COMPAT=1",
         "V27_ZERO_CONFIG=1",
+        "V27_WIFI_BROAD_COMPAT=1",
+        "V27_RELAY_PROFILE_DEV_PUBLIC=1",
     ):
         if flag not in pio:
             die("missing " + flag)
@@ -108,6 +110,73 @@ def main() -> None:
         if marker not in "\n".join((main_src, mesh_cpp, bridge_h, bridge_cpp)):
             die("global/off-grid compatibility marker missing " + marker)
 
+
+
+    # Broad 2.4-GHz compatibility ladder. The ESP32-S3 is physically 2.4 GHz
+    # only; V27 broadens supported AP/security behavior rather than pretending
+    # firmware can add a 5-GHz RF front-end.
+    for marker in (
+        "V27_WIFI_BROAD_COMPAT=1",
+        "[V27][wifi] profile=1 standard",
+        "[V27][wifi] profile=2 modern-transition",
+        "[V27][wifi] profile=3 legacy-ht20",
+        "[V27][wifi] profile=4 eu13-mesh-rescue",
+        "WiFi.setMinSecurity(v27_pwd ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN);",
+        "v27_cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;",
+        "v27_cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;",
+        "v27_cfg.sta.pmf_cfg.capable = true;",
+        "v27_cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;",
+        "WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N",
+        "WIFI_BW_HT20",
+        'esp_wifi_set_country_code("NL", false);',
+        "wifiConfigGetApHint",
+        "v27_cfg.sta.bssid_set = true;",
+        "hint_channel >= 1 && hint_channel <= 13",
+        "wifiConfigClearApHint();",
+        "g_v16_wifi_attempt >= 4",
+    ):
+        if marker not in pio + "\n" + main_src:
+            die("broad Wi-Fi compatibility marker missing " + marker)
+
+    ui = (root / "src/ui-touch/UITask.cpp").read_text()
+    for marker in (
+        "Connecting... (1/4)",
+        "Compatibility... (2/4)",
+        "Compatibility... (3/4)",
+        "Router recovery... (4/4)",
+    ):
+        if marker not in ui:
+            die("four-profile zero-config Wi-Fi UI marker missing " + marker)
+
+    # Security floor: modern profiles start at WPA2; WPA-only is permitted
+    # only inside the explicit legacy compatibility profile. WEP stays off.
+    if "WIFI_AUTH_WEP" in main_src:
+        die("V27 broad Wi-Fi compatibility must not enable WEP")
+
+    # RC2 secure transport experiment: server-authenticated TLS only, and
+    # the public broker profile must be unmistakably development-only.
+    if "#include <WiFiClientSecure.h>" not in bridge_h:
+        die("V27 global relay must use WiFiClientSecure")
+    if "WiFiClientSecure _wc;" not in bridge_h:
+        die("V27 global relay client must be the secure client")
+    for marker in (
+        '#define V27_GLOBAL_PORT 8883',
+        "V27_EMQX_ROOT_CA",
+        "_wc.setCACert(V27_EMQX_ROOT_CA);",
+        "DigiCert Global Root G2",
+        "RC2 public relay bridge is development-only",
+        "[V27][DEV] Public TLS relay transport ready (not production)",
+    ):
+        if marker not in bridge_cpp:
+            die("verified TLS transport marker missing " + marker)
+    for forbidden in (
+        "#define V27_GLOBAL_PORT 1883",
+        ".setInsecure(",
+        "WiFiClient _wc;",
+    ):
+        if forbidden in bridge_h + "\n" + bridge_cpp:
+            die("insecure relay transport forbidden: " + forbidden)
+
     # V26 RF guard remains untouched.
     for marker in (
         "V26_RF_EVAL_MS = 15000",
@@ -131,6 +200,13 @@ def main() -> None:
         die("DM opaque route token must remain 128 bits")
     if "_dmTopic" in bridge_cpp or "_dmTopic" in bridge_h:
         die("single public-key-derived DM inbox must not return")
+    ch_route_start = bridge_cpp.find("void V11GlobalBridge::routeTopicForChannel")
+    ch_route_end = bridge_cpp.find("bool V11GlobalBridge::deriveDmKey", ch_route_start)
+    if ch_route_start < 0 or ch_route_end < 0:
+        die("group route function missing")
+    ch_route = bridge_cpp[ch_route_start:ch_route_end]
+    if "char tag[33]" not in ch_route or "for (int i = 0; i < 16; ++i)" not in ch_route:
+        die("group opaque route token must remain 128 bits")
     if "findContactForTopic(topic, contact)" not in bridge_cpp:
         die("DM receive must map pair-wise secret route back to a local contact")
     if "memcpy(plain, _selfPub, 32)" not in bridge_cpp:
@@ -193,9 +269,11 @@ def main() -> None:
     # Low-level MQTT remains hidden from the normal user surface by default.
     if "APPHIDE_MQTT" not in prefs or "app_hide" not in prefs:
         die("zero-config UX lost the hidden-by-default MQTT guard")
-    # Do not silently opt users into open Wi-Fi auto-join.
+    # Keep the legacy unsandboxed WadaMesh open-auto-join path disabled.
+    # Final V27 opportunistic open Wi-Fi is a separate sandboxed module and
+    # must never be implemented by flipping this legacy preference.
     if "c.boot_wifi_open    = 0" not in prefs:
-        die("zero-config privacy requires open Wi-Fi auto-join OFF by default")
+        die("legacy unsandboxed open Wi-Fi auto-join must remain disabled")
 
     print("V27 contracts OK: V26 + P1 V8 preserved, zero-config global DM/channels, fixed-size Privacy Pro envelopes and cross-transport dedup preserved")
 
