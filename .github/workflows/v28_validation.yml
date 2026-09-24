@@ -1,0 +1,77 @@
+name: V28 Master Validation
+
+on:
+  push:
+    branches: [v28-implementation, v28-release-candidate]
+    paths:
+      - "v28/**"
+      - ".github/workflows/v28_validation.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: meshoffgridnl-v28-validation
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 1}
+      - uses: actions/setup-python@v7.0.0
+        with: {python-version: "3.12"}
+      - name: Fetch pinned WadaMesh
+        run: |
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+      - name: Apply V11-V28 + contracts
+        run: |
+          set -euo pipefail
+          for v in 11 12 13 15 16 17 18 19 26 27; do
+            python v$v/apply_v$v.py upstream-wadamesh
+            python v$v/tests/test_contracts.py upstream-wadamesh
+          done
+          python v28/apply_v28.py upstream-wadamesh
+          python v28/tests/test_contracts.py upstream-wadamesh
+      - name: P1 V8 immutable contract
+        run: |
+          python - <<'PY'
+          import json,urllib.request
+          u="https://raw.githubusercontent.com/kevinkok1999/Meshtastic-firmware/c2d99ac83d702de0f9e8cb66e0f9bff2cb283360/p1pro-v8/profile.json"
+          p=json.load(urllib.request.urlopen(u,timeout=20)); r=p["radioProfile"]
+          assert (r["frequencyMHz"],r["bandwidthKHz"],r["spreadingFactor"],r["codingRate"],r["txPowerMaxDbm"])==(869.618,62.5,8,5,22)
+          assert r["locked"] is True
+          print("P1 V8 immutable contract PASS")
+          PY
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U --no-build-isolation --no-cache-dir "setuptools<72"
+          pip install -U platformio --no-build-isolation
+      - name: Build V28 T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v28.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V28 RF-First RC1"'
+        run: |
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+      - name: Verify artifacts
+        run: |
+          B=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          test -f "$B/firmware.bin"
+          test -f "$B/firmware-merged.bin"
+          mkdir -p dist
+          cp "$B/firmware.bin" dist/MeshOffGridNL-V28-TDeck-Plus-RC1.bin
+          cp "$B/firmware-merged.bin" dist/MeshOffGridNL-V28-TDeck-Plus-RC1-merged.bin
+          sha256sum dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: MeshOffGridNL-V28-TDeck-Plus-RC1-validation
+          path: dist/*
+          retention-days: 30
