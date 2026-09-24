@@ -1,1 +1,1 @@
-v27-dev7-latest-threadsafe-cached-pairwise
+v27-impl-wave1-validation-2026-09-24
