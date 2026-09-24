@@ -81,6 +81,14 @@ def main() -> None:
         'STALL_SCOPE("v11-global"',
         "mbedtls_gcm_crypt_and_tag",
         "mbedtls_gcm_auth_decrypt",
+        "v27LookupChatContactByPrefix",
+        "MOG27-DM-KEY",
+        "MOG27-ID-DM",
+        "PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT",
+        "PENDING_CAP = 16",
+        "PENDING_TTL_MS",
+        "RETRY_MAX_MS = 60000",
+        "_mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false)",
     ):
         if marker not in "\n".join((main_src, mesh_cpp, bridge_h, bridge_cpp)):
             die("global/off-grid compatibility marker missing " + marker)
@@ -93,6 +101,23 @@ def main() -> None:
     ):
         if marker not in main_src:
             die("V26 RF guard missing " + marker)
+
+    # Privacy Pro envelope invariants: exact timestamp, full sender key and exact
+    # text length stay inside fixed-size authenticated ciphertext.
+    if "memcpy(wire + 14, _selfPub, 8)" not in bridge_cpp:
+        die("Privacy Pro sender routing hint must stay truncated")
+    if "memcpy(plain, _selfPub, 32)" not in bridge_cpp:
+        die("Privacy Pro full sender identity must stay inside ciphertext")
+    if "memcpy(plain + 32, &timestamp, 4)" not in bridge_cpp:
+        die("Privacy Pro timestamp must stay inside ciphertext")
+    if "wire[62]" in bridge_cpp or "wire[63]" in bridge_cpp:
+        die("legacy plaintext exact-length fields leaked into V27 wire header")
+    if 'Serial.printf("[V11] Global DM published bytes=' in bridge_cpp:
+        die("legacy per-message metadata logging leaked into V27")
+    if 'broker=%s' in bridge_cpp:
+        die("broker/route metadata must not be printed in normal V27 logs")
+    if "return enqueue(recipient.id.pub_key, timestamp, text);" not in bridge_cpp:
+        die("zero-config offline global mirror queue missing")
 
     prefs = (root / "src/helpers/esp32/TouchPrefsStore.cpp").read_text()
     # Low-level MQTT remains hidden from the normal user surface by default.
