@@ -30,97 +30,6 @@ SX126xInterface<T>::SX126xInterface(LockingArduinoHal *hal, RADIOLIB_PIN_TYPE cs
     LOG_DEBUG("SX126xInterface(cs=%d, irq=%d, rst=%d, busy=%d)", cs, irq, rst, busy);
 }
 
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-template <typename T> void SX126xInterface<T>::rfRecordPacket(float rssi, float snr)
-{
-    constexpr float alpha = 0.20f;
-    if (!rfIntel.packetMetricsReady) {
-        rfIntel.rssiEwma = rssi;
-        rfIntel.snrEwma = snr;
-        rfIntel.packetMetricsReady = true;
-        return;
-    }
-
-    rfIntel.rssiEwma += alpha * (rssi - rfIntel.rssiEwma);
-    rfIntel.snrEwma += alpha * (snr - rfIntel.snrEwma);
-}
-
-template <typename T> void SX126xInterface<T>::rfRecordCad(bool busy)
-{
-    // Keep counters bounded while retaining a rolling history.
-    if (rfIntel.cadChecks >= 1000) {
-        rfIntel.cadChecks /= 2;
-        rfIntel.cadBusy /= 2;
-    }
-
-    rfIntel.cadChecks++;
-    if (busy)
-        rfIntel.cadBusy++;
-}
-
-template <typename T> bool SX126xInterface<T>::rfChooseBoostedGain()
-{
-    meshoffgrid::RFIntelligenceSnapshot snapshot;
-    snapshot.hasNoiseFloor = getNoiseFloorSampleCount() >= 5;
-    snapshot.noiseFloorDbm = getNoiseFloor();
-    snapshot.hasPacketMetrics = rfIntel.packetMetricsReady;
-    snapshot.packetRssiDbm = rfIntel.rssiEwma;
-    snapshot.packetSnrDb = rfIntel.snrEwma;
-
-    if (rfIntel.cadChecks >= 4) {
-        snapshot.hasCadMetrics = true;
-        snapshot.cadBusyPermille =
-            static_cast<uint16_t>((rfIntel.cadBusy * 1000UL) / rfIntel.cadChecks);
-    }
-
-    const uint32_t goodDelta = rxGood - rfIntel.lastGood;
-    const uint32_t badDelta = rxBad - rfIntel.lastBad;
-    const uint32_t packetDelta = goodDelta + badDelta;
-    if (packetDelta >= 4) {
-        snapshot.hasErrorMetrics = true;
-        snapshot.packetErrorPermille =
-            static_cast<uint16_t>((badDelta * 1000UL) / packetDelta);
-    }
-
-    bool desiredBoost = rfIntel.gainBoosted;
-    switch (meshoffgrid::chooseRxGain(snapshot, rfIntel.gainBoosted)) {
-    case meshoffgrid::RxGainDecision::BOOSTED:
-        desiredBoost = true;
-        break;
-    case meshoffgrid::RxGainDecision::POWER_SAVE:
-        desiredBoost = false;
-        break;
-    case meshoffgrid::RxGainDecision::KEEP:
-    default:
-        break;
-    }
-
-    rfIntel.qualityScore = meshoffgrid::rfQualityScore(snapshot);
-
-    if (desiredBoost != rfIntel.gainBoosted) {
-        LOG_INFO("V26 RF: RX gain %s -> %s, quality=%u, noise=%d dBm, RSSI=%.1f, SNR=%.1f, CAD=%u/1000, err=%u/1000",
-                 rfIntel.gainBoosted ? "BOOST" : "SAVE", desiredBoost ? "BOOST" : "SAVE", rfIntel.qualityScore,
-                 snapshot.noiseFloorDbm, snapshot.packetRssiDbm, snapshot.packetSnrDb, snapshot.cadBusyPermille,
-                 snapshot.packetErrorPermille);
-        rfIntel.gainBoosted = desiredBoost;
-    } else {
-        LOG_DEBUG("V26 RF: quality=%u, gain=%s, noise=%d dBm, CAD=%u/1000, err=%u/1000", rfIntel.qualityScore,
-                  rfIntel.gainBoosted ? "BOOST" : "SAVE", snapshot.noiseFloorDbm, snapshot.cadBusyPermille,
-                  snapshot.packetErrorPermille);
-    }
-
-    // Decay history each evaluation so old congestion does not dominate forever.
-    if (rfIntel.cadChecks > 16) {
-        rfIntel.cadChecks /= 2;
-        rfIntel.cadBusy /= 2;
-    }
-    rfIntel.lastGood = rxGood;
-    rfIntel.lastBad = rxBad;
-
-    return rfIntel.gainBoosted;
-}
-#endif
-
 /// Initialise the Driver transport hardware and software.
 /// Make sure the Driver is properly configured before calling init().
 /// \return true if initialisation succeeded.
@@ -297,15 +206,13 @@ template <typename T> bool SX126xInterface<T>::reinitChip()
         lora.setRfSwitchPins(SX126X_RXEN, SX126X_TXEN);
     }
 #endif
-    const bool configuredRxBoost = config.lora.sx126x_rx_boosted_gain;
-    {
-        uint16_t result = lora.setRxBoostedGainMode(configuredRxBoost);
-        LOG_INFO("Set RX gain to %s mode; result: %d", configuredRxBoost ? "boosted" : "power saving", result);
+    if (config.lora.sx126x_rx_boosted_gain) {
+        uint16_t result = lora.setRxBoostedGainMode(true);
+        LOG_INFO("Set RX gain to boosted mode; result: %d", result);
+    } else {
+        uint16_t result = lora.setRxBoostedGainMode(false);
+        LOG_INFO("Set RX gain to power saving mode; result: %d", result);
     }
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-    // Start from the user's V19 setting; V26 only adapts after it has enough measurements.
-    rfIntel.gainBoosted = configuredRxBoost;
-#endif
 
     // Undocumented SX1262 register patch recommended by Heltec/Semtech for improved RX sensitivity.
     // Sets bit 0 of register 0x8B5.
@@ -391,15 +298,10 @@ template <typename T> int16_t SX126xInterface<T>::programModemParams()
         RECORD_CRITICALERROR(meshtastic_CriticalErrorCode_INVALID_RADIO_SETTING);
     }
 
-    // Apply RX gain mode - valid in STDBY (datasheet §9.6), matches resetAGC() pattern.
-    // A reconfigure intentionally returns to the user's configured baseline; V26 will
-    // adapt again once fresh RF measurements are available.
+    // Apply RX gain mode - valid in STDBY (datasheet §9.6), matches resetAGC() pattern
     err = lora.setRxBoostedGainMode(config.lora.sx126x_rx_boosted_gain);
     if (err != RADIOLIB_ERR_NONE)
         LOG_WARN("SX126X setRxBoostedGainMode %s%d", radioLibErr, err);
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-    rfIntel.gainBoosted = config.lora.sx126x_rx_boosted_gain;
-#endif
 
     return RADIOLIB_ERR_NONE;
 }
@@ -528,18 +430,10 @@ template <typename T> void SX126xInterface<T>::setStandby()
  */
 template <typename T> void SX126xInterface<T>::addReceiveMetadata(meshtastic_MeshPacket *mp)
 {
-    // Read packet metrics once; V26 reuses them for the RF intelligence EWMA.
-    const float packetSnr = lora.getSNR();
-    const float packetRssi = lora.getRSSI();
-
-    mp->rx_snr = packetSnr;
-    mp->rx_rssi = lround(packetRssi);
+    // LOG_DEBUG("PacketStatus %x", lora.getPacketStatus());
+    mp->rx_snr = lora.getSNR();
+    mp->rx_rssi = lround(lora.getRSSI());
     mp->has_rx_rssi = true; // rx_rssi has explicit presence - a genuine reading must be marked present to survive encoding
-
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-    rfRecordPacket(packetRssi, packetSnr);
-#endif
-
     LOG_TRACE("Corrected frequency offset: %f", lora.getFrequencyError());
 }
 
@@ -622,19 +516,10 @@ template <typename T> bool SX126xInterface<T>::isChannelActive()
     int16_t result = trySetStandby();
     if (result == RADIOLIB_ERR_NONE) {
         result = lora.scanChannel(cfg);
-        if (result == RADIOLIB_LORA_DETECTED) {
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-            rfRecordCad(true);
-#endif
+        if (result == RADIOLIB_LORA_DETECTED)
             return true;
-        }
-        if (result == RADIOLIB_CHANNEL_FREE) {
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-            rfRecordCad(false);
-#endif
-            return false;
-        }
-        LOG_ERROR("SX126X scanChannel %s%d", radioLibErr, result);
+        if (result != RADIOLIB_CHANNEL_FREE)
+            LOG_ERROR("SX126X scanChannel %s%d", radioLibErr, result);
         if (result != RADIOLIB_ERR_WRONG_MODEM)
             return false;
     }
@@ -732,16 +617,8 @@ template <typename T> void SX126xInterface<T>::resetAGC()
         lora.setDio2AsRfSwitch(true);
 #endif
 
-    // RX gain mode. V26 makes a conservative decision only after enough
-    // measurements exist; otherwise rfChooseBoostedGain() keeps the V19 baseline.
-#ifdef MESHOFFGRID_RF_INTELLIGENCE
-    const bool desiredRxBoost = rfChooseBoostedGain();
-    int16_t gainResult = lora.setRxBoostedGainMode(desiredRxBoost);
-    if (gainResult != RADIOLIB_ERR_NONE)
-        LOG_WARN("V26 RF: setRxBoostedGainMode %s%d", radioLibErr, gainResult);
-#else
+    // RX boosted gain mode
     lora.setRxBoostedGainMode(config.lora.sx126x_rx_boosted_gain);
-#endif
 
     // Re-apply the undocumented 0x8B5 RX sensitivity patch that was set in init().
     // The CALIBRATE_ALL (0x7F) command above clears bit 0 of register 0x8B5, which
