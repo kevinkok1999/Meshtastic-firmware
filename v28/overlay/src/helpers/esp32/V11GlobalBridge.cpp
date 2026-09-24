@@ -106,9 +106,13 @@ bool V11GlobalBridge::mirrorDM(const ContactInfo& recipient,
     if (!_started || !_mesh || !text || recipient.type != ADV_TYPE_CHAT) return false;
 
     // RF is route 1 and has already been attempted by MyMesh in V28.
-    // Only accept a delayed Internet route-2 copy when the RF result allows it.
-    if (!allowQueue) return false;
-    return enqueue(recipient.id.pub_key, timestamp, text);
+    // Route 2 is independent: if Wi-Fi exists, queue the encrypted Internet
+    // copy even when RF could not queue. Never queue behind absent Wi-Fi.
+    if (!allowQueue || WiFi.status() != WL_CONNECTED) return false;
+    const bool queued = enqueue(recipient.id.pub_key, timestamp, text);
+    // Return "globally accepted" to MyMesh only when the relay was recently
+    // healthy. The queue itself still survives a temporary relay outage.
+    return queued && connected();
 }
 
 bool V11GlobalBridge::mirrorChannelPacket(const mesh::GroupChannel& channel,
