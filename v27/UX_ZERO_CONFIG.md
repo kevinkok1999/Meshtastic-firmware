@@ -14,7 +14,7 @@ V27 must feel like one messaging product, not a radio tool plus an Internet tool
 No MQTT host, broker port, relay topic, certificate, queue, radio mode, routing mode, retry mode, or cryptographic key is required from the normal user.
 
 ## Automatic transport policy
-- Internet healthy: use the global encrypted path while preserving local RF compatibility.
+- Internet healthy and recipient V27-global capable: global encrypted delivery is route 1; RF is held as route 2/fallback unless legacy/P1/group compatibility requires an RF copy.
 - Internet unavailable: send via the existing RF/MeshCore path without user action.
 - Internet returns: reconnect global transport automatically in the background.
 - Both paths deliver the same logical message: show only one bubble.
@@ -45,8 +45,10 @@ Do not expose normal users to:
 Advanced diagnostics may exist in a clearly separate expert/diagnostics surface, never in the send flow.
 
 ## Wi-Fi
-- Saved Wi-Fi networks may auto-join.
-- Open-network auto-join remains disabled by default.
+- Saved trusted Wi-Fi networks auto-join first.
+- If no trusted network can provide Internet, V27 may automatically try an unknown open network only through the dedicated Untrusted Internet sandbox.
+- The legacy unsandboxed open-auto-join path remains disabled; opportunistic open Wi-Fi is a separate V27-only policy.
+- Unknown open networks never become trusted/saved automatically.
 - Losing Wi-Fi silently degrades to mesh.
 - Reconnecting Wi-Fi silently restores global transport.
 - No message composition state is lost during network transitions.
@@ -70,7 +72,7 @@ Transport changes do not split history into different threads.
 - No plaintext message body in cloud database.
 - No GPS/location upload as a side effect of global chat.
 - No contacts upload unless explicitly required by a future feature and separately consented.
-- Open Wi-Fi auto-join off by default.
+- Opportunistic unknown-open Wi-Fi is allowed only inside the V27 Untrusted Internet sandbox with verified TLS + E2E; the legacy unsandboxed open-auto-join remains disabled.
 - Low-level MQTT UI remains hidden by default.
 
 ## Failure behavior
