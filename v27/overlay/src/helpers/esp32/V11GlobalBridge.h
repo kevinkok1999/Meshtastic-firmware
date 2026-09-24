@@ -21,7 +21,7 @@ public:
 
     // One logical chat action can use RF and the global path. This call is
     // non-blocking; it publishes immediately or accepts into a bounded RAM queue.
-    bool mirrorDM(const ContactInfo& recipient, uint32_t timestamp, const char* text);
+    bool mirrorDM(const ContactInfo& recipient, uint32_t timestamp, const char* text, bool allowQueue = true);
 
     // Channel/group messages use the existing MeshCore channel secret as the
     // E2E trust root. The normal RF packet is never modified.
