@@ -10,10 +10,12 @@ ESP32-S3 target:
 
 Automatic compatibility ladder:
 
-### Profile 1 — Standard
+### Profile 1 — Standard / Modern Secure
 - STA mode
 - all-channel scan
 - strongest compatible AP
+- WPA2 minimum for password-protected networks
+- WPA2/WPA3 transition and WPA3 where compiled/supported
 - normal DHCP
 - no permanent BSSID pin
 - no forced PHY override
@@ -36,17 +38,22 @@ Target:
 
 WEP is intentionally unsupported.
 
-### Profile 4 — EU/NL rescue
+### Profile 4 — Region-policy rescue
 Target:
-- channels 1–13
+- only channels legal for the selected shipping/operating region
+- EU/NL profile explicitly validates channels 1–13
 - hidden SSID
 - mesh/extender APs
 - one-shot BSSID/channel hint
 - then release pinning so roaming can resume
 
 After profile 4:
-- quiet bounded backoff
-- never infinite reconnect storm
+- if no trusted candidate works, enter V27 Opportunistic Open Wi-Fi discovery;
+- unknown open APs are usable only through the Untrusted Internet sandbox;
+- OWE/Enhanced Open is preferred when compiled and offered;
+- captive/invalid-TLS APs are suppressed temporarily;
+- quiet bounded backoff follows when no safe Internet route exists;
+- never infinite reconnect storm.
 
 ## B. Wi-Fi failure classification
 
@@ -103,7 +110,24 @@ Recommended product behavior:
 - user does not choose 5 vs 2.4 GHz on T-Deck
 - upstream can change without changing chat identity
 
-## E. Messaging contract
+## E. Stable protocol contract
+
+Production V27 MUST NOT ship the RC1/RC2 64-bit scale limits.
+
+Stable requirements:
+- 128-bit logical message ID;
+- 128-bit opaque conversation/route capability;
+- 96-bit AEAD nonce;
+- explicit protocol version + crypto-suite version;
+- fixed-size padded envelope;
+- exact sender identity, timestamp/ordering data and plaintext length remain inside ciphertext;
+- authenticated domain separation for DM, group, receipt and control envelopes;
+- replay/idempotency state survives reboot for the defined replay window;
+- protocol parser rejects unknown mandatory flags fail-closed.
+
+RC1 protocol v2 remains an RC compatibility reference only. Stable may use a new protocol version rather than mutating v2 semantics in place.
+
+## F. Messaging contract
 
 One message object:
 - logical message ID
@@ -132,7 +156,7 @@ V27-to-P1/legacy:
 - V27 global sender signature verified
 - public/well-known channel is not labelled private
 
-## F. Delivery-state contract
+## G. Delivery-state contract
 
 Internal:
 - CREATED
@@ -151,14 +175,16 @@ User-facing:
 Rule:
 - "Sent" cannot mean "sitting only in a hidden RAM queue after both actual transports failed".
 
-## G. Queue contract
+## H. Queue / crash-journal contract
 
 Device queues:
-- bounded count
-- bounded byte usage
-- TTL
-- oldest expendable global mirror may be dropped before RF state
-- no unbounded dynamic history
+- bounded count and byte usage;
+- TTL;
+- crash-safe journal for created/encrypted/pending/delivered transitions;
+- durable idempotency/replay window sufficient to suppress delayed duplicates after reboot;
+- oldest expendable global copy may be dropped before local RF/chat state;
+- no unbounded dynamic history;
+- flash wear must be bounded through batching/compaction rather than a write for every transient state.
 
 Server queue:
 - ciphertext only
@@ -168,7 +194,7 @@ Server queue:
 - idempotency by message-id
 - delete/mark after authenticated device receipt
 
-## H. Privacy contract
+## I. Privacy contract
 
 Device private keys:
 - local only
@@ -193,7 +219,7 @@ Relay does NOT see:
 
 No claim of network-level anonymity.
 
-## I. TLS / relay contract
+## J. TLS / relay contract
 
 Production:
 - server-authenticated TLS or equivalent secure transport
@@ -205,8 +231,33 @@ Production:
 - reconnect with jitter/backoff
 
 Development public broker can exist only behind an explicit development build flag and can never ship as Stable.
+Production uses authenticated device access, no anonymous wildcard-capable endpoint, and at least two relay failure domains or an equivalent tested failover architecture.
 
-## J. UX contract
+## K. Device lifecycle / update contract
+
+Before Stable:
+- persistent device identity is separated from Wi-Fi credentials and relay credentials;
+- identity recovery/transfer is explicitly designed;
+- firmware artifacts are signed;
+- OTA uses an inactive image/rollback-capable strategy where the platform layout permits it;
+- failed boot/health-check returns to the previous working image;
+- production anti-rollback policy is defined before fuses/security features are enabled;
+- network reset and ownership reset are separate operations;
+- diagnostics preserve reset reason without leaking secrets.
+
+## L. Capability negotiation
+
+V27 peers advertise bounded versioned capabilities, for example:
+- global relay protocol;
+- RF advanced lane;
+- signed groups;
+- selective repair;
+- delivery receipts.
+
+A capability is never assumed merely because a device display name/version string looks recent.
+Unknown capability versions fall back safely.
+
+## M. UX contract
 
 Normal user flow:
 1. power on
@@ -237,7 +288,7 @@ Advanced diagnostics may show:
 - queue count
 - firmware version
 
-## K. Failure injection matrix
+## N. Failure injection matrix
 
 Must be designed before code:
 - wrong Wi-Fi password
@@ -261,7 +312,7 @@ Must be designed before code:
 - P1 V8 active while Internet fails
 - Master Gateway upstream loss
 
-## L. Fase 2 exit criteria
+## O. Fase 2 exit criteria
 
 No coding until:
 - Wi-Fi ladder is finite and deterministic;
@@ -270,4 +321,9 @@ No coding until:
 - all normal-user flows remain zero-config;
 - delivery states cannot lie;
 - privacy boundaries are explicit;
-- failure matrix covers every subsystem boundary.
+- failure matrix covers every subsystem boundary;
+- stable protocol identifiers are 128-bit;
+- crash/reboot semantics are specified;
+- secure update/rollback semantics are specified;
+- capability negotiation and safe fallback are specified;
+- anonymous public relay is explicitly non-production.
