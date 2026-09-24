@@ -108,6 +108,9 @@ private:
     uint32_t _lastConfigCheckMs = 0;
     uint32_t _channelFingerprint = 0;
     uint32_t _contactFingerprint = 0;
+    bool _subscriptionsReady = false;
+    uint32_t _subContactIdx = 0;
+    uint8_t _subChannelIdx = 0;
     uint32_t _rxWindowStartMs = 0;
     uint16_t _rxWindowCount = 0;
     uint64_t _dedup[DEDUP_CAP] = {};
@@ -126,8 +129,8 @@ private:
     bool publishChannelNow(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text);
     bool enqueueChannel(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text);
     void flushOneChannel();
-    bool subscribeContacts();
-    bool subscribeChannels();
+    bool subscribeStep();
+    void resetSubscriptions();
     uint32_t contactFingerprint() const;
     uint32_t channelFingerprint() const;
     bool findContactForTopic(const char* topic, ContactInfo& out) const;
