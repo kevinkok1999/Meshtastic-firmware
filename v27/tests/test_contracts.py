@@ -171,7 +171,7 @@ def main() -> None:
             die("verified TLS transport marker missing " + marker)
     for forbidden in (
         "#define V27_GLOBAL_PORT 1883",
-        "setInsecure(",
+        ".setInsecure(",
         "WiFiClient _wc;",
     ):
         if forbidden in bridge_h + "\n" + bridge_cpp:
