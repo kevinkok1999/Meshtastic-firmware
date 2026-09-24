@@ -129,7 +129,7 @@ def main() -> None:
     # Secure short-code private-channel lifecycle must be complete end to end.
     for marker in (
         "JOIN_BUNDLE_LEN = 84",
-        "M28J",
+        "out[0] = 'M'; out[1] = '2'; out[2] = '8'; out[3] = 'J';",
         "MOG28-JOIN-BUNDLE",
         "deriveDmKeyAny",
         "v28CalcSharedSecretAny",
