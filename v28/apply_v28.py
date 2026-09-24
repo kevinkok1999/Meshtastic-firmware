@@ -22,8 +22,9 @@ def main() -> None:
     ui_path = root / "src/ui-touch/UITask.cpp"
     ws_path = root / "src/helpers/esp32/WebSocketCompanionServer.cpp"
     mesh_path = root / "src/MyMesh.cpp"
+    mesh_h_path = root / "src/MyMesh.h"
 
-    for p in (pio_path, ui_path, ws_path, mesh_path):
+    for p in (pio_path, ui_path, ws_path, mesh_path, mesh_h_path):
         if not p.exists():
             fail("missing " + str(p))
 
@@ -164,6 +165,50 @@ def main() -> None:
     mesh = replace_once(mesh, sent_old, sent_new,
                         "V28 truthful Internet route status")
 
+    mesh_path.write_text(mesh)
+
+    # V28 short-code joins need ECDH with a requester that is not a saved
+    # contact yet. Keep the V27 cached-contact helper unchanged and add one
+    # narrow V28-only raw-public-key helper.
+    mesh_h = mesh_h_path.read_text()
+    h_old = """  bool v27CalcSharedSecretCached(const uint8_t peerPub[32], uint8_t out[32]);
+  bool v27GetChannelByIndex(uint8_t idx, ChannelDetails& out);
+"""
+    h_new = """  bool v27CalcSharedSecretCached(const uint8_t peerPub[32], uint8_t out[32]);
+#if defined(MESH_OFFGRIDNL_V28)
+  bool v28CalcSharedSecretAny(const uint8_t peerPub[32], uint8_t out[32]);
+#endif
+  bool v27GetChannelByIndex(uint8_t idx, ChannelDetails& out);
+"""
+    if h_old not in mesh_h:
+        fail("V28 raw ECDH header anchor missing")
+    mesh_h = replace_once(mesh_h, h_old, h_new, "V28 raw requester ECDH declaration")
+    mesh_h_path.write_text(mesh_h)
+
+    mesh = mesh_path.read_text()
+    cpp_old = """bool MyMesh::v27CalcSharedSecretCached(const uint8_t peerPub[32], uint8_t out[32]) {
+  if (!peerPub || !out) return false;
+  ContactInfo* contact = lookupContactByPubKey(peerPub, PUB_KEY_SIZE);
+  if (!contact || contact->type != ADV_TYPE_CHAT) return false;
+  memcpy(out, contact->getSharedSecret(self_id), PUB_KEY_SIZE);
+  return true;
+}
+"""
+    cpp_new = cpp_old + """
+#if defined(MESH_OFFGRIDNL_V28)
+bool MyMesh::v28CalcSharedSecretAny(const uint8_t peerPub[32], uint8_t out[32]) {
+  if (!peerPub || !out) return false;
+  self_id.calcSharedSecret(out, peerPub);
+  bool any = false;
+  for (size_t i = 0; i < PUB_KEY_SIZE; ++i) any = any || out[i] != 0;
+  if (!any) memset(out, 0, PUB_KEY_SIZE);
+  return any;
+}
+#endif
+"""
+    if cpp_old not in mesh:
+        fail("V28 raw ECDH cpp anchor missing")
+    mesh = replace_once(mesh, cpp_old, cpp_new, "V28 raw requester ECDH implementation")
     mesh_path.write_text(mesh)
 
     ui = ui_path.read_text()
