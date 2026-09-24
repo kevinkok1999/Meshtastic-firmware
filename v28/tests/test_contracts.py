@@ -47,6 +47,41 @@ def main() -> None:
         if forbidden in mesh + "\n" + ui + "\n" + ws:
             die("V28 must not create a second chat engine: " + forbidden)
 
+
+    # V28 production Internet route: own signed HTTPS relay, no public MQTT.
+    for marker in (
+        '#define V28_RELAY_URL "https://meshoffgridnl.vercel.app/api/v28-relay"',
+        "MOG28-RELAY-V1",
+        "#include <HTTPClient.h>",
+        "_wc.setCACert(V28_RELAY_ROOT_CA)",
+        "_mesh->v27SignGlobal(",
+        '"push"',
+        '"poll"',
+        '"ack"',
+        "mbedtls_base64_encode",
+        "mbedtls_base64_decode",
+        "POLL_INTERVAL_MS = 1800",
+        "RELAY_HEALTH_MS = 120000",
+    ):
+        if marker not in bridge_h + "\n" + bridge_cpp:
+            die("V28 signed HTTPS relay marker missing " + marker)
+    for forbidden in (
+        "PubSubClient",
+        "broker.emqx.io",
+        "V27_GLOBAL_BROKER",
+        "_mqtt.",
+        ".setInsecure(",
+    ):
+        if forbidden in bridge_h + "\n" + bridge_cpp:
+            die("V28 must not retain public MQTT/insecure relay: " + forbidden)
+    if "wire + 30, 12" not in bridge_cpp:
+        die("V28 GCM nonce must use bytes 30..41 consistently")
+    if "wire + 22, 12" in bridge_cpp:
+        die("V28 must not reuse unlinkability padding as GCM nonce")
+    if "return enqueue(recipient.id.pub_key, timestamp, text);" not in bridge_cpp:
+        die("V28 Internet route 2 must remain queued/non-blocking after RF")
+
+
     # Professional shell / no dead ends.
     for marker in (
         "V28 professional shell",
