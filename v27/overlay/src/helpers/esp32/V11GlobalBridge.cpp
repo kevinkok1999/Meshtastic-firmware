@@ -408,15 +408,16 @@ void V11GlobalBridge::flushOneChannel() {
     --_pendingChannelCount;
 }
 
-bool V11GlobalBridge::mirrorDM(const ContactInfo& recipient, uint32_t timestamp, const char* text) {
+bool V11GlobalBridge::mirrorDM(const ContactInfo& recipient, uint32_t timestamp,
+                               const char* text, bool allowQueue) {
     if (!_started || !_mesh || !text || recipient.type != ADV_TYPE_CHAT) return false;
 
     if (WiFi.status() != WL_CONNECTED || _connecting || !_mqtt.connected()) {
-        return enqueue(recipient.id.pub_key, timestamp, text);
+        return allowQueue ? enqueue(recipient.id.pub_key, timestamp, text) : false;
     }
 
     if (publishDMNow(recipient.id.pub_key, timestamp, text)) return true;
-    return enqueue(recipient.id.pub_key, timestamp, text);
+    return allowQueue ? enqueue(recipient.id.pub_key, timestamp, text) : false;
 }
 
 bool V11GlobalBridge::mirrorChannelPacket(const mesh::GroupChannel& channel, const mesh::Packet* packet) {
