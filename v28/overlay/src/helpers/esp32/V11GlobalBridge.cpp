@@ -174,7 +174,11 @@ void V11GlobalBridge::loop() {
     const uint32_t now = millis();
     if (!due(now, _nextPollAt)) return;
 
-    // Delivery ACKs first, then queued route-2 copies, then inbox polling.
+    // User-driven V28 join controls are highest priority, followed by a
+    // pending requester's approval/status check. Normal relay traffic keeps
+    // its existing ACK -> queued copies -> inbox order after that.
+    if (startControl()) return;
+    if (startInviteStatus()) return;
     if (startAck()) return;
     if (startPushDm()) return;
     if (startPushChannel()) return;
