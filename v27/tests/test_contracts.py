@@ -86,7 +86,7 @@ def main() -> None:
         "MOG27-DM-KEY",
         "MOG27-DM-ROUTE",
         "MOG27-ID-DM",
-        "PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT",
+        "PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT",
         "PENDING_CAP = 16",
         "PENDING_TTL_MS",
         "RETRY_MAX_MS = 60000",
@@ -97,6 +97,9 @@ def main() -> None:
         "v27InjectGlobalChannel",
         "MOG27-CH-KEY",
         "MOG27-ID-CH",
+        "MOG27-CH-SIGN",
+        "v27SignGlobal",
+        "signer.verify(signature, signData",
         "routeTopicForChannel",
         "mesh::Utils::MACThenDecrypt",
         "PENDING_CHANNEL_CAP = 8",
@@ -155,11 +158,15 @@ def main() -> None:
         die("shared channel send choke-point mirror missing")
     if "memcpy(plain, secret" in bridge_cpp or "memcpy(wire, secret" in bridge_cpp:
         die("channel secret must never be copied into relay payloads")
+    if "memcpy(plain, _selfPub, 32)" not in bridge_cpp or "memcpy(plain + 32, signature, SIGNATURE_SIZE)" not in bridge_cpp:
+        die("global channel sender identity/signature must remain encrypted in the fixed envelope")
+    if "const bool signatureOk = signer.verify(signature, signData" not in bridge_cpp:
+        die("global channel post must verify Ed25519 sender signature before UI insertion")
 
     for marker in (
         "RX_RATE_WINDOW_MS = 10000",
         "RX_RATE_MAX_PER_WINDOW = 100",
-        "static_assert(MAX_WIRE == 248",
+        "static_assert(MAX_WIRE == 312",
         "static_assert(MAX_WIRE < 400",
         "bool V11GlobalBridge::allowInbound()",
         "if (!allowInbound()) return;",
