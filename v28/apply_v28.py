@@ -283,11 +283,10 @@ static void v28HomeSettingsCb(lv_event_t* e) {
     ui_path.write_text(ui)
 
     # Browser chat shell: preserve every existing @ command / WebSocket handler.
-    # V28 only changes first impression and labels inside the served HTML.
+    # V28 only modernizes presentation and adds shortcuts that call existing
+    # browser functions. No second composer/chat implementation is introduced.
     ws = ws_path.read_text()
     if "V28_BROWSER_CHAT_SHELL" not in ws:
-        # Add a tiny marker comment at the HTML definition so contract tests can
-        # prove the browser overlay is the only WebSocket-server change.
         marker = "static const char"
         pos = ws.find(marker)
         if pos < 0:
@@ -296,6 +295,54 @@ static void v28HomeSettingsCb(lv_event_t* e) {
 // V28_BROWSER_CHAT_SHELL: browser UX only; existing WebSocket command protocol is unchanged.
 #endif
 """ + ws[pos:]
+
+        # Brand/browser chrome. These strings live only in the embedded HTML.
+        ws = ws.replace("<title>wadamesh</title>", "<title>MeshOffGridNL</title>")
+        ws = ws.replace("<span id=dot>&bull;</span><b>WADAMESH</b><span id=hnm></span>",
+                        "<span id=dot>&bull;</span><b>MeshOffGridNL</b><span id=hnm></span>")
+        ws = ws.replace(
+            "<div id=tabs><button data-t=chats class=on>Chats</button><button data-t=contacts>Contacts</button><button data-t=term>Terminal</button></div>",
+            "<div id=tabs><button data-t=chats class=on>Chats</button><button data-t=contacts>People &amp; #Channels</button><button data-t=term>Advanced</button></div>",
+        )
+        ws = ws.replace("placeholder='Message'", "placeholder='Message...'")
+        ws = ws.replace("placeholder='Search'", "placeholder='Search people or channels'")
+
+        # Familiar messenger spacing/chrome; functionality stays untouched.
+        ws = ws.replace(
+            "#hd{padding:8px 10px;border-bottom:1px solid #1c1c1f;display:flex;align-items:center;gap:8px}#hdl{flex:1}",
+            "#hd{padding:12px 14px;border-bottom:1px solid #24262b;display:flex;align-items:center;gap:10px;background:#101114}#hdl{flex:1}",
+        )
+        ws = ws.replace(
+            "#tabs{display:flex;border-bottom:1px solid #1c1c1f}",
+            "#tabs{display:flex;border-bottom:1px solid #24262b;background:#101114;padding:0 6px}",
+        )
+        ws = ws.replace(
+            "#tabs button{flex:1;background:none;border:none;color:#7f868c;padding:11px 4px;font:inherit;font-size:13px;border-bottom:2px solid transparent;cursor:pointer}",
+            "#tabs button{flex:1;background:none;border:none;color:#8e959c;padding:12px 6px;font:inherit;font-size:13px;font-weight:600;border-bottom:2px solid transparent;cursor:pointer}",
+        )
+        ws = ws.replace(
+            ".row{display:flex;padding:11px 13px;border-bottom:1px solid #141416;cursor:pointer;gap:10px;align-items:center}",
+            ".row{display:flex;padding:13px 14px;border-bottom:1px solid #181a1e;cursor:pointer;gap:11px;align-items:center}",
+        )
+        ws = ws.replace(
+            ".empty{padding:26px 13px;color:#63696e;text-align:center}",
+            ".empty{padding:34px 18px;color:#7f868c;text-align:center;line-height:1.55}.empty button{margin-top:14px;background:#19d6c2;color:#04201d;border:0;border-radius:18px;padding:9px 16px;font:inherit;font-weight:700;cursor:pointer}",
+        )
+
+        # No dead empty inbox: one button simply opens the existing contacts/channels tab.
+        ws = ws.replace(
+            "function renderThreads(){var h='';if(!threads.length)h='<div class=empty>No chats yet.<br>Start one from Contacts.</div>';",
+            "function renderThreads(){var h='';if(!threads.length)h='<div class=empty><b>No conversations yet</b><br>Start with a person or #channel.<br><button id=v28newchat>New chat</button></div>';",
+        )
+        ws = ws.replace(
+            " E('tlist').innerHTML=h;each(E('tlist').querySelectorAll('.row'),function(r){var ti=+r.getAttribute('data-ti');",
+            " E('tlist').innerHTML=h;var nb=E('v28newchat');if(nb)nb.onclick=function(){showTab('contacts')};each(E('tlist').querySelectorAll('.row'),function(r){var ti=+r.getAttribute('data-ti');",
+        )
+        ws = ws.replace(
+            "h+='<div class=sec>CONTACTS'+(cs.length?' ('+cs.length+')':'')+'</div>';if(!cs.length)h+='<div class=empty>No contacts.</div>';",
+            "h+='<div class=sec>PEOPLE'+(cs.length?' ('+cs.length+')':'')+'</div>';if(!cs.length)h+='<div class=empty>No saved people yet.<br>Use Discovered nodes above to add someone.</div>';",
+        )
+
         ws_path.write_text(ws)
 
     print("V28 applied: RF route 1 + Internet route 2 + professional no-dead-end UX")
