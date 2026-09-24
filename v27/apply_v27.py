@@ -54,6 +54,7 @@ def main() -> None:
         "  -D MESH_OFFGRIDNL_V26=1\n"
         "  -D MESH_OFFGRIDNL_V27=1\n"
         "  -D V27_PRIVACY_PRO=1\n"
+        "  -D V27_PRIVACY_FUNCTION_PRESERVING=1\n"
         "  -D V27_P1_V8_COMPAT=1\n"
         "  -D V27_ZERO_CONFIG=1\n"
         "  -D V27_WIFI_BROAD_COMPAT=1\n"
@@ -426,6 +427,10 @@ void MyMesh::v11InjectGlobalDm"""
         fail("V27 global-first send entry anchor drifted")
     mesh_cpp_text = mesh_cpp_text.replace(dm_entry_old, dm_entry_new, 1)
 
+    # Privacy is transport-independent. A privacy/global failure may reject the
+    # unsafe Internet path, but it must never disable RF, Wi-Fi association,
+    # local UI, or legacy/P1 compatibility. Global-first only short-circuits RF
+    # after an authenticated encrypted publish succeeds.
     # V11 considered an Internet RAM-queue acceptance equivalent to a send.
     # V27 keeps the UI honest: if RF failed, the global path only counts when
     # it was published immediately. Hidden delayed delivery is never reported
