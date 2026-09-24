@@ -148,6 +148,24 @@ def main() -> None:
         if marker not in main_cpp:
             die("portal/main Wi-Fi ownership interlock missing " + marker)
 
+    for marker in (
+        'STALL_SCOPE("v29-portal", v29_emergency_portal.loop())',
+        "Noodinformatie: controleer directe veiligheid",
+        "Telefoon verbinden",
+    ):
+        if marker not in main_cpp + "\n" + ui:
+            die("V29 emergency UI/portal runtime marker missing " + marker)
+
+    for marker in (
+        "ACTION_RATE_MS",
+        "actionAllowed",
+        "/moving?",
+        "/meeting?",
+        "millis() + 300UL",
+    ):
+        if marker not in portal_h + "\n" + portal_cpp:
+            die("V29 portal hardening marker missing " + marker)
+
     # V28/P1 foundations remain present and unchanged in intent.
     for marker in (
         "MESH_OFFGRIDNL_V28=1",

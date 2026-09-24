@@ -170,6 +170,7 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
     loop_new = loop_anchor + """#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && defined(MESH_OFFGRIDNL_V29)
 #ifdef DISPLAY_CLASS
   STALL_SCOPE("v29-emergency", v29_emergency_fabric.loop());
+  STALL_SCOPE("v29-portal", v29_emergency_portal.loop());
 #else
   v29_emergency_fabric.loop();
   v29_emergency_portal.loop();
@@ -301,13 +302,16 @@ static void v29PortalStartApply() {
 
 static void v29EmergencyInfoCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  if (v29_emergency_portal.active()) {
-    v29PortalStartApply();
-    return;
+  if (g_lv.task) {
+    g_lv.task->showAlert(
+      "Noodinformatie: controleer directe veiligheid. Gebruik 112 als telefonie werkt. Volg officiële informatie zodra die beschikbaar is. Deze T-Deck vervangt geen water, eten, medicijnen of stroombron.",
+      7000);
   }
-  showConfirm(
-      "Noodinformatie blijft lokaal beschikbaar. Start tijdelijk een telefoonnetwerk zonder internet?",
-      "Telefoon verbinden", v29PortalStartApply);
+}
+
+static void v29EmergencyPortalCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  v29PortalStartApply();
 }
 
 static void v29EmergencyFamilyCb(lv_event_t* e) {
@@ -380,6 +384,16 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
   v29EmergencyButton(s_v29_emergency_overlay, "Noodinformatie",    164, 106, v29EmergencyInfoCb);
   v29EmergencyButton(s_v29_emergency_overlay, "Gezin / contacten",   8, 160, v29EmergencyFamilyCb);
   v29EmergencyButton(s_v29_emergency_overlay, "Netwerkstatus",     164, 160, v29EmergencyStatusCb);
+
+  // Secondary action: on-demand local phone portal. Keeping this smaller than
+  // the six primary actions makes the emergency flow simple and saves power.
+  lv_obj_t* phone = lv_btn_create(s_v29_emergency_overlay);
+  lv_obj_set_size(phone, 142, 24);
+  lv_obj_set_pos(phone, 86, 210);
+  lv_obj_add_event_cb(phone, v29EmergencyPortalCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* phoneLabel = lv_label_create(phone);
+  lv_label_set_text(phoneLabel, "Telefoon verbinden");
+  lv_obj_center(phoneLabel);
 }
 #endif
 '''
@@ -472,6 +486,9 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
         "Telefoon verbinden",
         "const bool v29_portal_active",
         "wifi_started && !v29_portal_active",
+        'STALL_SCOPE("v29-portal", v29_emergency_portal.loop())',
+        "Noodinformatie: controleer directe veiligheid",
+        "lv_label_set_text(phoneLabel, \"Telefoon verbinden\")",
         "MOG29-DIRECT-V1",
         "v29q0.bin",
         "v29q1.bin",

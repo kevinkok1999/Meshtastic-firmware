@@ -63,6 +63,7 @@ bool V29EmergencyPortal::start() {
 
     _sessionStartedMs = millis();
     _lastActivityMs = _sessionStartedMs;
+    _lastActionMs = 0;
     _active = true;
     v29_emergency_fabric.setPowerMode(V29EmergencyFabric::PowerMode::Emergency);
 
@@ -86,6 +87,7 @@ void V29EmergencyPortal::stop() {
     _active = false;
     _sessionStartedMs = 0;
     _lastActivityMs = 0;
+    _lastActionMs = 0;
     memset(_token, 0, sizeof(_token));
     Serial.println("[V29] local emergency portal stopped");
 }
@@ -95,6 +97,13 @@ uint32_t V29EmergencyPortal::remainingSeconds() const {
     const uint32_t elapsedMs = (uint32_t)(millis() - _sessionStartedMs);
     if (elapsedMs >= SESSION_MAX_MS) return 0;
     return (SESSION_MAX_MS - elapsedMs) / 1000UL;
+}
+
+bool V29EmergencyPortal::actionAllowed(uint32_t now) {
+    if (_lastActionMs != 0 && (uint32_t)(now - _lastActionMs) < ACTION_RATE_MS)
+        return false;
+    _lastActionMs = now;
+    return true;
 }
 
 bool V29EmergencyPortal::tokenOk(const char* path) const {
@@ -130,6 +139,8 @@ void V29EmergencyPortal::sendPage(WiFiClient& c, const char* notice) {
     }
     c.print("<a href='/safe?t="); c.print(_token); c.print("'>Ik ben veilig</a>");
     c.print("<a class='help' href='/help?t="); c.print(_token); c.print("'>Ik heb hulp nodig</a>");
+    c.print("<a href='/moving?t="); c.print(_token); c.print("'>Ik ben onderweg</a>");
+    c.print("<a href='/meeting?t="); c.print(_token); c.print("'>Bij verzamelpunt</a>");
     c.print("<a href='/status?t="); c.print(_token); c.print("'>Netwerkstatus</a>");
     c.print("<div class='card small'>Een hulpvraag gaat via het lokale mesh-netwerk. 112 wordt niet automatisch gebeld."
             " Als telefonie werkt en er direct gevaar is, gebruik 112.</div>");
@@ -145,7 +156,7 @@ void V29EmergencyPortal::sendNotFound(WiFiClient& c) {
 void V29EmergencyPortal::handleClient(WiFiClient& c) {
     char line[192] = {};
     size_t n = 0;
-    const uint32_t deadline = millis() + 25UL;
+    const uint32_t deadline = millis() + 300UL;
 
     while (c.connected() && (int32_t)(millis() - deadline) < 0 && n + 1 < sizeof(line)) {
         while (c.available() && n + 1 < sizeof(line)) {
@@ -186,25 +197,46 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
         return;
     }
 
-    if (strncmp(path, "/safe?", 6) == 0) {
-        const uint8_t sent = v29_emergency_fabric.sendCheckInToEmergencyContacts(
-            V29EmergencyFabric::CheckInState::Safe);
-        char notice[96];
-        snprintf(notice, sizeof(notice),
-                 sent ? "Veilig-melding is bewaard/verzonden naar %u noodcontact(en)."
-                      : "Geen noodcontacten ingesteld op deze T-Deck.",
-                 (unsigned)sent);
-        sendPage(c, notice);
-        return;
-    }
+    if (strncmp(path, "/safe?", 6) == 0 ||
+        strncmp(path, "/help?", 6) == 0 ||
+        strncmp(path, "/moving?", 8) == 0 ||
+        strncmp(path, "/meeting?", 9) == 0) {
+        const uint32_t now = millis();
+        if (!actionAllowed(now)) {
+            sendPage(c, "Actie al ontvangen - probeer over enkele seconden opnieuw.");
+            return;
+        }
 
-    if (strncmp(path, "/help?", 6) == 0) {
-        const uint8_t sent = v29_emergency_fabric.sendHelpToEmergencyContacts(0, 2);
-        char notice[128];
-        snprintf(notice, sizeof(notice),
-                 sent ? "Lokale hulpvraag is bewaard/verzonden naar %u noodcontact(en). 112 is niet automatisch gebeld."
-                      : "Geen noodcontacten ingesteld. 112 is niet automatisch gebeld.",
-                 (unsigned)sent);
+        uint8_t sent = 0;
+        char notice[144] = {};
+        if (strncmp(path, "/safe?", 6) == 0) {
+            sent = v29_emergency_fabric.sendCheckInToEmergencyContacts(
+                V29EmergencyFabric::CheckInState::Safe);
+            snprintf(notice, sizeof(notice),
+                     sent ? "Veilig-melding is bewaard/verzonden naar %u noodcontact(en)."
+                          : "Geen noodcontacten ingesteld op deze T-Deck.",
+                     (unsigned)sent);
+        } else if (strncmp(path, "/help?", 6) == 0) {
+            sent = v29_emergency_fabric.sendHelpToEmergencyContacts(0, 2);
+            snprintf(notice, sizeof(notice),
+                     sent ? "Lokale hulpvraag is bewaard/verzonden naar %u noodcontact(en). 112 is niet automatisch gebeld."
+                          : "Geen noodcontacten ingesteld. 112 is niet automatisch gebeld.",
+                     (unsigned)sent);
+        } else if (strncmp(path, "/moving?", 8) == 0) {
+            sent = v29_emergency_fabric.sendCheckInToEmergencyContacts(
+                V29EmergencyFabric::CheckInState::Moving);
+            snprintf(notice, sizeof(notice),
+                     sent ? "Onderweg-melding is bewaard/verzonden naar %u noodcontact(en)."
+                          : "Geen noodcontacten ingesteld op deze T-Deck.",
+                     (unsigned)sent);
+        } else {
+            sent = v29_emergency_fabric.sendCheckInToEmergencyContacts(
+                V29EmergencyFabric::CheckInState::AtMeetingPoint);
+            snprintf(notice, sizeof(notice),
+                     sent ? "Verzamelpunt-melding is bewaard/verzonden naar %u noodcontact(en)."
+                          : "Geen noodcontacten ingesteld op deze T-Deck.",
+                     (unsigned)sent);
+        }
         sendPage(c, notice);
         return;
     }
