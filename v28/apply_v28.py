@@ -21,8 +21,9 @@ def main() -> None:
     pio_path = root / "platformio.ini"
     ui_path = root / "src/ui-touch/UITask.cpp"
     ws_path = root / "src/helpers/esp32/WebSocketCompanionServer.cpp"
+    mesh_path = root / "src/MyMesh.cpp"
 
-    for p in (pio_path, ui_path, ws_path):
+    for p in (pio_path, ui_path, ws_path, mesh_path):
         if not p.exists():
             fail("missing " + str(p))
 
@@ -45,7 +46,8 @@ def main() -> None:
             "  -D V28_INTERNET_SECONDARY=1\n"
             "  -D V28_PRO_UX=1\n"
             "  -D V28_NO_DEAD_ENDS=1\n"
-            "  -D V28_BROWSER_CHAT_SHELL=1\n",
+            "  -D V28_BROWSER_CHAT_SHELL=1\n"
+            "  -D V28_RF_PRIMARY=1\n",
             "V28 T-Deck flags",
         )
         pio = pio[:tdeck_start] + block + pio[tdeck_end:]
@@ -90,6 +92,83 @@ def main() -> None:
     mesh_path.write_text(mesh)
 
     ui = ui_path.read_text()
+
+    # V28 transport policy override: V27 contained an optional early
+    # global-first short-circuit. V28 explicitly restores RF as route 1.
+    # Internet remains the secondary encrypted delivery path after RF has
+    # already been attempted.
+    mesh = mesh_path.read_text()
+
+    dm_global_first_old = """#if defined(MESH_OFFGRIDNL_V27)
+  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
+      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }
+#endif
+"""
+    dm_global_first_new = """#if defined(MESH_OFFGRIDNL_V27) && !defined(MESH_OFFGRIDNL_V28)
+  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
+      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }
+#endif
+"""
+    if dm_global_first_old not in mesh:
+        fail("V28 RF-primary DM anchor missing")
+    mesh = replace_once(mesh, dm_global_first_old, dm_global_first_new,
+                        "V28 disable inherited global-first DM")
+
+    group_old = """void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
+  uiTrackSentFp(txtFloodFp(pkt));
+#if defined(MESH_OFFGRIDNL_V27)
+  if (pkt && pkt->getPayloadType() == PAYLOAD_TYPE_GRP_TXT) {
+    v11_global_bridge.mirrorChannelPacket(channel, pkt);
+  }
+#endif
+  // TODO: have per-channel send_scope
+  if (send_unscoped) {
+    sendFlood(pkt, delay_millis, floodPathHashSize());  // app has explicitly requested un-scoped
+  } else {
+    TransportKey default_scope;
+    memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+
+    auto scope = send_scope.isNull() ? &default_scope : &send_scope;
+    sendFloodScoped(*scope, pkt, delay_millis);   // the lower overload applies path_hash_mode
+  }
+}
+"""
+    group_new = """void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
+  uiTrackSentFp(txtFloodFp(pkt));
+  // TODO: have per-channel send_scope
+  if (send_unscoped) {
+    sendFlood(pkt, delay_millis, floodPathHashSize());  // app has explicitly requested un-scoped
+  } else {
+    TransportKey default_scope;
+    memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+
+    auto scope = send_scope.isNull() ? &default_scope : &send_scope;
+    sendFloodScoped(*scope, pkt, delay_millis);   // the lower overload applies path_hash_mode
+  }
+#if defined(MESH_OFFGRIDNL_V27)
+  // V28 policy: RF was attempted above. The encrypted Internet copy is route 2.
+  if (pkt && pkt->getPayloadType() == PAYLOAD_TYPE_GRP_TXT) {
+    v11_global_bridge.mirrorChannelPacket(channel, pkt);
+  }
+#endif
+}
+"""
+    if group_old not in mesh:
+        fail("V28 RF-primary group anchor missing")
+    mesh = replace_once(mesh, group_old, group_new,
+                        "V28 RF-first group ordering")
+
+    mesh_path.write_text(mesh)
 
     # V28 changes presentation/navigation only. The existing chat transport,
     # message storage, send/receive and RF paths are intentionally untouched.
@@ -219,7 +298,7 @@ static void v28HomeSettingsCb(lv_event_t* e) {
 """ + ws[pos:]
         ws_path.write_text(ws)
 
-    print("V28 applied: professional T-Deck shell + no-dead-end navigation; existing chat/RF behavior preserved")
+    print("V28 applied: RF route 1 + Internet route 2 + professional no-dead-end UX")
 
 if __name__ == "__main__":
     main()
