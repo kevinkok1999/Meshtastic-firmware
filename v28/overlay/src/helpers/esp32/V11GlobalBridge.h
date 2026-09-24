@@ -84,6 +84,7 @@ private:
     static constexpr uint32_t RX_RATE_WINDOW_MS = 10000;
     static constexpr uint16_t RX_RATE_MAX_PER_WINDOW = 100;
     static_assert(MAX_WIRE == 320, "V28 encrypted envelope size changed unexpectedly");
+    static_assert(JOIN_BUNDLE_LEN == 84, "V28 join bundle size changed unexpectedly");
 
     struct Pending {
         bool used = false;
