@@ -4,78 +4,66 @@ on:
   push:
     branches:
       - v26-rf-intelligence
+    paths:
+      - "v26/release-trigger.txt"
   workflow_dispatch:
 
 concurrency:
-  group: v26-rf-validation
+  group: meshoffgridnl-v26-rf-validation
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: V26 RF host test + T-Deck build
+  validate-v26:
+    name: V19 base + V26 RF + T-Deck build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 1
 
-      - name: Host-test V26 RF intelligence logic
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned WadaMesh beta_83
         shell: bash
         run: |
           set -euo pipefail
-          cat > /tmp/rf_intelligence_test.cpp <<'CPP'
-          #include "mesh/RFIntelligence.h"
-          #include <cassert>
-          using namespace meshoffgrid;
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
 
-          int main() {
-              RFIntelligenceSnapshot empty;
-              assert(chooseRxGain(empty, false) == RxGainDecision::KEEP);
-
-              RFIntelligenceSnapshot clean;
-              clean.hasNoiseFloor = true;
-              clean.noiseFloorDbm = -116;
-              clean.hasPacketMetrics = true;
-              clean.packetRssiDbm = -111.0f;
-              clean.packetSnrDb = 0.5f;
-              clean.hasCadMetrics = true;
-              clean.cadBusyPermille = 180;
-              clean.hasErrorMetrics = true;
-              clean.packetErrorPermille = 80;
-              assert(chooseRxGain(clean, false) == RxGainDecision::BOOSTED);
-
-              RFIntelligenceSnapshot noisy = clean;
-              noisy.noiseFloorDbm = -99;
-              assert(chooseRxGain(noisy, true) == RxGainDecision::POWER_SAVE);
-
-              RFIntelligenceSnapshot blocker = clean;
-              blocker.noiseFloorDbm = -106;
-              blocker.cadBusyPermille = 850;
-              assert(chooseRxGain(blocker, true) == RxGainDecision::POWER_SAVE);
-
-              RFIntelligenceSnapshot hysteresis = clean;
-              hysteresis.noiseFloorDbm = -109;
-              hysteresis.packetRssiDbm = -104.0f;
-              hysteresis.packetSnrDb = 4.0f;
-              hysteresis.cadBusyPermille = 400;
-              hysteresis.packetErrorPermille = 100;
-              assert(chooseRxGain(hysteresis, true) == RxGainDecision::KEEP);
-
-              RFIntelligenceSnapshot errors = clean;
-              errors.noiseFloorDbm = -114;
-              errors.packetErrorPermille = 600;
-              assert(chooseRxGain(errors, true) == RxGainDecision::POWER_SAVE);
-
-              assert(rfQualityScore(clean) > rfQualityScore(noisy));
-              return 0;
-          }
-          CPP
-          g++ -std=c++17 -Wall -Wextra -Werror -Isrc /tmp/rf_intelligence_test.cpp -o /tmp/rf_intelligence_test
-          /tmp/rf_intelligence_test
+      - name: Apply V11 through V26
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+          python v17/apply_v17.py upstream-wadamesh
+          python v17/tests/test_contracts.py upstream-wadamesh
+          python v18/apply_v18.py upstream-wadamesh
+          python v18/tests/test_contracts.py upstream-wadamesh
+          python v19/apply_v19.py upstream-wadamesh
+          python v19/tests/test_contracts.py upstream-wadamesh
+          python v26/apply_v26.py upstream-wadamesh
+          python v26/tests/test_contracts.py upstream-wadamesh
 
       - name: Install PlatformIO
         run: |
@@ -83,5 +71,32 @@ jobs:
           pip install -U --no-build-isolation --no-cache-dir "setuptools<72"
           pip install -U platformio --no-build-isolation
 
-      - name: Compile T-Deck TFT firmware
-        run: platformio run -e t-deck-tft
+      - name: Build V26 T-Deck / T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v26.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V26 RF Intelligence"'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Verify V26 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          test -f "$BUILD_DIR/firmware.bin"
+          test -f "$BUILD_DIR/firmware-merged.bin"
+          mkdir -p dist
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V26-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V26-TDeck-Plus-merged.bin
+          sha256sum dist/*
+
+      - name: Upload validation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MeshOffGridNL-V26-TDeck-Plus-validation
+          path: dist/*
+          retention-days: 30
