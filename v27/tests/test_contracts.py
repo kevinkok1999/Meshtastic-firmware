@@ -81,8 +81,10 @@ def main() -> None:
         'STALL_SCOPE("v11-global"',
         "mbedtls_gcm_crypt_and_tag",
         "mbedtls_gcm_auth_decrypt",
-        "v27LookupChatContactByPrefix",
+        "v27GetContactCount",
+        "v27GetContactByIndex",
         "MOG27-DM-KEY",
+        "MOG27-DM-ROUTE",
         "MOG27-ID-DM",
         "PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT",
         "PENDING_CAP = 16",
@@ -113,8 +115,18 @@ def main() -> None:
 
     # Privacy Pro envelope invariants: exact timestamp, full sender key and exact
     # text length stay inside fixed-size authenticated ciphertext.
-    if "memcpy(wire + 14, _selfPub, 8)" not in bridge_cpp:
-        die("Privacy Pro sender routing hint must stay truncated")
+    if "memcpy(wire + 14, _selfPub, 8)" in bridge_cpp:
+        die("Privacy Pro must not expose a sender public-key prefix in the relay header")
+    if "esp_fill_random(wire + 14, 8)" not in bridge_cpp:
+        die("Privacy Pro relay header identity-hint bytes must be randomized")
+    if "MOG27-DM-ROUTE" not in bridge_cpp or "deriveDmKey(pub, pairKey)" not in bridge_cpp:
+        die("DM relay route must derive from the pair-wise shared key")
+    if "for (int i = 0; i < 16; ++i)" not in bridge_cpp:
+        die("DM opaque route token must remain 128 bits")
+    if "_dmTopic" in bridge_cpp or "_dmTopic" in bridge_h:
+        die("single public-key-derived DM inbox must not return")
+    if "findContactForTopic(topic, contact)" not in bridge_cpp:
+        die("DM receive must map pair-wise secret route back to a local contact")
     if "memcpy(plain, _selfPub, 32)" not in bridge_cpp:
         die("Privacy Pro full sender identity must stay inside ciphertext")
     if "memcpy(plain + 32, &timestamp, 4)" not in bridge_cpp:
