@@ -285,3 +285,21 @@ Coding may begin only if:
 6. region policy is explicit;
 7. P1/V26 immutability tests exist;
 8. no production feature depends on the public broker.
+
+
+## RC2 research validation record
+
+Final research validation:
+- Branch: v27-rc2-work
+- Head: 6a3accfa4954f34881f09bb8ec8e14d1440ea251
+- Workflow run: 36043312252
+- Result: SUCCESS
+- Full V11 -> V27 contract chain: PASS
+- P1 Pro V8 pinned compatibility contract: PASS
+- T-Deck / T-Deck Plus PlatformIO build: PASS
+- Artifact verification/upload: PASS
+- Validation artifact id: 10827681981
+- Artifact archive digest: sha256:6f38aa839a2447d94487456f266408968495e34948cf35116de2da6ac998bf09
+
+Important:
+This success validates the quarantined RC2 research mechanics only. It does not promote RC2 to Stable and does not override the rewrite requirements in this audit. Final V27 implementation still starts fresh from pinned v27-rc1 and selectively ports approved pieces.
