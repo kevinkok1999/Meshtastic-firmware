@@ -88,6 +88,8 @@ def main() -> None:
     new_h = """  bool v11LookupChatContact(const uint8_t pub[32], ContactInfo& out);
 #if defined(MESH_OFFGRIDNL_V27)
   bool v27LookupChatContactByPrefix(const uint8_t prefix[8], ContactInfo& out);
+  bool v27GetChannelByIndex(uint8_t idx, ChannelDetails& out);
+  void v27InjectGlobalChannel(const mesh::GroupChannel& channel, uint32_t timestamp, const char* text);
 #endif
   void v11InjectGlobalDm(const uint8_t senderPub[32], uint32_t timestamp, const char* text);
 """
@@ -115,6 +117,8 @@ void MyMesh::v11InjectGlobalDm"""
 }
 
 #if defined(MESH_OFFGRIDNL_V27)
+static bool s_v27_global_channel_inject = false;
+
 bool MyMesh::v27LookupChatContactByPrefix(const uint8_t prefix[8], ContactInfo& out) {
   if (!prefix) return false;
   ContactInfo* c = lookupContactByPubKey(prefix, 8);
@@ -123,12 +127,68 @@ bool MyMesh::v27LookupChatContactByPrefix(const uint8_t prefix[8], ContactInfo& 
   out = *c;
   return true;
 }
+
+bool MyMesh::v27GetChannelByIndex(uint8_t idx, ChannelDetails& out) {
+  if (idx >= MAX_GROUP_CHANNELS) return false;
+  if (!getChannel(idx, out)) return false;
+  return channelSlotConfigured(out);
+}
+
+void MyMesh::v27InjectGlobalChannel(const mesh::GroupChannel& channel,
+                                    uint32_t timestamp,
+                                    const char* text) {
+  if (!text) return;
+  mesh::Packet synthetic;
+  synthetic.header = (PAYLOAD_TYPE_GRP_TXT << PH_TYPE_SHIFT) | ROUTE_TYPE_FLOOD;
+  synthetic.payload_len = 0;
+  synthetic.path_len = 0;
+  synthetic._snr = 0;
+  s_v27_global_channel_inject = true;
+  onChannelMessageRecv(channel, &synthetic, timestamp, text);
+  s_v27_global_channel_inject = false;
+}
 #endif
 
 void MyMesh::v11InjectGlobalDm"""
     if mesh_cpp_text.count(old_cpp) != 1:
         fail("MyMesh V27 contact lookup anchor drifted")
     mesh_cpp_text = mesh_cpp_text.replace(old_cpp, new_cpp, 1)
+    # Mirror every locally-originated group text at the single shared MeshCore
+    # choke point used by touch UI, companion apps and other senders.
+    group_send_old = """void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
+  uiTrackSentFp(txtFloodFp(pkt));
+"""
+    group_send_new = """void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
+  uiTrackSentFp(txtFloodFp(pkt));
+#if defined(MESH_OFFGRIDNL_V27)
+  if (pkt && pkt->getPayloadType() == PAYLOAD_TYPE_GRP_TXT) {
+    v11_global_bridge.mirrorChannelPacket(channel, pkt);
+  }
+#endif
+"""
+    if mesh_cpp_text.count(group_send_old) != 1:
+        fail("V27 global channel send anchor drifted")
+    mesh_cpp_text = mesh_cpp_text.replace(group_send_old, group_send_new, 1)
+
+    group_rx_old = """void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
+                                  const char *text) {
+  // Clock bootstrap"""
+    group_rx_new = """void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
+                                  const char *text) {
+#if defined(MESH_OFFGRIDNL_V27)
+  // If the same logical channel post arrives by Internet and RF, keep one
+  // bubble in the one shared conversation. Global injection bypasses this
+  // check because the bridge already recorded its keyed message ID.
+  if (!s_v27_global_channel_inject &&
+      v11_global_bridge.noteLoRaChannel(channel, timestamp, text)) {
+    return;
+  }
+#endif
+  // Clock bootstrap"""
+    if mesh_cpp_text.count(group_rx_old) != 1:
+        fail("V27 global channel receive anchor drifted")
+    mesh_cpp_text = mesh_cpp_text.replace(group_rx_old, group_rx_new, 1)
+
     mesh_path.write_text(mesh_cpp_text)
 
     # Replace only the Internet bridge implementation. MyMesh chat, V26 RF and
@@ -155,11 +215,16 @@ void MyMesh::v11InjectGlobalDm"""
         "MOG27-DM-KEY",
         "PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT",
         "v27LookupChatContactByPrefix",
+        "v27GetChannelByIndex",
+        "v27InjectGlobalChannel",
+        "mirrorChannelPacket",
+        "noteLoRaChannel",
+        "MOG27-CH-KEY",
     ):
         if marker not in joined:
             fail("hybrid/privacy baseline missing " + marker)
 
-    print("V27 applied: zero-config Privacy Pro global DM + V26/P1-V8 RF compatibility preserved")
+    print("V27 applied: zero-config Privacy Pro global DM + channels + V26/P1-V8 RF compatibility preserved")
 
 if __name__ == "__main__":
     main()
