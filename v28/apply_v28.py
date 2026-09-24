@@ -42,56 +42,16 @@ def main() -> None:
             "  -D MESH_OFFGRIDNL_V27=1\n",
             "  -D MESH_OFFGRIDNL_V27=1\n"
             "  -D MESH_OFFGRIDNL_V28=1\n"
-            "  -D V28_RF_FIRST=1\n"
+            "  -D V28_RF_PRIMARY=1\n"
             "  -D V28_INTERNET_SECONDARY=1\n"
             "  -D V28_PRO_UX=1\n"
             "  -D V28_NO_DEAD_ENDS=1\n"
-            "  -D V28_BROWSER_CHAT_SHELL=1\n"
-            "  -D V28_RF_PRIMARY=1\n",
+            "  -D V28_BROWSER_CHAT_SHELL=1\n",
             "V28 T-Deck flags",
         )
         pio = pio[:tdeck_start] + block + pio[tdeck_end:]
         pio_path.write_text(pio)
 
-
-    # V28 transport policy: undo V27's early global-first short-circuit.
-    # RF remains the first route; the existing V27 mirror path may publish the
-    # same logical message over Internet afterwards when Wi-Fi/relay is ready.
-    mesh_path = root / "src/MyMesh.cpp"
-    if not mesh_path.exists():
-        fail("missing " + str(mesh_path))
-    mesh = mesh_path.read_text()
-
-    v27_global_first = """#if defined(MESH_OFFGRIDNL_V27)
-  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
-      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
-    expected_ack = 0;
-    est_timeout = 0;
-    if (out_packet_hash4) *out_packet_hash4 = 0;
-    return MSG_SEND_SENT_DIRECT;
-  }
-#endif
-
-"""
-    v28_rf_first = """#if defined(MESH_OFFGRIDNL_V27) && !defined(MESH_OFFGRIDNL_V28)
-  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
-      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
-    expected_ack = 0;
-    est_timeout = 0;
-    if (out_packet_hash4) *out_packet_hash4 = 0;
-    return MSG_SEND_SENT_DIRECT;
-  }
-#endif
-
-"""
-    if v27_global_first in mesh:
-        mesh = mesh.replace(v27_global_first, v28_rf_first, 1)
-    elif v28_rf_first not in mesh:
-        fail("V27 global-first anchor missing")
-
-    mesh_path.write_text(mesh)
-
-    ui = ui_path.read_text()
 
     # V28 transport policy override: V27 contained an optional early
     # global-first short-circuit. V28 explicitly restores RF as route 1.
@@ -170,8 +130,9 @@ def main() -> None:
 
     mesh_path.write_text(mesh)
 
-    # V28 changes presentation/navigation only. The existing chat transport,
-    # message storage, send/receive and RF paths are intentionally untouched.
+    # V28 UX changes presentation/navigation only. Native message format,
+    # storage and chat behavior remain unchanged; the only MyMesh difference
+    # allowed by V28 is RF-first / Internet-second route ordering.
     cb_anchor = """static void homeUnreadClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   goToTab(CHAT_INBOX_TAB_INDEX);
