@@ -60,6 +60,9 @@ public:
     bool sendCheckIn(const uint8_t recipient[PUB_KEY_SIZE], CheckInState state);
     bool sendHelpRequest(const uint8_t recipient[PUB_KEY_SIZE], uint8_t helpType,
                          uint8_t severity);
+    uint8_t emergencyContactCount() const;
+    uint8_t sendCheckInToEmergencyContacts(CheckInState state);
+    uint8_t sendHelpToEmergencyContacts(uint8_t helpType, uint8_t severity);
 
     bool onRawFrame(const uint8_t* data, size_t len);
     bool takeEvent(Event& out);
