@@ -223,9 +223,11 @@ private:
                          uint8_t wire[MAX_WIRE], uint8_t msgId[MSG_ID_LEN]);
     bool buildChannelEnvelope(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text,
                               uint8_t wire[MAX_WIRE], uint8_t msgId[MSG_ID_LEN]);
-    bool buildJoinBundle(const uint8_t requester[PUB_KEY_SIZE], const char* channel,
-                         const uint8_t secret16[16], uint8_t out[JOIN_BUNDLE_LEN]);
-    bool decryptJoinBundle(const uint8_t owner[PUB_KEY_SIZE], const uint8_t in[JOIN_BUNDLE_LEN],
+    bool buildJoinBundle(const uint8_t requester[PUB_KEY_SIZE], uint32_t inviteId,
+                         const char* channel, const uint8_t secret16[16],
+                         uint8_t out[JOIN_BUNDLE_LEN]);
+    bool decryptJoinBundle(const uint8_t owner[PUB_KEY_SIZE], uint32_t inviteId,
+                           const uint8_t in[JOIN_BUNDLE_LEN],
                            char channel[32], uint8_t secret16[16]);
 
     bool processDmEnvelope(const uint8_t peerPub[PUB_KEY_SIZE], const uint8_t wire[MAX_WIRE]);
