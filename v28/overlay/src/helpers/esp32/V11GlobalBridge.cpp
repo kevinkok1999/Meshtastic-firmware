@@ -1008,6 +1008,109 @@ bool V11GlobalBridge::buildChannelEnvelope(
     return true;
 }
 
+bool V11GlobalBridge::buildJoinBundle(
+    const uint8_t requester[PUB_KEY_SIZE],
+    const char* channel,
+    const uint8_t secret16[16],
+    uint8_t out[JOIN_BUNDLE_LEN]) {
+    if (!requester || !secret16 || !out) return false;
+
+    uint8_t pairKey[32] = {};
+    if (!deriveDmKeyAny(requester, pairKey)) return false;
+    static const uint8_t ctx[] = "MOG28-JOIN-BUNDLE";
+    uint8_t key[32] = {};
+    if (!hmac256(pairKey, sizeof(pairKey), ctx, sizeof(ctx) - 1, key)) {
+        memset(pairKey, 0, sizeof(pairKey));
+        return false;
+    }
+    memset(pairKey, 0, sizeof(pairKey));
+
+    memset(out, 0, JOIN_BUNDLE_LEN);
+    out[0] = 'M'; out[1] = '2'; out[2] = '8'; out[3] = 'J';
+    out[4] = 1;
+    esp_fill_random(out + 5, 3);
+    esp_fill_random(out + 8, 12);
+
+    uint8_t plain[JOIN_PLAIN_LEN] = {};
+    esp_fill_random(plain, sizeof(plain));
+    memcpy(plain, secret16, 16);
+    const size_t n = channel ? strnlen(channel, 31) : 0;
+    plain[16] = (uint8_t)n;
+    if (n) memcpy(plain + 17, channel, n);
+
+    uint8_t tag[TAG_LEN] = {};
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
+    if (rc == 0) {
+        rc = mbedtls_gcm_crypt_and_tag(
+            &gcm, MBEDTLS_GCM_ENCRYPT, JOIN_PLAIN_LEN,
+            out + 8, 12,
+            out, 8,
+            plain, out + 20,
+            TAG_LEN, tag);
+    }
+    mbedtls_gcm_free(&gcm);
+    memset(key, 0, sizeof(key));
+    memset(plain, 0, sizeof(plain));
+    if (rc != 0) return false;
+
+    memcpy(out + 68, tag, TAG_LEN);
+    memset(tag, 0, sizeof(tag));
+    return true;
+}
+
+bool V11GlobalBridge::decryptJoinBundle(
+    const uint8_t owner[PUB_KEY_SIZE],
+    const uint8_t in[JOIN_BUNDLE_LEN],
+    char channel[32],
+    uint8_t secret16[16]) {
+    if (!owner || !in || !channel || !secret16) return false;
+    if (in[0] != 'M' || in[1] != '2' || in[2] != '8' || in[3] != 'J' || in[4] != 1)
+        return false;
+
+    uint8_t pairKey[32] = {};
+    if (!deriveDmKeyAny(owner, pairKey)) return false;
+    static const uint8_t ctx[] = "MOG28-JOIN-BUNDLE";
+    uint8_t key[32] = {};
+    if (!hmac256(pairKey, sizeof(pairKey), ctx, sizeof(ctx) - 1, key)) {
+        memset(pairKey, 0, sizeof(pairKey));
+        return false;
+    }
+    memset(pairKey, 0, sizeof(pairKey));
+
+    uint8_t plain[JOIN_PLAIN_LEN] = {};
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
+    if (rc == 0) {
+        rc = mbedtls_gcm_auth_decrypt(
+            &gcm, JOIN_PLAIN_LEN,
+            in + 8, 12,
+            in, 8,
+            in + 68, TAG_LEN,
+            in + 20, plain);
+    }
+    mbedtls_gcm_free(&gcm);
+    memset(key, 0, sizeof(key));
+    if (rc != 0) {
+        memset(plain, 0, sizeof(plain));
+        return false;
+    }
+
+    const uint8_t n = plain[16];
+    if (n > 31) {
+        memset(plain, 0, sizeof(plain));
+        return false;
+    }
+    memcpy(secret16, plain, 16);
+    if (n) memcpy(channel, plain + 17, n);
+    channel[n] = '\0';
+    if (n == 0) strncpy(channel, "Private", 31);
+    memset(plain, 0, sizeof(plain));
+    return true;
+}
+
 void V11GlobalBridge::processPollResponse() {
     if (_httpResponse.length() == 0) return;
 
