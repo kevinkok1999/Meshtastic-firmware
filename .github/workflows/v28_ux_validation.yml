@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   validate-v28:
-    name: V27 frozen base + V28 UX + no-dead-end build
+    name: V27 frozen base + V28 RF-first UX + no-dead-end build
     runs-on: ubuntu-24.04
     timeout-minutes: 50
 
@@ -58,22 +58,21 @@ jobs:
           python v27/apply_v27.py upstream-wadamesh
           python v27/tests/test_contracts.py upstream-wadamesh
 
-      - name: Freeze native chat core hashes
+      - name: Freeze V27 chat core reference
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum upstream-wadamesh/src/MyMesh.cpp > /tmp/mymesh.before
+          cp upstream-wadamesh/src/MyMesh.cpp /tmp/MyMesh.v27.cpp
           sha256sum upstream-wadamesh/src/MyMesh.h > /tmp/mymesh-h.before
 
-      - name: Apply V28 UX shell and contracts
+      - name: Apply V28 RF-first UX shell and contracts
         shell: bash
         run: |
           set -euo pipefail
           python v28/apply_v28.py upstream-wadamesh
           python v28/tests/test_ux_contracts.py upstream-wadamesh
-          sha256sum upstream-wadamesh/src/MyMesh.cpp > /tmp/mymesh.after
+          python v28/tests/test_mymesh_diff.py /tmp/MyMesh.v27.cpp upstream-wadamesh/src/MyMesh.cpp
           sha256sum upstream-wadamesh/src/MyMesh.h > /tmp/mymesh-h.after
-          diff -u /tmp/mymesh.before /tmp/mymesh.after
           diff -u /tmp/mymesh-h.before /tmp/mymesh-h.after
 
       - name: Verify immutable P1 Pro V8 reference
