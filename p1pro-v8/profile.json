@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "name": "MeshOffGridNL P1 Pro V8 V19 BLE Companion",
+  "status": "rc1-build-candidate",
+  "upstream": {
+    "project": "meshcore-dev/MeshCore",
+    "commit": "d92964352441e53b93e8667b802e04f6e072b39e",
+    "version": "1.17.1",
+    "target": "SenseCap_Solar_companion_radio_ble"
+  },
+  "partner": {
+    "device": "LILYGO T-Deck / T-Deck Plus",
+    "firmware": "MeshOffGridNL V19",
+    "wadameshTag": "beta_83",
+    "wadameshCommit": "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+  },
+  "radioProfile": {
+    "band": "EU868",
+    "frequencyMHz": 869.618,
+    "bandwidthKHz": 62.5,
+    "spreadingFactor": 8,
+    "codingRate": 5,
+    "txPowerDefaultDbm": 22,
+    "txPowerMaxDbm": 22,
+    "locked": true
+  },
+  "companion": {
+    "bluetooth": true,
+    "blePinDefault": 123456,
+    "role": "companion_radio_ble",
+    "publicChannelPsk": "izOH6cXN6mrJ5e26oRXNcg=="
+  },
+  "installer": {
+    "mode": "V8 all-in-one clean",
+    "eraseBeforeFlash": true,
+    "uf2Rescue": true,
+    "bootloaderUpgrade": false
+  },
+  "validation": {
+    "compileRequired": true,
+    "contractTestsRequired": true,
+    "physicalP1ToTDeckV19Required": true,
+    "physicalTDeckV19ToP1Required": true,
+    "stable": false
+  }
+}
