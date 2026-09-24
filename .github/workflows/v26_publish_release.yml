@@ -1,0 +1,87 @@
+name: Publish MeshOffGridNL V26
+
+on:
+  push:
+    branches:
+      - v26-rf-intelligence
+    paths:
+      - "v26/publish-trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-v26-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned WadaMesh beta_83
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply proven V19 base and V26 RF layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          for v in 11 12 13 15 16 17 18 19; do
+            python "v${v}/apply_v${v}.py" upstream-wadamesh
+            python "v${v}/tests/test_contracts.py" upstream-wadamesh
+          done
+          python v26/apply_v26.py upstream-wadamesh
+          python v26/tests/test_contracts.py upstream-wadamesh
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U --no-build-isolation --no-cache-dir "setuptools<72"
+          pip install -U platformio --no-build-isolation
+
+      - name: Build T-Deck Plus V26
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mesh-v26.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V26 RF Intelligence"'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+          cd ..
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          cp "$BUILD_DIR/firmware.bin" MeshOffGridNL-V26-TDeck-Plus.bin
+          cp "$BUILD_DIR/firmware-merged.bin" MeshOffGridNL-V26-TDeck-Plus-merged.bin
+          sha256sum MeshOffGridNL-V26-TDeck-Plus.bin MeshOffGridNL-V26-TDeck-Plus-merged.bin | tee v26-sha256.txt
+          test "$(stat -c%s MeshOffGridNL-V26-TDeck-Plus-merged.bin)" = "3473280"
+          echo "7ef8a6a37f26237506d07f5b74b90cd61335ad90579756e5ce02ed5baa5c80c5  MeshOffGridNL-V26-TDeck-Plus-merged.bin" | sha256sum -c -
+
+      - name: Publish immutable prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="mesh-v26.0.0-rc1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               MeshOffGridNL-V26-TDeck-Plus.bin               MeshOffGridNL-V26-TDeck-Plus-merged.bin               v26-sha256.txt               --clobber
+          else
+            gh release create "$TAG"               MeshOffGridNL-V26-TDeck-Plus.bin               MeshOffGridNL-V26-TDeck-Plus-merged.bin               v26-sha256.txt               --target "$GITHUB_SHA"               --title "MeshOffGridNL V26 RF Intelligence RC1"               --notes "V26 is based directly on the proven V19 WadaMesh beta_83 stack. Adds conservative SX1262 RF health monitoring and bounded AGC/calibration recovery without changing frequency, bandwidth, spreading factor, coding rate or RX boosted-gain policy. T-Deck/T-Deck Plus build and V11→V19→V26 contracts validated."               --prerelease
+          fi
