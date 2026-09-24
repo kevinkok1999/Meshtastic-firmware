@@ -1,0 +1,248 @@
+name: P1 Pro V8 V19 BLE RC1
+
+on:
+  push:
+    branches:
+      - p1-pro-v8-v19-ble
+    paths:
+      - "p1pro-v8/**"
+      - ".github/workflows/p1-pro-v8-v19-ble.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-firmware-build
+  cancel-in-progress: false
+
+env:
+  MESHCORE_COMMIT: d92964352441e53b93e8667b802e04f6e072b39e
+  TARGET: SenseCap_Solar_companion_radio_ble
+  RELEASE_TAG: p1pro-v8-v19-ble-rc1
+  RELEASE_NAME: MeshOffGridNL P1 Pro V8 V19 BLE RC1
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned MeshCore Companion v1.17.1
+        run: |
+          rm -rf upstream-meshcore
+          git clone https://github.com/meshcore-dev/MeshCore.git upstream-meshcore
+          cd upstream-meshcore
+          git checkout "$MESHCORE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$MESHCORE_COMMIT"
+
+      - name: Apply V19-compatible BLE Companion layer
+        run: |
+          python p1pro-v8/apply_v8_v19_ble.py upstream-meshcore
+          python p1pro-v8/tests/test_contracts.py upstream-meshcore
+
+      - name: Install pinned PlatformIO
+        run: python -m pip install "platformio==6.2.0"
+
+      - name: Build SenseCAP Solar BLE Companion
+        env:
+          FIRMWARE_VERSION: p1pro-v8-v19-ble-rc1
+        run: |
+          cd upstream-meshcore
+          bash build.sh build-firmware "$TARGET"
+          ls -lah out/
+          test -n "$(find out -maxdepth 1 -name 'SenseCap_Solar_companion_radio_ble-*.uf2' -print -quit)"
+          test -n "$(find out -maxdepth 1 -name 'SenseCap_Solar_companion_radio_ble-*.zip' -print -quit)"
+
+      - name: Package V8 V19 BLE RC1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          UF2="$(find upstream-meshcore/out -maxdepth 1 -name 'SenseCap_Solar_companion_radio_ble-*.uf2' -print -quit)"
+          DFU="$(find upstream-meshcore/out -maxdepth 1 -name 'SenseCap_Solar_companion_radio_ble-*.zip' -print -quit)"
+          test -f "$UF2"
+          test -f "$DFU"
+
+          cp "$UF2" dist/MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1.uf2
+          cp "$DFU" dist/MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1.zip
+
+          curl --fail --location --retry 3             "https://flasher.meshcore.io/firmware/FLASH_ERASE_nrf52_softdevice_v7.zip"             -o dist/FLASH_ERASE_nrf52_softdevice_v7.zip
+          unzip -t dist/FLASH_ERASE_nrf52_softdevice_v7.zip
+
+          tar             --exclude='.git'             --exclude='.pio'             --exclude='out'             -czf dist/MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1-source.tar.gz             upstream-meshcore p1pro-v8
+
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+
+          d = pathlib.Path("dist")
+          files = [
+              d / "MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1.zip",
+              d / "MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1.uf2",
+              d / "FLASH_ERASE_nrf52_softdevice_v7.zip",
+              d / "MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1-source.tar.gz",
+          ]
+
+          def sha256(path):
+              h = hashlib.sha256()
+              with path.open("rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          manifest = {
+              "schema": 1,
+              "product": "MeshOffGridNL P1 Pro V8 V19 BLE Companion",
+              "release": "RC1",
+              "stable": False,
+              "board": "seeed-sensecap-solar-node-p1",
+              "compatibleHardware": [
+                  "Seeed Studio SenseCAP Solar Node P1",
+                  "Seeed Studio SenseCAP Solar Node P1 Pro"
+              ],
+              "target": os.environ["TARGET"],
+              "mcu": "nRF52840",
+              "radio": "SX1262",
+              "protocol": "MeshCore",
+              "role": "companion_radio_ble",
+              "bluetooth": True,
+              "blePinDefault": 123456,
+              "meshcoreCommit": os.environ["MESHCORE_COMMIT"],
+              "workspaceCommit": os.environ["GITHUB_SHA"],
+              "tdeckV19": {
+                  "firmware": "MeshOffGridNL V19",
+                  "wadameshTag": "beta_83",
+                  "wadameshCommit": "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+              },
+              "radioProfile": {
+                  "band": "EU868",
+                  "frequencyMHz": 869.618,
+                  "bandwidthKHz": 62.5,
+                  "spreadingFactor": 8,
+                  "codingRate": 5,
+                  "txPowerDefaultDbm": 22,
+                  "txPowerMaxDbm": 22,
+                  "locked": True
+              },
+              "routing": {
+                  "clientRepeatForced": False,
+                  "repeatRangeOverride": False,
+                  "directCompanionLink": True
+              },
+              "installer": {
+                  "type": "nrf52-dfu",
+                  "v8AllInOneClean": True,
+                  "eraseFile": "FLASH_ERASE_nrf52_softdevice_v7.zip",
+                  "flashFile": "MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1.zip",
+                  "uf2Rescue": "MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1.uf2",
+                  "automaticBootloaderUpgrade": False
+              },
+              "validation": {
+                  "compileAndContractTests": True,
+                  "physicalP1ToTDeckV19Required": True,
+                  "physicalTDeckV19ToP1Required": True,
+                  "stable": False
+              },
+              "artifacts": [
+                  {"file": p.name, "size": p.stat().st_size, "sha256": sha256(p)}
+                  for p in files
+              ]
+          }
+
+          (d / "p1-pro-v8-v19-ble-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n"
+          )
+          print(json.dumps(manifest, indent=2))
+          PY
+
+          (cd dist && sha256sum * > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Validate packaged release
+        run: |
+          python - <<'PY'
+          import hashlib, json, pathlib
+          d = pathlib.Path("dist")
+          m = json.loads((d / "p1-pro-v8-v19-ble-manifest.json").read_text())
+
+          assert m["stable"] is False
+          assert m["target"] == "SenseCap_Solar_companion_radio_ble"
+          assert m["role"] == "companion_radio_ble"
+          assert m["bluetooth"] is True
+          assert m["blePinDefault"] == 123456
+          assert m["meshcoreCommit"] == "d92964352441e53b93e8667b802e04f6e072b39e"
+          assert m["tdeckV19"]["wadameshCommit"] == "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+          assert m["radioProfile"] == {
+              "band": "EU868",
+              "frequencyMHz": 869.618,
+              "bandwidthKHz": 62.5,
+              "spreadingFactor": 8,
+              "codingRate": 5,
+              "txPowerDefaultDbm": 22,
+              "txPowerMaxDbm": 22,
+              "locked": True
+          }
+          assert m["routing"]["clientRepeatForced"] is False
+          assert m["routing"]["repeatRangeOverride"] is False
+          assert m["installer"]["v8AllInOneClean"] is True
+          assert m["installer"]["automaticBootloaderUpgrade"] is False
+
+          for item in m["artifacts"]:
+              p = d / item["file"]
+              assert p.exists(), item["file"]
+              assert p.stat().st_size == item["size"], item["file"]
+              assert hashlib.sha256(p.read_bytes()).hexdigest() == item["sha256"], item["file"]
+
+          print("P1 Pro V8 V19 BLE packaged release OK")
+          PY
+
+      - name: Publish V8 V19 BLE RC1 prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          cat > release-notes.md <<'EOF'
+          MeshOffGridNL P1 Pro V8 V19 BLE RC1
+
+          BLE Companion build for direct compatibility testing with MeshOffGridNL T-Deck V19.
+
+          - official MeshCore Companion v1.17.1 base
+          - SenseCAP Solar P1/P1 Pro BLE Companion role retained
+          - 869.618 MHz / 62.5 kHz / SF8 / CR5 locked
+          - default TX 22 dBm, hard ceiling 22 dBm
+          - persisted incompatible RF settings repaired at boot
+          - MeshCore app cannot switch the P1 to a different RF profile
+          - upstream repeat-frequency restrictions are not broadened
+          - BLE PIN default 123456 retained
+          - V8 All-in-One erase + DFU + UF2 rescue compatible
+          - no automatic bootloader update
+
+          RC1 remains a prerelease until bidirectional real-hardware P1 Pro <-> T-Deck V19 tests pass.
+          EOF
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG"               --target "$GITHUB_SHA"               --title "$RELEASE_NAME"               --notes-file release-notes.md               --prerelease
+          else
+            gh release create "$RELEASE_TAG"               --target "$GITHUB_SHA"               --title "$RELEASE_NAME"               --notes-file release-notes.md               --prerelease
+          fi
+
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-P1-Pro-V8-V19-BLE-RC1
+          path: dist/*
+          retention-days: 30
