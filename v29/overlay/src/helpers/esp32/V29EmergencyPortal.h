@@ -23,8 +23,11 @@ private:
     static constexpr uint32_t SESSION_MAX_MS = 15UL * 60UL * 1000UL;
     static constexpr uint32_t IDLE_STOP_MS = 5UL * 60UL * 1000UL;
     static constexpr uint32_t ACTION_RATE_MS = 3000UL;
-    static constexpr uint16_t HTTP_PORT = 80;
-    static constexpr uint16_t DNS_PORT = 53;
+    // Enum constants avoid ODR/linker storage on the C++11 ESP32 toolchain.
+    enum : uint16_t {
+        HTTP_PORT = 80,
+        DNS_PORT = 53,
+    };
 
     bool _started = false;
     bool _active = false;
