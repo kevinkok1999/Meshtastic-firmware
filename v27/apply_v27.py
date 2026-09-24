@@ -52,7 +52,8 @@ def main() -> None:
         "  -D MESH_OFFGRIDNL_V26=1\n"
         "  -D MESH_OFFGRIDNL_V27=1\n"
         "  -D V27_PRIVACY_PRO=1\n"
-        "  -D V27_P1_V8_COMPAT=1\n",
+        "  -D V27_P1_V8_COMPAT=1\n"
+        "  -D V27_ZERO_CONFIG=1\n",
         "V27 T-Deck flags",
     )
     pio_path.write_text(pio)
