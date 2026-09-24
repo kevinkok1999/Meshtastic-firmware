@@ -310,6 +310,44 @@ static void v28HomeSettingsCb(lv_event_t* e) {
 
         ws_path.write_text(ws)
 
+    # V28 HTTPS relay overlay. V27 remains immutable; only the patched
+    # checkout receives these V28 transport files.
+    overlay_root = pathlib.Path(__file__).resolve().parent / "overlay"
+    ca_path = pathlib.Path(__file__).resolve().parent / "relay_ca_bundle.pem"
+    ca_bundle = ca_path.read_text().strip()
+    if "BEGIN CERTIFICATE" not in ca_bundle or "END CERTIFICATE" not in ca_bundle:
+        fail("V28 relay CA bundle invalid")
+
+    for rel in (
+        pathlib.Path("src/helpers/esp32/V11GlobalBridge.h"),
+        pathlib.Path("src/helpers/esp32/V11GlobalBridge.cpp"),
+    ):
+        src = overlay_root / rel
+        dst = root / rel
+        if not src.exists():
+            fail("missing V28 relay overlay " + str(src))
+        content = src.read_text()
+        if rel.suffix == ".cpp":
+            if "__V28_CA_BUNDLE__" not in content:
+                fail("V28 relay CA token missing")
+            content = content.replace("__V28_CA_BUNDLE__", ca_bundle)
+        dst.write_text(content)
+
+    relay_cpp = (root / "src/helpers/esp32/V11GlobalBridge.cpp").read_text()
+    relay_h = (root / "src/helpers/esp32/V11GlobalBridge.h").read_text()
+    for marker in (
+        "https://meshoffgridnl.vercel.app/api/v28-relay",
+        "MOG28-RELAY-V1",
+        "HTTPClient",
+        "_mesh->v27SignGlobal",
+        "_wc.setCACert(V28_RELAY_ROOT_CA)",
+    ):
+        if marker not in relay_cpp + "\n" + relay_h:
+            fail("V28 HTTPS relay marker missing " + marker)
+    for forbidden in ("PubSubClient", "broker.emqx.io", ".setInsecure("):
+        if forbidden in relay_cpp + "\n" + relay_h:
+            fail("V28 relay must not use " + forbidden)
+
     print("V28 applied: RF route 1 + Internet route 2 + professional no-dead-end UX")
 
 if __name__ == "__main__":
