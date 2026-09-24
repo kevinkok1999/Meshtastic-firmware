@@ -56,7 +56,8 @@ def main() -> None:
         "  -D V27_PRIVACY_PRO=1\n"
         "  -D V27_P1_V8_COMPAT=1\n"
         "  -D V27_ZERO_CONFIG=1\n"
-        "  -D V27_WIFI_BROAD_COMPAT=1\n",
+        "  -D V27_WIFI_BROAD_COMPAT=1\n"
+        "  -D V27_RELAY_PROFILE_DEV_PUBLIC=1\n",
         "V27 T-Deck flags",
     )
     pio_path.write_text(pio)
@@ -119,7 +120,7 @@ def main() -> None:
   // V27 adaptive 2.4-GHz association ladder. One SSID/password, four automatic
   // profiles. No normal-user Wi-Fi mode selector is introduced.
   //
-  // Profile 1: plain Arduino/IDF defaults, broad auth threshold.
+  // Profile 1: modern secure Arduino/IDF defaults (WPA2 or better).
   // Profile 2: explicit WPA/WPA2/WPA3 transition + optional PMF + SAE H2E.
   // Profile 3: legacy/IoT-friendly HT20 with PMF disabled.
   // Profile 4: EU868/NL rescue path, channels 1-13 + optional BSSID/channel
@@ -138,9 +139,9 @@ def main() -> None:
   WiFi.setAutoReconnect(false);
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-  // Explicitly selected password-protected networks may use WPA, WPA2,
-  // WPA2/WPA3 transition or WPA3. WEP remains unsupported.
-  WiFi.setMinSecurity(v27_pwd ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN);
+  // Modern-first security floor. WPA-only compatibility is tried only by
+  // profile 3; WEP is never enabled.
+  WiFi.setMinSecurity(v27_pwd ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN);
 
   if (profile == 1) {
     Serial.printf("[V27][wifi] profile=1 standard ssid='%s' reason=%u\\n",
@@ -158,7 +159,7 @@ def main() -> None:
   cfg.sta.bssid_set = false;
   cfg.sta.channel = 0;
   cfg.sta.threshold.rssi = -127;
-  cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+  cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
   cfg.sta.failure_retry_cnt = profile == 4 ? 4 : 3;
 
   if (profile == 2) {
@@ -170,8 +171,9 @@ def main() -> None:
     Serial.printf("[V27][wifi] profile=2 modern-transition ssid='%s' reason=%u\\n",
                   ssid, (unsigned)g_wifi_last_disc_reason);
   } else if (profile == 3) {
-    // Older/quirky 2.4-GHz routers. HT20 and no PMF avoids common association
-    // failures while retaining WPA/WPA2. This is only reached after profile 2.
+    // Older/quirky 2.4-GHz routers. Only this explicit fallback lowers the
+    // auth threshold to WPA so modern profiles never silently weaken security.
+    cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
     cfg.sta.pmf_cfg.capable = false;
     cfg.sta.pmf_cfg.required = false;
     esp_wifi_set_protocol(WIFI_IF_STA,
