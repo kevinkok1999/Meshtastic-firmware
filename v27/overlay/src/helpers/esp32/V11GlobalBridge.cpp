@@ -10,6 +10,12 @@
 #include <mbedtls/md.h>
 #include <string.h>
 
+// RC2 research transport only. Stable V27 must replace this entire public
+// development relay profile with the authenticated production relay contract.
+#if !defined(V27_RELAY_PROFILE_DEV_PUBLIC)
+#error "RC2 public relay bridge is development-only; use the V27 production relay implementation"
+#endif
+
 #ifndef V27_GLOBAL_BROKER
 #define V27_GLOBAL_BROKER "broker.emqx.io"
 #endif
@@ -88,7 +94,7 @@ void V11GlobalBridge::begin(MyMesh* mesh) {
     _mqtt.setBufferSize(512);
     _mqtt.setCallback(mqttThunk);
 
-    Serial.println("[V27] Global Privacy transport ready");
+    Serial.println("[V27][DEV] Public TLS relay transport ready (not production)");
 }
 
 void V11GlobalBridge::mqttThunk(char* topic, uint8_t* payload, unsigned int len) {
@@ -231,8 +237,9 @@ void V11GlobalBridge::routeTopicForChannel(const uint8_t secret[PUB_KEY_SIZE], c
         if (outCap) out[0] = '\0';
         return;
     }
-    char tag[17] = {};
-    for (int i = 0; i < 8; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
+    // Keep group and DM opaque routes at the same 128-bit capability width.
+    char tag[33] = {};
+    for (int i = 0; i < 16; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
     snprintf(out, outCap, "mog27/v2/r/%s", tag);
     memset(digest, 0, sizeof(digest));
 }
