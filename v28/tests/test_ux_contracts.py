@@ -67,9 +67,14 @@ def main() -> None:
         if forbidden in ui + mesh + mesh_h:
             die("parallel native chat implementation detected: " + forbidden)
 
-    # V28 may touch MyMesh only for the explicit routing priority override.
-    if "MESH_OFFGRIDNL_V28" in mesh_h:
-        die("V28 routing must not alter MyMesh public chat API")
+    # V28 keeps the public chat API unchanged. The only new MyMesh surface is
+    # a narrow raw-public-key ECDH helper for an invite requester who is not a
+    # saved contact yet.
+    if "v28CalcSharedSecretAny" not in mesh_h or "self_id.calcSharedSecret(out, peerPub)" not in mesh:
+        die("V28 short-code join requires the narrow requester ECDH helper")
+    for forbidden in ("v28SendMessage(", "v28CreateChat(", "v28ReplaceChannelEngine("):
+        if forbidden in mesh_h + mesh:
+            die("V28 must not add a parallel public chat API: " + forbidden)
     rf_gate = "#if defined(MESH_OFFGRIDNL_V27) && !defined(MESH_OFFGRIDNL_V28)"
     if rf_gate not in mesh:
         die("inherited V27 global-first shortcut is not disabled for V28")
@@ -103,13 +108,25 @@ def main() -> None:
         if cmd not in ws:
             die("existing browser chat command disappeared: " + cmd)
 
-    # Existing channel action sheet remains the authoritative channel flow.
+    # Existing channel action sheet remains authoritative, with V28 short-code
+    # create/join/approval actions layered onto it.
     for marker in (
         "openAddChannelSheet",
         "addChannelCreatePrivateCb",
         "addChannelJoinPrivateCb",
         "addChannelJoinPublicCb",
         "addChannelJoinHashtagCb",
+        "Approve join request",
+        "XXXX-XXXX",
+        "requestChannelJoin",
+        "createChannelInvite",
+        "decideJoinRequest",
+        "@vc ",
+        "@vj ",
+        "@va ",
+        "@vd ",
+        "v28Channels",
+        "v28Event",
     ):
         if marker not in ui:
             die("existing channel flow missing " + marker)
