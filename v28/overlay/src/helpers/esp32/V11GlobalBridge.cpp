@@ -491,7 +491,7 @@ bool V11GlobalBridge::startControl() {
                 return false;
             }
             uint8_t bundle[JOIN_BUNDLE_LEN] = {};
-            if (!buildJoinBundle(control.requester, cd.name, cd.channel.secret, bundle) ||
+            if (!buildJoinBundle(control.requester, control.inviteId, cd.name, cd.channel.secret, bundle) ||
                 !base64Encode(bundle, sizeof(bundle), bundle64)) {
                 memset(bundle, 0, sizeof(bundle));
                 emitEvent(UI_ERROR, "Could not encrypt channel invite");
@@ -837,7 +837,7 @@ void V11GlobalBridge::completeHttp() {
                     bool joined = false;
                     if (base64Decode(bundle64, bundle, sizeof(bundle), bundleLen) &&
                         bundleLen == JOIN_BUNDLE_LEN &&
-                        decryptJoinBundle(_pendingJoin.ownerPub, bundle, channel, secret)) {
+                        decryptJoinBundle(_pendingJoin.ownerPub, _pendingJoin.inviteId, bundle, channel, secret)) {
                         for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
                             ChannelDetails existing{};
                             if (_mesh->v27GetChannelByIndex((uint8_t)i, existing) &&
@@ -911,6 +911,13 @@ bool V11GlobalBridge::buildDmEnvelope(const uint8_t recipient[32],
         return false;
     }
 
+    uint8_t aad[12] = {};
+    memcpy(aad, out, 8);
+    aad[8] = (uint8_t)(inviteId >> 24);
+    aad[9] = (uint8_t)(inviteId >> 16);
+    aad[10] = (uint8_t)(inviteId >> 8);
+    aad[11] = (uint8_t)inviteId;
+
     uint8_t tag[TAG_LEN] = {};
     mbedtls_gcm_context gcm;
     mbedtls_gcm_init(&gcm);
@@ -925,6 +932,7 @@ bool V11GlobalBridge::buildDmEnvelope(const uint8_t recipient[32],
     }
     mbedtls_gcm_free(&gcm);
     memset(key, 0, sizeof(key));
+    memset(aad, 0, sizeof(aad));
     memset(plain, 0, sizeof(plain));
     if (rc != 0) return false;
 
@@ -1010,6 +1018,7 @@ bool V11GlobalBridge::buildChannelEnvelope(
 
 bool V11GlobalBridge::buildJoinBundle(
     const uint8_t requester[PUB_KEY_SIZE],
+    uint32_t inviteId,
     const char* channel,
     const uint8_t secret16[16],
     uint8_t out[JOIN_BUNDLE_LEN]) {
@@ -1046,7 +1055,7 @@ bool V11GlobalBridge::buildJoinBundle(
         rc = mbedtls_gcm_crypt_and_tag(
             &gcm, MBEDTLS_GCM_ENCRYPT, JOIN_PLAIN_LEN,
             out + 8, 12,
-            out, 8,
+            aad, sizeof(aad),
             plain, out + 20,
             TAG_LEN, tag);
     }
@@ -1062,6 +1071,7 @@ bool V11GlobalBridge::buildJoinBundle(
 
 bool V11GlobalBridge::decryptJoinBundle(
     const uint8_t owner[PUB_KEY_SIZE],
+    uint32_t inviteId,
     const uint8_t in[JOIN_BUNDLE_LEN],
     char channel[32],
     uint8_t secret16[16]) {
@@ -1079,6 +1089,13 @@ bool V11GlobalBridge::decryptJoinBundle(
     }
     memset(pairKey, 0, sizeof(pairKey));
 
+    uint8_t aad[12] = {};
+    memcpy(aad, in, 8);
+    aad[8] = (uint8_t)(inviteId >> 24);
+    aad[9] = (uint8_t)(inviteId >> 16);
+    aad[10] = (uint8_t)(inviteId >> 8);
+    aad[11] = (uint8_t)inviteId;
+
     uint8_t plain[JOIN_PLAIN_LEN] = {};
     mbedtls_gcm_context gcm;
     mbedtls_gcm_init(&gcm);
@@ -1087,12 +1104,13 @@ bool V11GlobalBridge::decryptJoinBundle(
         rc = mbedtls_gcm_auth_decrypt(
             &gcm, JOIN_PLAIN_LEN,
             in + 8, 12,
-            in, 8,
+            aad, sizeof(aad),
             in + 68, TAG_LEN,
             in + 20, plain);
     }
     mbedtls_gcm_free(&gcm);
     memset(key, 0, sizeof(key));
+    memset(aad, 0, sizeof(aad));
     if (rc != 0) {
         memset(plain, 0, sizeof(plain));
         return false;
