@@ -213,6 +213,195 @@ bool MyMesh::v28CalcSharedSecretAny(const uint8_t peerPub[32], uint8_t out[32]) 
 
     ui = ui_path.read_text()
 
+    # V28 private-channel UX: human short codes only. The real 128-bit secret
+    # stays device-local and is transferred only inside the E2E join bundle.
+    include_old = '#include "../MyMesh.h"\n'
+    include_new = '#include "../MyMesh.h"\n#if defined(MESH_OFFGRIDNL_V28)\n#include "../helpers/esp32/V11GlobalBridge.h"\n#endif\n'
+    if include_old not in ui:
+        fail("V28 UI bridge include anchor missing")
+    ui = replace_once(ui, include_old, include_new, "V28 UI bridge include")
+
+    create_guard_old = '  if (!s_addch_name_ta || !s_addch_secret_ta) return;\n'
+    create_guard_new = '''#if defined(MESH_OFFGRIDNL_V28)
+  if (!s_addch_name_ta) return;
+#else
+  if (!s_addch_name_ta || !s_addch_secret_ta) return;
+#endif
+'''
+    if create_guard_old not in ui:
+        fail("V28 create-channel guard anchor missing")
+    ui = replace_once(ui, create_guard_old, create_guard_new, "V28 create-channel simple guard")
+
+    create_secret_old = '''  const char* sec_raw = lv_textarea_get_text(s_addch_secret_ta);
+  char hex[33]; int hn = 0;
+  for (const char* p = sec_raw; *p && hn < 32; ++p) {
+    if (*p == ' ' || *p == '\\t' || *p == '\\n') continue;
+    hex[hn++] = *p;
+  }
+  hex[hn] = '\\0';
+
+  uint8_t secret[16];
+  if (hn == 0) {
+#if defined(ESP32)
+    esp_fill_random(secret, sizeof(secret));
+#else
+    for (int i = 0; i < 16; ++i) secret[i] = static_cast<uint8_t>(rand() & 0xFF);
+#endif
+  } else if (!hexToSecret16(hex, secret)) {
+    setAddChannelError(TR("Secret must be 32 hex chars (or empty)."));
+    return;
+  }
+'''
+    create_secret_new = '''  uint8_t secret[16];
+#if defined(MESH_OFFGRIDNL_V28)
+  esp_fill_random(secret, sizeof(secret));
+#else
+  const char* sec_raw = lv_textarea_get_text(s_addch_secret_ta);
+  char hex[33]; int hn = 0;
+  for (const char* p = sec_raw; *p && hn < 32; ++p) {
+    if (*p == ' ' || *p == '\\t' || *p == '\\n') continue;
+    hex[hn++] = *p;
+  }
+  hex[hn] = '\\0';
+  if (hn == 0) {
+#if defined(ESP32)
+    esp_fill_random(secret, sizeof(secret));
+#else
+    for (int i = 0; i < 16; ++i) secret[i] = static_cast<uint8_t>(rand() & 0xFF);
+#endif
+  } else if (!hexToSecret16(hex, secret)) {
+    setAddChannelError(TR("Secret must be 32 hex chars (or empty)."));
+    return;
+  }
+#endif
+'''
+    if create_secret_old not in ui:
+        fail("V28 create-channel secret anchor missing")
+    ui = replace_once(ui, create_secret_old, create_secret_new, "V28 random private secret")
+
+    saved_anchor = '''  if (!the_mesh.uiAddOrUpdateChannel(slot, name, secret)) {
+    setAddChannelError(TR("Failed to save channel."));
+    return;
+  }
+'''
+    saved_new = saved_anchor + '''#if defined(MESH_OFFGRIDNL_V28)
+  (void)v11_global_bridge.createChannelInvite((uint8_t)slot);
+#endif
+'''
+    if saved_anchor not in ui:
+        fail("V28 invite-create anchor missing")
+    ui = replace_once(ui, saved_anchor, saved_new, "V28 create short invite")
+
+    join_start_old = '''static void joinPrivateChannelSubmitCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  kbMirrorSyncToReal();
+  if (!s_addch_secret_ta) return;
+'''
+    join_start_new = join_start_old + '''#if defined(MESH_OFFGRIDNL_V28)
+  const char* code = lv_textarea_get_text(s_addch_secret_ta);
+  if (!v11_global_bridge.requestChannelJoin(code)) {
+    setAddChannelError(TR("Enter a valid XXXX-XXXX join code."));
+    return;
+  }
+  closeSettingsModal();
+  if (g_lv.task) g_lv.task->showAlert(TR("Join request sent - waiting for approval"), 1800);
+  return;
+#endif
+'''
+    if join_start_old not in ui:
+        fail("V28 short join submit anchor missing")
+    ui = replace_once(ui, join_start_old, join_start_new, "V28 short join submit")
+
+    create_modal_sig = 'static void openCreatePrivateChannelModal() {\n'
+    create_modal_v28 = create_modal_sig + '''#if defined(MESH_OFFGRIDNL_V28)
+  {
+    lv_obj_t* body = createSettingsModal(TR("Create private channel"), SettingsModalKind::ChCreatePrv);
+    int y = 0;
+    lv_obj_t* hint = lv_label_create(body);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, channelFormControlWidth());
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_label_set_text(hint, TR("Choose a name. V28 creates the secure key and a short join code automatically."));
+    lv_obj_set_pos(hint, 0, y); y += 48;
+    lv_obj_t* name_l = lv_label_create(body);
+    lv_label_set_text(name_l, TR("Channel name"));
+    lv_obj_set_style_text_color(name_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(name_l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(name_l, 0, y); y += 16;
+    s_addch_name_ta = lv_textarea_create(body);
+    channelFormLayoutTextarea(body, s_addch_name_ta, y);
+    lv_textarea_set_one_line(s_addch_name_ta, true);
+    taSetPlaceholder(s_addch_name_ta, TR("e.g. Family"));
+    lv_textarea_set_max_length(s_addch_name_ta, 31);
+    attachSettingsTaEvents(s_addch_name_ta); y += 42;
+    s_addch_error_l = lv_label_create(body);
+    lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
+    lv_obj_set_style_text_color(s_addch_error_l, lightSurfaceTextColor(0xE08080), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
+    lv_label_set_text(s_addch_error_l, "");
+    lv_obj_set_pos(s_addch_error_l, 0, y); y += 28;
+    lv_obj_t* b = lv_btn_create(body);
+    channelFormSetFullWidth(b, y, 36);
+    styleButton(b);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+    lv_obj_add_event_cb(b, createPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* bl = lv_label_create(b);
+    useChainedFont(bl); lv_label_set_text(bl, TR("Create securely")); lv_obj_center(bl);
+  }
+  return;
+#endif
+'''
+    if create_modal_sig not in ui:
+        fail("V28 create modal anchor missing")
+    ui = replace_once(ui, create_modal_sig, create_modal_v28, "V28 simple create modal")
+
+    join_modal_sig = 'static void openJoinPrivateChannelModal() {\n'
+    join_modal_v28 = join_modal_sig + '''#if defined(MESH_OFFGRIDNL_V28)
+  {
+    lv_obj_t* body = createSettingsModal(TR("Join private channel"), SettingsModalKind::ChJoinPrv);
+    int y = 0;
+    lv_obj_t* hint = lv_label_create(body);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, channelFormControlWidth());
+    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_label_set_text(hint, TR("Enter the 8-character code. The owner must approve before the secure channel is added."));
+    lv_obj_set_pos(hint, 0, y); y += 48;
+    lv_obj_t* sec_l = lv_label_create(body);
+    lv_label_set_text(sec_l, TR("Join code"));
+    lv_obj_set_style_text_color(sec_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(sec_l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(sec_l, 0, y); y += 16;
+    s_addch_secret_ta = lv_textarea_create(body);
+    channelFormLayoutTextarea(body, s_addch_secret_ta, y);
+    lv_textarea_set_one_line(s_addch_secret_ta, true);
+    taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));
+    lv_textarea_set_max_length(s_addch_secret_ta, 10);
+    attachSettingsTaEvents(s_addch_secret_ta); y += 42;
+    s_addch_error_l = lv_label_create(body);
+    lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
+    lv_obj_set_style_text_color(s_addch_error_l, lightSurfaceTextColor(0xE08080), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
+    lv_label_set_text(s_addch_error_l, "");
+    lv_obj_set_pos(s_addch_error_l, 0, y); y += 28;
+    lv_obj_t* b = lv_btn_create(body);
+    channelFormSetFullWidth(b, y, 36);
+    styleButton(b);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
+    lv_obj_add_event_cb(b, joinPrivateChannelSubmitCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* bl = lv_label_create(b);
+    useChainedFont(bl); lv_label_set_text(bl, TR("Request access")); lv_obj_center(bl);
+  }
+  return;
+#endif
+'''
+    if join_modal_sig not in ui:
+        fail("V28 join modal anchor missing")
+    ui = replace_once(ui, join_modal_sig, join_modal_v28, "V28 simple join modal")
+
     # V28 UX changes presentation/navigation only. Native message format,
     # storage and chat behavior remain unchanged; the only MyMesh difference
     # allowed by V28 is RF-first / Internet-second route ordering.
