@@ -1,1 +1,1 @@
-v27-dev2-privacy-zero-config-validation
+v27-dev3-global-dm-channels-zero-config-validation
