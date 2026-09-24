@@ -96,6 +96,7 @@ def main() -> None:
         "_mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false)",
         "mirrorChannelPacket",
         "noteLoRaChannel",
+        "tryGlobalFirstDM",
         "v27GetChannelByIndex",
         "v27InjectGlobalChannel",
         "MOG27-CH-KEY",
@@ -198,6 +199,14 @@ def main() -> None:
         die("pair-wise DM routing must reuse the main-thread contact shared-secret cache")
     if "for (int i = 0; i < 16; ++i)" not in bridge_cpp:
         die("DM opaque route token must remain 128 bits")
+    if "PROTOCOL_VERSION = 3" not in bridge_h or "MSG_ID_LEN = 16" not in bridge_h:
+        die("stable V27 protocol-v3 128-bit message identity markers missing")
+    if "uint8_t _dedup[DEDUP_CAP][MSG_ID_LEN]" not in bridge_h:
+        die("128-bit dedup storage missing")
+    if "markGlobalPeer(contact.id.pub_key);" not in bridge_cpp:
+        die("authenticated global peer capability learning missing")
+    if "tryGlobalFirstDM(recipient, timestamp, text)" not in mesh_cpp:
+        die("capability-aware global-first send path missing")
     if "_dmTopic" in bridge_cpp or "_dmTopic" in bridge_h:
         die("single public-key-derived DM inbox must not return")
     ch_route_start = bridge_cpp.find("void V11GlobalBridge::routeTopicForChannel")
@@ -225,8 +234,8 @@ def main() -> None:
         die("DM UI send state must not hide total RF+Internet failure behind a RAM queue")
     if "return enqueueChannel(channel.secret, timestamp, text);" not in bridge_cpp:
         die("zero-config offline global channel mirror queue missing")
-    if 'snprintf(out, outCap, "mog27/v2/r/%s", tag);' not in bridge_cpp:
-        die("DM/channel relay topics must share the opaque V27 routing namespace")
+    if 'snprintf(out, outCap, "mog27/v3/r/%s", tag);' not in bridge_cpp:
+        die("DM/channel relay topics must share the opaque V27 protocol-v3 routing namespace")
     if 'snprintf(out, outCap, "mog27/v2/d/%s", tag);' in bridge_cpp:
         die("legacy DM-labelled routing namespace leaks message class")
     if "seenOrRemember(msgId);" not in bridge_cpp:
@@ -257,7 +266,7 @@ def main() -> None:
     for marker in (
         "RX_RATE_WINDOW_MS = 10000",
         "RX_RATE_MAX_PER_WINDOW = 100",
-        "static_assert(MAX_WIRE == 312",
+        "static_assert(MAX_WIRE == 320",
         "static_assert(MAX_WIRE < 400",
         "bool V11GlobalBridge::allowInbound()",
         "if (!allowInbound()) return;",
