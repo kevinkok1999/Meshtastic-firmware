@@ -210,7 +210,7 @@ bool V11GlobalBridge::deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) co
     if (!_mesh || !peerPub || !key) return false;
 
     uint8_t shared[32] = {};
-    if (!_mesh->v11CalcSharedSecret(peerPub, shared)) return false;
+    if (!_mesh->v27CalcSharedSecretCached(peerPub, shared)) return false;
 
     uint8_t info[96] = {};
     static const char ctx[] = "MOG27-DM-KEY";
