@@ -6,6 +6,7 @@ on:
       - v27-global-relay
       - v27-impl-wave1
       - v27-impl-wave2
+      - v27-release-candidate
     paths:
       - "v27/release-trigger.txt"
   workflow_dispatch:
@@ -15,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate-v27:
@@ -98,8 +99,8 @@ jobs:
       - name: Build V27 T-Deck / T-Deck Plus
         env:
           PLATFORMIO_BUILD_FLAGS: >-
-            -DFIRMWARE_RELEASE_TAG='"mog-v27.0.0-dev1"'
-            -DFIRMWARE_VERSION='"MeshOffGridNL V27 Global Privacy"'
+            -DFIRMWARE_RELEASE_TAG='"mog-v27.0.0-rc1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V27 Global-First RC1"'
         shell: bash
         run: |
           set -euo pipefail
@@ -114,13 +115,28 @@ jobs:
           test -f "$BUILD_DIR/firmware.bin"
           test -f "$BUILD_DIR/firmware-merged.bin"
           mkdir -p dist
-          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V27-TDeck-Plus-dev1.bin
-          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V27-TDeck-Plus-dev1-merged.bin
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V27-TDeck-Plus-RC1.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V27-TDeck-Plus-RC1-merged.bin
           sha256sum dist/*
 
       - name: Upload validation artifact
         uses: actions/upload-artifact@v7
         with:
-          name: MeshOffGridNL-V27-TDeck-Plus-dev1-validation
+          name: MeshOffGridNL-V27-TDeck-Plus-RC1-validation
           path: dist/*
           retention-days: 30
+
+
+      - name: Publish V27 RC1 prerelease
+        if: github.ref == 'refs/heads/v27-release-candidate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="mesh-v27.0.0-rc1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/MeshOffGridNL-V27-TDeck-Plus-RC1.bin dist/MeshOffGridNL-V27-TDeck-Plus-RC1-merged.bin --clobber
+          else
+            gh release create "$TAG"               dist/MeshOffGridNL-V27-TDeck-Plus-RC1.bin               dist/MeshOffGridNL-V27-TDeck-Plus-RC1-merged.bin               --target "$GITHUB_SHA"               --title "MeshOffGridNL V27 RC1"               --notes "V27 release candidate. Global-first for proven V27 peers, RF fallback/legacy compatibility, protocol-v3 128-bit message IDs, broad 2.4 GHz Wi-Fi compatibility research, P1 Pro V8 RF contract preserved. This is an RC/prerelease, not Stable."               --prerelease
+          fi
