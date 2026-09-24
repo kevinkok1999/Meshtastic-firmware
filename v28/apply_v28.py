@@ -128,6 +128,42 @@ def main() -> None:
     mesh = replace_once(mesh, group_old, group_new,
                         "V28 RF-first group ordering")
 
+    # V28 route policy: RF was tried first, but an RF queue failure must not
+    # suppress route 2 when Wi-Fi is available. Queue the Internet copy
+    # independently; truthful UI success still depends on recent relay health.
+    dm_mirror_old = """      (attempt == 0 && recipient.type == ADV_TYPE_CHAT)
+          ? v11_global_bridge.mirrorDM(recipient, timestamp, text,
+                                       result != MSG_SEND_FAILED)
+          : false;"""
+    dm_mirror_new = """      (attempt == 0 && recipient.type == ADV_TYPE_CHAT)
+          ? v11_global_bridge.mirrorDM(recipient, timestamp, text, true)
+          : false;"""
+    if dm_mirror_old not in mesh:
+        fail("V28 independent Internet route anchor missing")
+    mesh = replace_once(mesh, dm_mirror_old, dm_mirror_new,
+                        "V28 Internet route independent of RF result")
+
+    # The inherited V11 tail may report direct success when the Internet route
+    # accepted a message. Under V28, only do that when the relay has been
+    # healthy recently; an offline RAM queue is not a delivery success.
+    sent_old = """  if (result == MSG_SEND_FAILED && v11_global_ok) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }"""
+    sent_new = """  if (result == MSG_SEND_FAILED && v11_global_ok &&
+      v11_global_bridge.connected()) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }"""
+    if sent_old not in mesh:
+        fail("V28 truthful route-2 status anchor missing")
+    mesh = replace_once(mesh, sent_old, sent_new,
+                        "V28 truthful Internet route status")
+
     mesh_path.write_text(mesh)
 
     ui = ui_path.read_text()
