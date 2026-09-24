@@ -622,6 +622,77 @@ static void v28HomeSettingsCb(lv_event_t* e) {
     if "No conversations yet" not in ui:
         ui = replace_once(ui, empty_old, empty_new, "V28 actionable empty chats")
 
+    # Browser uses the SAME V28 bridge/state machine as the native UI.
+    # These @v* commands only queue high-level actions; keys never enter JS.
+    web_cmd_anchor = '''  const char* a = cmd + 1;
+  auto argAfter = [](const char* s) { while (*s && *s != ' ') ++s; if (*s == ' ') ++s; return s; };
+'''
+    web_cmd_new = web_cmd_anchor + '''#if defined(MESH_OFFGRIDNL_V28)
+  auto v28Notice = [](const char* kind, const char* msg) {
+    if (!s_webdata_buf) return;
+    char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+    p += snprintf(p, e - p, "{\\\"t\\\":\\\"v28\\\",\\\"k\\\":\\\"%s\\\",\\\"message\\\":\\\"", kind ? kind : "info");
+    jsonEsc(p, e, msg ? msg : "");
+    p += snprintf(p, e - p, "\\\"}");
+    g_web_mirror.pushTermData(s_webdata_buf);
+  };
+  if (a[0] == 'v' && a[1] == 'c' && (a[2] == 0 || a[2] == ' ')) {
+    const char* raw = (a[2] == ' ') ? a + 3 : "";
+    char name[32] = {};
+    strncpy(name, raw, sizeof(name) - 1);
+    for (int i = (int)strlen(name) - 1; i >= 0 && (name[i] == ' ' || name[i] == '\\t'); --i) name[i] = '\\0';
+    if (!name[0]) strncpy(name, "Private", sizeof(name) - 1);
+    const int slot = the_mesh.findFirstEmptyChannelSlot();
+    if (slot < 0) { v28Notice("error", "Channel table is full"); return true; }
+    uint8_t secret[16] = {};
+    esp_fill_random(secret, sizeof(secret));
+    if (!the_mesh.uiAddOrUpdateChannel(slot, name, secret)) {
+      memset(secret, 0, sizeof(secret));
+      v28Notice("error", "Could not save private channel");
+      return true;
+    }
+    memset(secret, 0, sizeof(secret));
+    if (!v11_global_bridge.createChannelInvite((uint8_t)slot))
+      v28Notice("error", "Could not queue join code");
+    webPushContacts();
+    return true;
+  }
+  if (a[0] == 'v' && a[1] == 'j' && a[2] == ' ') {
+    if (!v11_global_bridge.requestChannelJoin(a + 3))
+      v28Notice("error", "Enter a valid XXXX-XXXX join code");
+    else
+      v28Notice("waiting", "Join request sent - waiting for owner approval");
+    return true;
+  }
+  if (a[0] == 'v' && a[1] == 'l' && (a[2] == 0 || a[2] == ' ')) {
+    if (!v11_global_bridge.refreshJoinRequests())
+      v28Notice("error", "Could not check join requests");
+    return true;
+  }
+  if (a[0] == 'v' && (a[1] == 'a' || a[1] == 'd') && a[2] == ' ') {
+    unsigned long invite = 0;
+    char requesterHex[65] = {};
+    if (sscanf(a + 3, "%lu %64s", &invite, requesterHex) != 2) {
+      v28Notice("error", "Invalid approval request");
+      return true;
+    }
+    uint8_t requester[PUB_KEY_SIZE] = {};
+    if (!hexToPubkey32(requesterHex, requester) ||
+        !v11_global_bridge.decideJoinRequest((uint32_t)invite, requester, a[1] == 'a')) {
+      memset(requester, 0, sizeof(requester));
+      v28Notice("error", "Could not queue approval");
+      return true;
+    }
+    memset(requester, 0, sizeof(requester));
+    v28Notice("waiting", a[1] == 'a' ? "Approving securely..." : "Denying request...");
+    return true;
+  }
+#endif
+'''
+    if web_cmd_anchor not in ui:
+        fail("V28 browser command API anchor missing")
+    ui = replace_once(ui, web_cmd_anchor, web_cmd_new, "V28 browser invite commands")
+
     ui_path.write_text(ui)
 
     # Browser chat shell: preserve every existing @ command / WebSocket handler.
