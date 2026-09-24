@@ -16,6 +16,7 @@ def main() -> None:
     mesh_h = (root / "src/MyMesh.h").read_text()
     mesh_cpp = (root / "src/MyMesh.cpp").read_text()
     main_cpp = (root / "src/main.cpp").read_text()
+    ui = (root / "src/ui-touch/UITask.cpp").read_text()
     h = (root / "src/helpers/esp32/V29EmergencyFabric.h").read_text()
     cpp = (root / "src/helpers/esp32/V29EmergencyFabric.cpp").read_text()
 
@@ -89,6 +90,26 @@ def main() -> None:
     ):
         if marker not in main_cpp:
             die("V29 lifecycle missing " + marker)
+
+    for marker in (
+        "v29EmergencyHomeCb",
+        'make_launcher(TR("Noodmodus")',
+        "Ik ben veilig",
+        "Ik heb hulp nodig",
+        "Stuur bericht",
+        "Noodinformatie",
+        "Gezin / contacten",
+        "Netwerkstatus",
+        "112 is niet automatisch gebeld",
+        "Werkt lokaal zonder internet",
+    ):
+        if marker not in ui:
+            die("simple emergency UI marker missing " + marker)
+
+    primary_ui = ui[ui.find("static void v29EmergencyHomeCb"):ui.find("#endif", ui.find("static void v29EmergencyHomeCb"))]
+    for forbidden in ("RSSI", "SNR", "spreading factor", "hop count", "channel key"):
+        if forbidden.lower() in primary_ui.lower():
+            die("technical jargon leaked into primary emergency UI: " + forbidden)
 
     # V28/P1 foundations remain present and unchanged in intent.
     for marker in (
