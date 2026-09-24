@@ -4,7 +4,7 @@
 
 #include <Arduino.h>
 #include <PubSubClient.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <Mesh.h>
 
 class MyMesh;
@@ -91,7 +91,7 @@ private:
     };
 
     MyMesh* _mesh = nullptr;
-    WiFiClient _wc;
+    WiFiClientSecure _wc;
     PubSubClient _mqtt{_wc};
     bool _started = false;
     volatile bool _connecting = false;
