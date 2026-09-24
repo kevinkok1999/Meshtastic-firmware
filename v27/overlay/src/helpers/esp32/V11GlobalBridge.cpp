@@ -3,6 +3,7 @@
 #include "V11GlobalBridge.h"
 #include "../../MyMesh.h"
 #include <WiFi.h>
+#include <Utils.h>
 #include <esp_random.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/md.h>
@@ -56,8 +57,6 @@ void V11GlobalBridge::begin(MyMesh* mesh) {
     _mqtt.setBufferSize(512);
     _mqtt.setCallback(mqttThunk);
 
-    // Deliberately do not log broker host, route topic, public-key prefix or
-    // message metadata. Normal users never need to see transport internals.
     Serial.println("[V27] Global Privacy transport ready");
 }
 
@@ -90,12 +89,14 @@ bool V11GlobalBridge::connectNow() {
         return false;
     }
 
-    if (!_mqtt.subscribe(_dmTopic, 1)) {
+    if (!_mqtt.subscribe(_dmTopic, 1) || !subscribeChannels()) {
         _mqtt.disconnect();
         _nextConnectAt = millis() + _retryDelayMs + (esp_random() % 1200U);
         return false;
     }
 
+    _channelFingerprint = channelFingerprint();
+    _lastChannelCheckMs = millis();
     _retryDelayMs = RETRY_MIN_MS;
     _nextConnectAt = 0;
     Serial.println("[V27] Global transport connected");
@@ -113,8 +114,6 @@ void V11GlobalBridge::loop() {
     }
 
     if (!_wifiWasConnected) {
-        // Fresh Wi-Fi edge: attempt immediately rather than making the user
-        // wait for a previous backoff window.
         _wifiWasConnected = true;
         _nextConnectAt = 0;
         _retryDelayMs = RETRY_MIN_MS;
@@ -133,13 +132,29 @@ void V11GlobalBridge::loop() {
         return;
     }
 
-    if (!_connecting) {
-        if (!_mqtt.loop()) {
-            _nextConnectAt = millis() + RETRY_MIN_MS;
+    if (_connecting) return;
+
+    if (!_mqtt.loop()) {
+        _nextConnectAt = millis() + RETRY_MIN_MS;
+        return;
+    }
+
+    const uint32_t now = millis();
+    if ((uint32_t)(now - _lastChannelCheckMs) >= 30000UL) {
+        _lastChannelCheckMs = now;
+        const uint32_t fp = channelFingerprint();
+        if (fp != _channelFingerprint) {
+            // Reconnect is the cleanest way to atomically drop subscriptions
+            // for deleted channels and subscribe newly-added ones.
+            _channelFingerprint = fp;
+            _mqtt.disconnect();
+            _nextConnectAt = 0;
             return;
         }
-        flushOne();
     }
+
+    flushOne();
+    flushOneChannel();
 }
 
 void V11GlobalBridge::routeTopicFor(const uint8_t pub[32], char* out, size_t outCap) const {
@@ -159,9 +174,22 @@ void V11GlobalBridge::routeTopicFor(const uint8_t pub[32], char* out, size_t out
 
     char tag[17] = {};
     for (int i = 0; i < 8; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
-    snprintf(out, outCap, "mog27/v2/d/%s", tag);
+    snprintf(out, outCap, "mog27/v2/r/%s", tag);
     memset(digest, 0, sizeof(digest));
     memset(input, 0, sizeof(input));
+}
+
+void V11GlobalBridge::routeTopicForChannel(const uint8_t secret[PUB_KEY_SIZE], char* out, size_t outCap) const {
+    static const uint8_t ctx[] = "MOG27-CH-INBOX";
+    uint8_t digest[32] = {};
+    if (!hmac256(secret, PUB_KEY_SIZE, ctx, sizeof(ctx) - 1, digest)) {
+        if (outCap) out[0] = '\0';
+        return;
+    }
+    char tag[17] = {};
+    for (int i = 0; i < 8; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
+    snprintf(out, outCap, "mog27/v2/r/%s", tag);
+    memset(digest, 0, sizeof(digest));
 }
 
 bool V11GlobalBridge::deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) const {
@@ -176,7 +204,6 @@ bool V11GlobalBridge::deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) co
     memcpy(info + n, ctx, sizeof(ctx) - 1);
     n += sizeof(ctx) - 1;
 
-    // Canonical public-key ordering makes the KDF identical at both peers.
     if (memcmp(_selfPub, peerPub, 32) <= 0) {
         memcpy(info + n, _selfPub, 32); n += 32;
         memcpy(info + n, peerPub, 32); n += 32;
@@ -189,6 +216,11 @@ bool V11GlobalBridge::deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) co
     memset(shared, 0, sizeof(shared));
     memset(info, 0, sizeof(info));
     return ok;
+}
+
+bool V11GlobalBridge::deriveChannelKey(const uint8_t secret[PUB_KEY_SIZE], uint8_t key[32]) const {
+    static const uint8_t ctx[] = "MOG27-CH-KEY";
+    return secret && key && hmac256(secret, PUB_KEY_SIZE, ctx, sizeof(ctx) - 1, key);
 }
 
 bool V11GlobalBridge::messageIdFor(const uint8_t peerPub[32], uint32_t timestamp,
@@ -217,7 +249,37 @@ bool V11GlobalBridge::messageIdFor(const uint8_t peerPub[32], uint32_t timestamp
     uint8_t digest[32] = {};
     const bool ok = hmac256(key, sizeof(key), input, n, digest);
     if (ok) memcpy(out, digest, 8);
+    memset(key, 0, sizeof(key));
+    memset(input, 0, sizeof(input));
+    memset(digest, 0, sizeof(digest));
+    return ok;
+}
 
+bool V11GlobalBridge::channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp,
+                                          const char* text, uint8_t out[8]) const {
+    if (!secret || !text || !out) return false;
+
+    uint8_t key[32] = {};
+    if (!deriveChannelKey(secret, key)) return false;
+
+    uint8_t input[192] = {};
+    static const char ctx[] = "MOG27-ID-CH";
+    size_t n = 0;
+    memcpy(input + n, ctx, sizeof(ctx) - 1);
+    n += sizeof(ctx) - 1;
+    memcpy(input + n, &timestamp, sizeof(timestamp));
+    n += sizeof(timestamp);
+    const size_t tlen = strnlen(text, MAX_TEXT);
+    input[n++] = (uint8_t)(tlen & 0xff);
+    input[n++] = (uint8_t)((tlen >> 8) & 0xff);
+    if (tlen) {
+        memcpy(input + n, text, tlen);
+        n += tlen;
+    }
+
+    uint8_t digest[32] = {};
+    const bool ok = hmac256(key, sizeof(key), input, n, digest);
+    if (ok) memcpy(out, digest, 8);
     memset(key, 0, sizeof(key));
     memset(input, 0, sizeof(input));
     memset(digest, 0, sizeof(digest));
@@ -241,9 +303,6 @@ bool V11GlobalBridge::enqueue(const uint8_t recipient[32], uint32_t timestamp, c
     if (!recipient || !text) return false;
 
     if (_pendingCount >= PENDING_CAP) {
-        // Prefer keeping the newest user intent. RF has already had its own
-        // independent attempt, so discarding the oldest Internet mirror cannot
-        // block local/off-grid delivery.
         memset(&_pending[_pendingHead], 0, sizeof(Pending));
         _pendingHead = (uint8_t)((_pendingHead + 1) % PENDING_CAP);
         --_pendingCount;
@@ -259,6 +318,28 @@ bool V11GlobalBridge::enqueue(const uint8_t recipient[32], uint32_t timestamp, c
     strncpy(p.text, text, MAX_TEXT);
     p.text[MAX_TEXT] = '\0';
     ++_pendingCount;
+    return true;
+}
+
+bool V11GlobalBridge::enqueueChannel(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text) {
+    if (!secret || !text) return false;
+
+    if (_pendingChannelCount >= PENDING_CHANNEL_CAP) {
+        memset(&_pendingChannel[_pendingChannelHead], 0, sizeof(PendingChannel));
+        _pendingChannelHead = (uint8_t)((_pendingChannelHead + 1) % PENDING_CHANNEL_CAP);
+        --_pendingChannelCount;
+    }
+
+    const uint8_t slot = (uint8_t)((_pendingChannelHead + _pendingChannelCount) % PENDING_CHANNEL_CAP);
+    PendingChannel& p = _pendingChannel[slot];
+    memset(&p, 0, sizeof(p));
+    p.used = true;
+    memcpy(p.secret, secret, PUB_KEY_SIZE);
+    p.timestamp = timestamp;
+    p.queuedMs = millis();
+    strncpy(p.text, text, MAX_TEXT);
+    p.text[MAX_TEXT] = '\0';
+    ++_pendingChannelCount;
     return true;
 }
 
@@ -280,18 +361,81 @@ void V11GlobalBridge::flushOne() {
     --_pendingCount;
 }
 
+bool V11GlobalBridge::channelStillConfigured(const uint8_t secret[PUB_KEY_SIZE]) const {
+    if (!_mesh || !secret) return false;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        ChannelDetails cd{};
+        if (_mesh->v27GetChannelByIndex((uint8_t)i, cd) &&
+            memcmp(cd.channel.secret, secret, PUB_KEY_SIZE) == 0) return true;
+    }
+    return false;
+}
+
+void V11GlobalBridge::flushOneChannel() {
+    if (_pendingChannelCount == 0 || !_mqtt.connected()) return;
+
+    PendingChannel& p = _pendingChannel[_pendingChannelHead];
+    if (!p.used || (uint32_t)(millis() - p.queuedMs) > PENDING_TTL_MS ||
+        !channelStillConfigured(p.secret)) {
+        memset(&p, 0, sizeof(p));
+        _pendingChannelHead = (uint8_t)((_pendingChannelHead + 1) % PENDING_CHANNEL_CAP);
+        --_pendingChannelCount;
+        return;
+    }
+
+    if (!publishChannelNow(p.secret, p.timestamp, p.text)) return;
+
+    memset(&p, 0, sizeof(p));
+    _pendingChannelHead = (uint8_t)((_pendingChannelHead + 1) % PENDING_CHANNEL_CAP);
+    --_pendingChannelCount;
+}
+
 bool V11GlobalBridge::mirrorDM(const ContactInfo& recipient, uint32_t timestamp, const char* text) {
     if (!_started || !_mesh || !text || recipient.type != ADV_TYPE_CHAT) return false;
 
-    // Zero-config behavior: even when Wi-Fi is currently absent, accept a
-    // bounded Internet mirror for later. The existing RF send path remains
-    // completely independent and immediate.
     if (WiFi.status() != WL_CONNECTED || _connecting || !_mqtt.connected()) {
         return enqueue(recipient.id.pub_key, timestamp, text);
     }
 
     if (publishDMNow(recipient.id.pub_key, timestamp, text)) return true;
     return enqueue(recipient.id.pub_key, timestamp, text);
+}
+
+bool V11GlobalBridge::mirrorChannelPacket(const mesh::GroupChannel& channel, const mesh::Packet* packet) {
+    if (!_started || !_mesh || !packet || packet->getPayloadType() != PAYLOAD_TYPE_GRP_TXT) return false;
+    if (packet->payload_len <= PATH_HASH_SIZE + CIPHER_MAC_SIZE) return false;
+
+    uint8_t plain[MAX_PACKET_PAYLOAD] = {};
+    const int plen = mesh::Utils::MACThenDecrypt(
+        channel.secret,
+        plain,
+        packet->payload + PATH_HASH_SIZE,
+        packet->payload_len - PATH_HASH_SIZE);
+    if (plen <= 5 || plain[4] != 0) {
+        memset(plain, 0, sizeof(plain));
+        return false;
+    }
+
+    uint32_t timestamp = 0;
+    memcpy(&timestamp, plain, 4);
+    const size_t avail = (size_t)(plen - 5);
+    const size_t tlen = strnlen(reinterpret_cast<const char*>(plain + 5), avail);
+    if (tlen == 0) {
+        memset(plain, 0, sizeof(plain));
+        return false;
+    }
+
+    char text[MAX_TEXT + 1] = {};
+    const size_t keep = tlen > MAX_TEXT ? MAX_TEXT : tlen;
+    memcpy(text, plain + 5, keep);
+    text[keep] = '\0';
+    memset(plain, 0, sizeof(plain));
+
+    if (WiFi.status() != WL_CONNECTED || _connecting || !_mqtt.connected()) {
+        return enqueueChannel(channel.secret, timestamp, text);
+    }
+    if (publishChannelNow(channel.secret, timestamp, text)) return true;
+    return enqueueChannel(channel.secret, timestamp, text);
 }
 
 bool V11GlobalBridge::publishDMNow(const uint8_t recipient[32],
@@ -303,24 +447,18 @@ bool V11GlobalBridge::publishDMNow(const uint8_t recipient[32],
     if (tlen == 0 || tlen > MAX_TEXT) return false;
 
     uint8_t wire[MAX_WIRE] = {};
-    wire[0] = 'M';
-    wire[1] = 'G';
-    wire[2] = '2';
-    wire[3] = '7';
+    wire[0] = 'M'; wire[1] = 'G'; wire[2] = '2'; wire[3] = '7';
     wire[4] = PROTOCOL_VERSION;
     wire[5] = KIND_DM;
 
     uint8_t msgId[8] = {};
     if (!messageIdFor(recipient, timestamp, text, msgId)) return false;
     memcpy(wire + 6, msgId, 8);
-
-    // Only a short routing hint is visible. The full sender public key is
-    // carried inside the authenticated ciphertext.
     memcpy(wire + 14, _selfPub, 8);
     esp_fill_random(wire + 22, 12);
 
     uint8_t plain[PLAIN_LEN] = {};
-    esp_fill_random(plain, sizeof(plain)); // randomized padding hides exact text length
+    esp_fill_random(plain, sizeof(plain));
     memcpy(plain, _selfPub, 32);
     memcpy(plain + 32, &timestamp, 4);
     plain[36] = (uint8_t)(tlen & 0xff);
@@ -336,118 +474,247 @@ bool V11GlobalBridge::publishDMNow(const uint8_t recipient[32],
     uint8_t tag[TAG_LEN] = {};
     mbedtls_gcm_context gcm;
     mbedtls_gcm_init(&gcm);
-
     int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
     if (rc == 0) {
-        rc = mbedtls_gcm_crypt_and_tag(
-            &gcm,
-            MBEDTLS_GCM_ENCRYPT,
-            PLAIN_LEN,
-            wire + 22,
-            12,
-            wire,
-            AAD_LEN,
-            plain,
-            wire + HEADER_LEN,
-            TAG_LEN,
-            tag);
+        rc = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT, PLAIN_LEN,
+                                       wire + 22, 12, wire, AAD_LEN, plain,
+                                       wire + HEADER_LEN, TAG_LEN, tag);
     }
-
     mbedtls_gcm_free(&gcm);
     memset(key, 0, sizeof(key));
     memset(plain, 0, sizeof(plain));
     if (rc != 0) return false;
 
     memcpy(wire + HEADER_LEN + PLAIN_LEN, tag, TAG_LEN);
-
     char topic[64] = {};
     routeTopicFor(recipient, topic, sizeof(topic));
-    if (!topic[0]) return false;
+    return topic[0] && _mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false);
+}
 
-    // Constant-size publish: the broker cannot learn exact message length.
-    return _mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false);
+bool V11GlobalBridge::publishChannelNow(const uint8_t secret[PUB_KEY_SIZE],
+                                        uint32_t timestamp,
+                                        const char* text) {
+    if (!_mqtt.connected() || !secret || !text) return false;
+
+    const size_t tlen = strnlen(text, MAX_TEXT);
+    if (tlen == 0 || tlen > MAX_TEXT) return false;
+
+    uint8_t wire[MAX_WIRE] = {};
+    wire[0] = 'M'; wire[1] = 'G'; wire[2] = '2'; wire[3] = '7';
+    wire[4] = PROTOCOL_VERSION;
+    wire[5] = KIND_CHANNEL;
+
+    uint8_t msgId[8] = {};
+    if (!channelMessageIdFor(secret, timestamp, text, msgId)) return false;
+    memcpy(wire + 6, msgId, 8);
+    esp_fill_random(wire + 14, 8);
+    esp_fill_random(wire + 22, 12);
+
+    uint8_t plain[PLAIN_LEN] = {};
+    esp_fill_random(plain, sizeof(plain));
+    memcpy(plain, &timestamp, 4);
+    plain[4] = (uint8_t)(tlen & 0xff);
+    plain[5] = (uint8_t)((tlen >> 8) & 0xff);
+    memcpy(plain + 6, text, tlen);
+
+    uint8_t key[32] = {};
+    if (!deriveChannelKey(secret, key)) {
+        memset(plain, 0, sizeof(plain));
+        return false;
+    }
+
+    uint8_t tag[TAG_LEN] = {};
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
+    if (rc == 0) {
+        rc = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT, PLAIN_LEN,
+                                       wire + 22, 12, wire, AAD_LEN, plain,
+                                       wire + HEADER_LEN, TAG_LEN, tag);
+    }
+    mbedtls_gcm_free(&gcm);
+    memset(key, 0, sizeof(key));
+    memset(plain, 0, sizeof(plain));
+    if (rc != 0) return false;
+
+    memcpy(wire + HEADER_LEN + PLAIN_LEN, tag, TAG_LEN);
+    char topic[64] = {};
+    routeTopicForChannel(secret, topic, sizeof(topic));
+    return topic[0] && _mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false);
+}
+
+bool V11GlobalBridge::subscribeChannels() {
+    if (!_mesh || !_mqtt.connected()) return false;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        ChannelDetails cd{};
+        if (!_mesh->v27GetChannelByIndex((uint8_t)i, cd)) continue;
+        char topic[64] = {};
+        routeTopicForChannel(cd.channel.secret, topic, sizeof(topic));
+        if (!topic[0] || !_mqtt.subscribe(topic, 1)) return false;
+    }
+    return true;
+}
+
+uint32_t V11GlobalBridge::channelFingerprint() const {
+    if (!_mesh) return 0;
+    uint32_t fp = 2166136261UL;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        ChannelDetails cd{};
+        if (!_mesh->v27GetChannelByIndex((uint8_t)i, cd)) continue;
+        for (size_t j = 0; j < PUB_KEY_SIZE; ++j) {
+            fp ^= cd.channel.secret[j];
+            fp *= 16777619UL;
+        }
+        for (size_t j = 0; cd.name[j] && j < sizeof(cd.name); ++j) {
+            fp ^= (uint8_t)cd.name[j];
+            fp *= 16777619UL;
+        }
+    }
+    return fp;
+}
+
+bool V11GlobalBridge::findChannelForTopic(const char* topic, mesh::GroupChannel& out) const {
+    if (!_mesh || !topic) return false;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        ChannelDetails cd{};
+        if (!_mesh->v27GetChannelByIndex((uint8_t)i, cd)) continue;
+        char candidate[64] = {};
+        routeTopicForChannel(cd.channel.secret, candidate, sizeof(candidate));
+        if (candidate[0] && strcmp(candidate, topic) == 0) {
+            out = cd.channel;
+            return true;
+        }
+    }
+    return false;
 }
 
 void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
-    if (!_mesh || !topic || !payload || strcmp(topic, _dmTopic) != 0) return;
-    if (len != MAX_WIRE) return;
-
+    if (!_mesh || !topic || !payload || len != MAX_WIRE) return;
     if (payload[0] != 'M' || payload[1] != 'G' ||
-        payload[2] != '2' || payload[3] != '7') return;
-    if (payload[4] != PROTOCOL_VERSION || payload[5] != KIND_DM) return;
+        payload[2] != '2' || payload[3] != '7' ||
+        payload[4] != PROTOCOL_VERSION) return;
 
-    ContactInfo contact{};
-    if (!_mesh->v27LookupChatContactByPrefix(payload + 14, contact)) return;
+    if (payload[5] == KIND_DM) {
+        if (strcmp(topic, _dmTopic) != 0) return;
 
-    uint8_t key[32] = {};
-    if (!deriveDmKey(contact.id.pub_key, key)) return;
+        ContactInfo contact{};
+        if (!_mesh->v27LookupChatContactByPrefix(payload + 14, contact)) return;
 
-    uint8_t plain[PLAIN_LEN] = {};
-    mbedtls_gcm_context gcm;
-    mbedtls_gcm_init(&gcm);
+        uint8_t key[32] = {};
+        if (!deriveDmKey(contact.id.pub_key, key)) return;
 
-    int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
-    if (rc == 0) {
-        rc = mbedtls_gcm_auth_decrypt(
-            &gcm,
-            PLAIN_LEN,
-            payload + 22,
-            12,
-            payload,
-            AAD_LEN,
-            payload + HEADER_LEN + PLAIN_LEN,
-            TAG_LEN,
-            payload + HEADER_LEN,
-            plain);
-    }
+        uint8_t plain[PLAIN_LEN] = {};
+        mbedtls_gcm_context gcm;
+        mbedtls_gcm_init(&gcm);
+        int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
+        if (rc == 0) {
+            rc = mbedtls_gcm_auth_decrypt(&gcm, PLAIN_LEN, payload + 22, 12,
+                                          payload, AAD_LEN,
+                                          payload + HEADER_LEN + PLAIN_LEN, TAG_LEN,
+                                          payload + HEADER_LEN, plain);
+        }
+        mbedtls_gcm_free(&gcm);
+        memset(key, 0, sizeof(key));
+        if (rc != 0 || memcmp(plain, contact.id.pub_key, 32) != 0) {
+            memset(plain, 0, sizeof(plain));
+            return;
+        }
 
-    mbedtls_gcm_free(&gcm);
-    memset(key, 0, sizeof(key));
-    if (rc != 0) {
+        uint32_t timestamp = 0;
+        memcpy(&timestamp, plain + 32, 4);
+        const uint16_t tlen = (uint16_t)plain[36] | ((uint16_t)plain[37] << 8);
+        if (tlen == 0 || tlen > MAX_TEXT) {
+            memset(plain, 0, sizeof(plain));
+            return;
+        }
+
+        char text[MAX_TEXT + 1] = {};
+        memcpy(text, plain + 38, tlen);
+        text[tlen] = '\0';
+
+        uint8_t expectedId[8] = {};
+        const bool reject =
+            !messageIdFor(contact.id.pub_key, timestamp, text, expectedId) ||
+            memcmp(expectedId, payload + 6, 8) != 0 ||
+            seenOrRemember(expectedId);
         memset(plain, 0, sizeof(plain));
-        return;
-    }
+        if (reject) {
+            memset(text, 0, sizeof(text));
+            return;
+        }
 
-    // Full identity is encrypted and must match the contact selected by the
-    // short routing hint.
-    if (memcmp(plain, contact.id.pub_key, 32) != 0) {
-        memset(plain, 0, sizeof(plain));
-        return;
-    }
-
-    uint32_t timestamp = 0;
-    memcpy(&timestamp, plain + 32, 4);
-    const uint16_t tlen = (uint16_t)plain[36] | ((uint16_t)plain[37] << 8);
-    if (tlen == 0 || tlen > MAX_TEXT) {
-        memset(plain, 0, sizeof(plain));
-        return;
-    }
-
-    char text[MAX_TEXT + 1] = {};
-    memcpy(text, plain + 38, tlen);
-    text[tlen] = '\0';
-
-    uint8_t expectedId[8] = {};
-    if (!messageIdFor(contact.id.pub_key, timestamp, text, expectedId) ||
-        memcmp(expectedId, payload + 6, 8) != 0 ||
-        seenOrRemember(expectedId)) {
-        memset(plain, 0, sizeof(plain));
+        _mesh->v11InjectGlobalDm(contact.id.pub_key, timestamp, text);
         memset(text, 0, sizeof(text));
         return;
     }
 
-    memset(plain, 0, sizeof(plain));
-    _mesh->v11InjectGlobalDm(contact.id.pub_key, timestamp, text);
-    memset(text, 0, sizeof(text));
+    if (payload[5] == KIND_CHANNEL) {
+        mesh::GroupChannel channel{};
+        if (!findChannelForTopic(topic, channel)) return;
+
+        uint8_t key[32] = {};
+        if (!deriveChannelKey(channel.secret, key)) return;
+
+        uint8_t plain[PLAIN_LEN] = {};
+        mbedtls_gcm_context gcm;
+        mbedtls_gcm_init(&gcm);
+        int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
+        if (rc == 0) {
+            rc = mbedtls_gcm_auth_decrypt(&gcm, PLAIN_LEN, payload + 22, 12,
+                                          payload, AAD_LEN,
+                                          payload + HEADER_LEN + PLAIN_LEN, TAG_LEN,
+                                          payload + HEADER_LEN, plain);
+        }
+        mbedtls_gcm_free(&gcm);
+        memset(key, 0, sizeof(key));
+        if (rc != 0) {
+            memset(plain, 0, sizeof(plain));
+            return;
+        }
+
+        uint32_t timestamp = 0;
+        memcpy(&timestamp, plain, 4);
+        const uint16_t tlen = (uint16_t)plain[4] | ((uint16_t)plain[5] << 8);
+        if (tlen == 0 || tlen > MAX_TEXT) {
+            memset(plain, 0, sizeof(plain));
+            return;
+        }
+
+        char text[MAX_TEXT + 1] = {};
+        memcpy(text, plain + 6, tlen);
+        text[tlen] = '\0';
+
+        uint8_t expectedId[8] = {};
+        const bool reject =
+            !channelMessageIdFor(channel.secret, timestamp, text, expectedId) ||
+            memcmp(expectedId, payload + 6, 8) != 0 ||
+            seenOrRemember(expectedId);
+        memset(plain, 0, sizeof(plain));
+        if (reject) {
+            memset(text, 0, sizeof(text));
+            return;
+        }
+
+        _mesh->v27InjectGlobalChannel(channel, timestamp, text);
+        memset(text, 0, sizeof(text));
+    }
 }
 
 bool V11GlobalBridge::noteLoRaDM(const uint8_t senderPub[32],
                                  uint32_t timestamp,
                                  const char* text) {
     if (!_started || !senderPub || !text) return false;
-
     uint8_t id[8] = {};
     if (!messageIdFor(senderPub, timestamp, text, id)) return false;
+    return seenOrRemember(id);
+}
+
+bool V11GlobalBridge::noteLoRaChannel(const mesh::GroupChannel& channel,
+                                      uint32_t timestamp,
+                                      const char* text) {
+    if (!_started || !text) return false;
+    uint8_t id[8] = {};
+    if (!channelMessageIdFor(channel.secret, timestamp, text, id)) return false;
     return seenOrRemember(id);
 }
 
