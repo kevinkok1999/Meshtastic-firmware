@@ -221,14 +221,9 @@ static void v26RfMaintenance() {
 
     main = one(
         main,
-        """  board.onBootComplete();
-}
-
-void loop() {
+        """void loop() {
 """,
-        """  board.onBootComplete();
-}
-""" + guard + """
+        guard + """
 void loop() {
 """,
         "V26 RF guard definition",
