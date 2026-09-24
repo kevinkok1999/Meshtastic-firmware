@@ -191,8 +191,8 @@ def main() -> None:
     # text length stay inside fixed-size authenticated ciphertext.
     if "memcpy(wire + 14, _selfPub, 8)" in bridge_cpp:
         die("Privacy Pro must not expose a sender public-key prefix in the relay header")
-    if "esp_fill_random(wire + 14, 8)" not in bridge_cpp:
-        die("Privacy Pro relay header identity-hint bytes must be randomized")
+    if "esp_fill_random(wire + 22, 8)" not in bridge_cpp:
+        die("Privacy Pro v3 relay unlinkability padding must be randomized")
     if "MOG27-DM-ROUTE" not in bridge_cpp or "deriveDmKey(pub, pairKey)" not in bridge_cpp:
         die("DM relay route must derive from the pair-wise shared key")
     if "v27CalcSharedSecretCached(peerPub, shared)" not in bridge_cpp:
