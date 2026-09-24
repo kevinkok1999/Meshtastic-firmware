@@ -7,6 +7,7 @@ on:
       - v27-impl-wave1
       - v27-impl-wave2
       - v27-release-candidate
+      - v27-stable-hardening
     paths:
       - "v27/release-trigger.txt"
   workflow_dispatch:
