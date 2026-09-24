@@ -66,6 +66,90 @@ bool V11GlobalBridge::connected() const {
            (uint32_t)(millis() - _lastRelayOkMs) <= RELAY_HEALTH_MS;
 }
 
+bool V11GlobalBridge::normalizeJoinCode(const char* in, char out[9]) {
+    if (!in || !out) return false;
+    static const char* alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    size_t n = 0;
+    for (const char* p = in; *p; ++p) {
+        char ch = *p;
+        if (ch == '-' || ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') continue;
+        if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
+        if (!strchr(alphabet, ch) || n >= 8) return false;
+        out[n++] = ch;
+    }
+    out[n] = '\0';
+    return n == 8;
+}
+
+void V11GlobalBridge::emitEvent(UiEventType type, const char* message,
+                                const char* code, const char* channel) {
+    memset(&_uiEvent, 0, sizeof(_uiEvent));
+    _uiEvent.type = type;
+    if (message) strncpy(_uiEvent.message, message, sizeof(_uiEvent.message) - 1);
+    if (code) strncpy(_uiEvent.code, code, sizeof(_uiEvent.code) - 1);
+    if (channel) strncpy(_uiEvent.channel, channel, sizeof(_uiEvent.channel) - 1);
+}
+
+bool V11GlobalBridge::takeUiEvent(UiEvent& out) {
+    if (_uiEvent.type == UI_NONE) return false;
+    out = _uiEvent;
+    memset(&_uiEvent, 0, sizeof(_uiEvent));
+    return true;
+}
+
+bool V11GlobalBridge::getJoinRequest(uint8_t idx, JoinRequest& out) const {
+    if (idx >= _joinRequestCount) return false;
+    out = _joinRequests[idx];
+    return true;
+}
+
+bool V11GlobalBridge::createChannelInvite(uint8_t channelSlot) {
+    if (!_started || !_mesh || _control.used) return false;
+    ChannelDetails cd{};
+    if (!_mesh->v27GetChannelByIndex(channelSlot, cd)) return false;
+    memset(&_control, 0, sizeof(_control));
+    _control.used = true;
+    _control.kind = WORK_INVITE_CREATE;
+    _control.channelSlot = channelSlot;
+    _nextPollAt = 0;
+    return true;
+}
+
+bool V11GlobalBridge::requestChannelJoin(const char* code) {
+    if (!_started || !_mesh || _control.used) return false;
+    char normalized[9] = {};
+    if (!normalizeJoinCode(code, normalized)) return false;
+    memset(&_control, 0, sizeof(_control));
+    _control.used = true;
+    _control.kind = WORK_INVITE_REQUEST;
+    strncpy(_control.code, normalized, sizeof(_control.code) - 1);
+    _nextPollAt = 0;
+    return true;
+}
+
+bool V11GlobalBridge::refreshJoinRequests() {
+    if (!_started || !_mesh || _control.used) return false;
+    memset(&_control, 0, sizeof(_control));
+    _control.used = true;
+    _control.kind = WORK_INVITE_LIST;
+    _nextPollAt = 0;
+    return true;
+}
+
+bool V11GlobalBridge::decideJoinRequest(uint32_t inviteId,
+                                        const uint8_t requester[PUB_KEY_SIZE],
+                                        bool approve) {
+    if (!_started || !_mesh || _control.used || inviteId == 0 || !requester) return false;
+    memset(&_control, 0, sizeof(_control));
+    _control.used = true;
+    _control.kind = WORK_INVITE_DECIDE;
+    _control.inviteId = inviteId;
+    memcpy(_control.requester, requester, PUB_KEY_SIZE);
+    _control.approve = approve;
+    _nextPollAt = 0;
+    return true;
+}
+
 void V11GlobalBridge::httpTask(void* arg) {
     V11GlobalBridge* self = static_cast<V11GlobalBridge*>(arg);
     self->_httpOk = self->performHttp();
