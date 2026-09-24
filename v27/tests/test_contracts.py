@@ -142,6 +142,17 @@ def main() -> None:
     if "memcpy(plain, secret" in bridge_cpp or "memcpy(wire, secret" in bridge_cpp:
         die("channel secret must never be copied into relay payloads")
 
+    for marker in (
+        "RX_RATE_WINDOW_MS = 10000",
+        "RX_RATE_MAX_PER_WINDOW = 100",
+        "static_assert(MAX_WIRE == 248",
+        "static_assert(MAX_WIRE < 400",
+        "bool V11GlobalBridge::allowInbound()",
+        "if (!allowInbound()) return;",
+    ):
+        if marker not in bridge_h + "\n" + bridge_cpp:
+            die("inbound abuse/resource guard missing " + marker)
+
     prefs = (root / "src/helpers/esp32/TouchPrefsStore.cpp").read_text()
     # Low-level MQTT remains hidden from the normal user surface by default.
     if "APPHIDE_MQTT" not in prefs or "app_hide" not in prefs:
