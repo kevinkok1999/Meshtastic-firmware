@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <PubSubClient.h>
 #include <WiFiClient.h>
+#include <Mesh.h>
 
 class MyMesh;
 struct ContactInfo;
@@ -22,6 +23,11 @@ public:
     // non-blocking; it publishes immediately or accepts into a bounded RAM queue.
     bool mirrorDM(const ContactInfo& recipient, uint32_t timestamp, const char* text);
 
+    // Channel/group messages use the existing MeshCore channel secret as the
+    // E2E trust root. The normal RF packet is never modified.
+    bool mirrorChannelPacket(const mesh::GroupChannel& channel, const mesh::Packet* packet);
+    bool noteLoRaChannel(const mesh::GroupChannel& channel, uint32_t timestamp, const char* text);
+
     // Cross-transport dedup: the same logical DM arriving later over RF is not
     // inserted into the visible chat twice.
     bool noteLoRaDM(const uint8_t senderPub[32], uint32_t timestamp, const char* text);
@@ -31,6 +37,7 @@ public:
 private:
     static constexpr uint8_t PROTOCOL_VERSION = 2;
     static constexpr uint8_t KIND_DM = 1;
+    static constexpr uint8_t KIND_CHANNEL = 2;
     static constexpr size_t MAX_TEXT = 160;
 
     // Privacy Pro wire format:
@@ -53,6 +60,7 @@ private:
     static constexpr size_t MAX_WIRE = HEADER_LEN + PLAIN_LEN + TAG_LEN;
 
     static constexpr int PENDING_CAP = 16;
+    static constexpr int PENDING_CHANNEL_CAP = 8;
     static constexpr int DEDUP_CAP = 64;
     static constexpr uint32_t PENDING_TTL_MS = 6UL * 60UL * 60UL * 1000UL;
     static constexpr uint32_t RETRY_MIN_MS = 3000;
@@ -61,6 +69,14 @@ private:
     struct Pending {
         bool used = false;
         uint8_t recipient[32] = {};
+        uint32_t timestamp = 0;
+        uint32_t queuedMs = 0;
+        char text[MAX_TEXT + 1] = {};
+    };
+
+    struct PendingChannel {
+        bool used = false;
+        uint8_t secret[PUB_KEY_SIZE] = {};
         uint32_t timestamp = 0;
         uint32_t queuedMs = 0;
         char text[MAX_TEXT + 1] = {};
@@ -79,6 +95,11 @@ private:
     Pending _pending[PENDING_CAP];
     uint8_t _pendingHead = 0;
     uint8_t _pendingCount = 0;
+    PendingChannel _pendingChannel[PENDING_CHANNEL_CAP];
+    uint8_t _pendingChannelHead = 0;
+    uint8_t _pendingChannelCount = 0;
+    uint32_t _lastChannelCheckMs = 0;
+    uint32_t _channelFingerprint = 0;
     uint64_t _dedup[DEDUP_CAP] = {};
     uint8_t _dedupNext = 0;
 
@@ -92,9 +113,20 @@ private:
     bool enqueue(const uint8_t recipient[32], uint32_t timestamp, const char* text);
     void flushOne();
 
+    bool publishChannelNow(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text);
+    bool enqueueChannel(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text);
+    void flushOneChannel();
+    bool subscribeChannels();
+    uint32_t channelFingerprint() const;
+    bool findChannelForTopic(const char* topic, mesh::GroupChannel& out) const;
+    bool channelStillConfigured(const uint8_t secret[PUB_KEY_SIZE]) const;
+
     void routeTopicFor(const uint8_t pub[32], char* out, size_t outCap) const;
+    void routeTopicForChannel(const uint8_t secret[PUB_KEY_SIZE], char* out, size_t outCap) const;
     bool messageIdFor(const uint8_t peerPub[32], uint32_t timestamp, const char* text, uint8_t out[8]) const;
+    bool channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text, uint8_t out[8]) const;
     bool deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) const;
+    bool deriveChannelKey(const uint8_t secret[PUB_KEY_SIZE], uint8_t key[32]) const;
     bool seenOrRemember(const uint8_t id[8]);
 };
 
