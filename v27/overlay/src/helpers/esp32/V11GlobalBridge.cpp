@@ -286,6 +286,17 @@ bool V11GlobalBridge::channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], ui
     return ok;
 }
 
+bool V11GlobalBridge::allowInbound() {
+    const uint32_t now = millis();
+    if (_rxWindowStartMs == 0 || (uint32_t)(now - _rxWindowStartMs) >= RX_RATE_WINDOW_MS) {
+        _rxWindowStartMs = now;
+        _rxWindowCount = 0;
+    }
+    if (_rxWindowCount >= RX_RATE_MAX_PER_WINDOW) return false;
+    ++_rxWindowCount;
+    return true;
+}
+
 bool V11GlobalBridge::seenOrRemember(const uint8_t id[8]) {
     const uint64_t v = idToU64(id);
     if (v == 0) return false;
@@ -593,6 +604,7 @@ bool V11GlobalBridge::findChannelForTopic(const char* topic, mesh::GroupChannel&
 
 void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
     if (!_mesh || !topic || !payload || len != MAX_WIRE) return;
+    if (!allowInbound()) return;
     if (payload[0] != 'M' || payload[1] != 'G' ||
         payload[2] != '2' || payload[3] != '7' ||
         payload[4] != PROTOCOL_VERSION) return;
