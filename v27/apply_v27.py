@@ -393,6 +393,39 @@ void MyMesh::v11InjectGlobalDm"""
     if mesh_cpp_text.count(old_cpp) != 1:
         fail("MyMesh V27 contact lookup anchor drifted")
     mesh_cpp_text = mesh_cpp_text.replace(old_cpp, new_cpp, 1)
+    # V27 global-first for already-proven V27 peers. The early return happens
+    # before MeshCore queues an RF packet. Unknown/legacy/P1 peers still take
+    # the existing RF path and are mirrored globally for capability discovery.
+    dm_entry_old = """  if (!text) {
+    expected_ack = 0;
+    est_timeout = 0;
+    return MSG_SEND_FAILED;
+  }
+
+  mesh::Packet* held[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+"""
+    dm_entry_new = """  if (!text) {
+    expected_ack = 0;
+    est_timeout = 0;
+    return MSG_SEND_FAILED;
+  }
+
+#if defined(MESH_OFFGRIDNL_V27)
+  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
+      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }
+#endif
+
+  mesh::Packet* held[COMPANION_TEXT_QUEUE_CAPACITY] = {};
+"""
+    if mesh_cpp_text.count(dm_entry_old) != 1:
+        fail("V27 global-first send entry anchor drifted")
+    mesh_cpp_text = mesh_cpp_text.replace(dm_entry_old, dm_entry_new, 1)
+
     # V11 considered an Internet RAM-queue acceptance equivalent to a send.
     # V27 keeps the UI honest: if RF failed, the global path only counts when
     # it was published immediately. Hidden delayed delivery is never reported
