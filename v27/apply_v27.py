@@ -90,6 +90,7 @@ def main() -> None:
   uint32_t v27GetContactCount();
   bool v27GetContactByIndex(uint32_t idx, ContactInfo& out);
   bool v27GetChannelByIndex(uint8_t idx, ChannelDetails& out);
+  void v27SignGlobal(const uint8_t* data, size_t len, uint8_t sig[SIGNATURE_SIZE]);
   void v27InjectGlobalChannel(const mesh::GroupChannel& channel, uint32_t timestamp, const char* text);
 #endif
   void v11InjectGlobalDm(const uint8_t senderPub[32], uint32_t timestamp, const char* text);
@@ -132,6 +133,14 @@ bool MyMesh::v27GetChannelByIndex(uint8_t idx, ChannelDetails& out) {
   if (idx >= MAX_GROUP_CHANNELS) return false;
   if (!getChannel(idx, out)) return false;
   return channelSlotConfigured(out);
+}
+
+void MyMesh::v27SignGlobal(const uint8_t* data, size_t len, uint8_t sig[SIGNATURE_SIZE]) {
+  if (!data || !sig || len == 0 || len > 512) {
+    if (sig) memset(sig, 0, SIGNATURE_SIZE);
+    return;
+  }
+  self_id.sign(sig, data, (int)len);
 }
 
 void MyMesh::v27InjectGlobalChannel(const mesh::GroupChannel& channel,
@@ -232,6 +241,7 @@ void MyMesh::v11InjectGlobalDm"""
         "v27GetContactCount",
         "v27GetContactByIndex",
         "v27GetChannelByIndex",
+        "v27SignGlobal",
         "v27InjectGlobalChannel",
         "mirrorChannelPacket",
         "noteLoRaChannel",
