@@ -25,6 +25,39 @@ public:
     bool connected() const;
     bool tryGlobalFirstDM(const ContactInfo&, uint32_t, const char*) { return false; }
 
+    enum UiEventType : uint8_t {
+        UI_NONE = 0,
+        UI_INVITE_CREATED,
+        UI_JOIN_REQUESTED,
+        UI_JOIN_LIST_READY,
+        UI_JOIN_APPROVED,
+        UI_JOINED,
+        UI_JOIN_DENIED,
+        UI_ERROR,
+    };
+
+    struct UiEvent {
+        UiEventType type = UI_NONE;
+        char code[10] = {};
+        char channel[32] = {};
+        char message[64] = {};
+    };
+
+    struct JoinRequest {
+        uint32_t inviteId = 0;
+        uint8_t requester[PUB_KEY_SIZE] = {};
+        char route[33] = {};
+        char channel[32] = {};
+    };
+
+    bool createChannelInvite(uint8_t channelSlot);
+    bool requestChannelJoin(const char* code);
+    bool refreshJoinRequests();
+    bool decideJoinRequest(uint32_t inviteId, const uint8_t requester[PUB_KEY_SIZE], bool approve);
+    bool takeUiEvent(UiEvent& out);
+    uint8_t joinRequestCount() const { return _joinRequestCount; }
+    bool getJoinRequest(uint8_t idx, JoinRequest& out) const;
+
 private:
     static constexpr uint8_t PROTOCOL_VERSION = 3;
     static constexpr size_t MSG_ID_LEN = 16;
@@ -36,6 +69,10 @@ private:
     static constexpr size_t PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT;
     static constexpr size_t TAG_LEN = 16;
     static constexpr size_t MAX_WIRE = HEADER_LEN + PLAIN_LEN + TAG_LEN;
+    static constexpr size_t JOIN_BUNDLE_LEN = 84;
+    static constexpr size_t JOIN_PLAIN_LEN = 48;
+    static constexpr uint32_t JOIN_STATUS_TTL_MS = 24UL * 60UL * 60UL * 1000UL;
+    static constexpr uint32_t JOIN_STATUS_POLL_MS = 3500;
 
     static constexpr int PENDING_CAP = 16;
     static constexpr int PENDING_CHANNEL_CAP = 8;
@@ -77,6 +114,11 @@ private:
         WORK_POLL_DM,
         WORK_POLL_CHANNEL,
         WORK_ACK,
+        WORK_INVITE_CREATE,
+        WORK_INVITE_REQUEST,
+        WORK_INVITE_LIST,
+        WORK_INVITE_DECIDE,
+        WORK_INVITE_STATUS,
     };
 
     struct Work {
@@ -87,6 +129,27 @@ private:
         bool hasEnvelope = false;
         uint8_t peerPub[PUB_KEY_SIZE] = {};
         uint8_t channelSecret[PUB_KEY_SIZE] = {};
+        uint32_t inviteId = 0;
+        uint8_t requester[PUB_KEY_SIZE] = {};
+        bool approve = false;
+    };
+
+    struct Control {
+        bool used = false;
+        WorkKind kind = WORK_NONE;
+        uint8_t channelSlot = 0;
+        char code[9] = {};
+        uint32_t inviteId = 0;
+        uint8_t requester[PUB_KEY_SIZE] = {};
+        bool approve = false;
+    };
+
+    struct PendingJoin {
+        bool active = false;
+        uint32_t inviteId = 0;
+        uint8_t ownerPub[PUB_KEY_SIZE] = {};
+        uint32_t startedMs = 0;
+        uint32_t nextPollMs = 0;
     };
 
     MyMesh* _mesh = nullptr;
@@ -118,6 +181,12 @@ private:
     uint8_t _pollChannelIdx = 0;
     bool _pollChannelsNext = false;
 
+    Control _control;
+    PendingJoin _pendingJoin;
+    JoinRequest _joinRequests[8];
+    uint8_t _joinRequestCount = 0;
+    UiEvent _uiEvent;
+
     Work _work;
     String _httpBody;
     String _httpResponse;
@@ -136,12 +205,15 @@ private:
     bool startPushChannel();
     bool startPoll();
     bool startAck();
+    bool startControl();
+    bool startInviteStatus();
     bool startHttp(WorkKind kind, const char* route, const char* message,
                    const uint8_t* envelope,
                    const uint8_t* peerPub = nullptr,
                    const uint8_t* channelSecret = nullptr);
     bool buildSignedRequest(const char* action, const char* route, const char* message,
-                            const uint8_t* envelope, String& out);
+                            const uint8_t* envelope, String& out,
+                            const char* extra = "", const char* extraJson = "");
     bool performHttp();
     void completeHttp();
 
@@ -149,6 +221,10 @@ private:
                          uint8_t wire[MAX_WIRE], uint8_t msgId[MSG_ID_LEN]);
     bool buildChannelEnvelope(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text,
                               uint8_t wire[MAX_WIRE], uint8_t msgId[MSG_ID_LEN]);
+    bool buildJoinBundle(const uint8_t requester[PUB_KEY_SIZE], const char* channel,
+                         const uint8_t secret16[16], uint8_t out[JOIN_BUNDLE_LEN]);
+    bool decryptJoinBundle(const uint8_t owner[PUB_KEY_SIZE], const uint8_t in[JOIN_BUNDLE_LEN],
+                           char channel[32], uint8_t secret16[16]);
 
     bool processDmEnvelope(const uint8_t peerPub[PUB_KEY_SIZE], const uint8_t wire[MAX_WIRE]);
     bool processChannelEnvelope(const uint8_t secret[PUB_KEY_SIZE], const uint8_t wire[MAX_WIRE]);
@@ -159,10 +235,15 @@ private:
     bool messageIdFor(const uint8_t peerPub[32], uint32_t timestamp, const char* text, uint8_t out[MSG_ID_LEN]) const;
     bool channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp, const char* text, uint8_t out[MSG_ID_LEN]) const;
     bool deriveDmKey(const uint8_t peerPub[32], uint8_t key[32]) const;
+    bool deriveDmKeyAny(const uint8_t peerPub[32], uint8_t key[32]) const;
     bool deriveChannelKey(const uint8_t secret[PUB_KEY_SIZE], uint8_t key[32]) const;
     bool allowInbound();
     bool seenOrRemember(const uint8_t id[MSG_ID_LEN]);
     bool channelStillConfigured(const uint8_t secret[PUB_KEY_SIZE]) const;
+    bool channelForRoute(const char* route, ChannelDetails& out) const;
+    void emitEvent(UiEventType type, const char* message = nullptr,
+                   const char* code = nullptr, const char* channel = nullptr);
+    static bool normalizeJoinCode(const char* in, char out[9]);
 
     static void hexEncode(const uint8_t* in, size_t len, char* out);
     static bool hexDecode(const char* in, uint8_t* out, size_t len);
