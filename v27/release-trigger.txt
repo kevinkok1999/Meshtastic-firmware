@@ -1,1 +1,1 @@
-v27-dev7-latest-threadsafe-cached-pairwise
+v27-rc2-master-audit-validation-2026-09-24
