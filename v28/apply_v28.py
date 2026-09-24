@@ -791,6 +791,30 @@ static void v28HomeSettingsCb(lv_event_t* e) {
             ".empty{padding:34px 18px;color:#7f868c;text-align:center;line-height:1.55}.empty button{margin-top:14px;background:#19d6c2;color:#04201d;border:0;border-radius:18px;padding:9px 16px;font:inherit;font-weight:700;cursor:pointer}",
         )
 
+        # V28 private-channel browser controls. The web page sends only
+        # high-level commands to the device; it never sees the real channel key.
+        ws = ws.replace(
+            "var QCMDS=",
+            "function v28Create(){modal('Create private channel','<div class=sec>SECURE PRIVATE CHANNEL</div><p>Choose a name. V28 creates the key and short join code automatically.</p><input id=v28name maxlength=31 placeholder=\"Channel name\" autocomplete=off><button id=v28go>Create securely</button>');var b=E('v28go');if(b)b.onclick=function(){var n=(E('v28name').value||'').trim();closeOv();wsSend('@vc '+(n||'Private'))}}"
+            "function v28Join(){modal('Join private channel','<div class=sec>OWNER APPROVAL REQUIRED</div><p>Enter the 8-character join code.</p><input id=v28code maxlength=10 placeholder=\"XXXX-XXXX\" autocomplete=off autocapitalize=characters><button id=v28join>Request access</button>');var b=E('v28join');if(b)b.onclick=function(){var c=(E('v28code').value||'').trim();closeOv();wsSend('@vj '+c)}}"
+            "function v28Review(r){sheet('Join '+(r.channel||'private channel'),[{label:'Approve securely',fn:function(){wsSend('@va '+r.id+' '+r.requester)}},{label:'Deny request',cls:'dng',fn:function(){wsSend('@vd '+r.id+' '+r.requester)}}])}"
+            "function v28Channels(){sheet('Private channels',[{label:'Create private channel',fn:v28Create},{label:'Join with 8-character code',fn:v28Join},{label:'Approve join request',fn:function(){wsSend('@vl')}}])}"
+            "function v28Event(d){var k=d.k||'';if(k=='created'){modal('Private channel ready','<div class=sec>'+esc(d.channel||'Private')+'</div><p>Share this code with the person you want to add.</p><div style=font-size:26px;font-weight:800;letter-spacing:3px;text-align:center;padding:14px>'+esc(d.code||'')+'</div><button id=v28copy>Copy code</button>');var b=E('v28copy');if(b)b.onclick=function(){copy(d.code||'');showToast(-1,'Copied',d.code||'')}}else if(k=='list'){var rs=d.requests||[];if(!rs.length){showToast(-1,'Private channels','No pending join requests');return}sheet('Pending join requests',rs.map(function(r){return{label:(r.channel||'Private')+' · '+(r.requester||'').slice(0,8)+'...',fn:function(){v28Review(r)}}}))}else if(k=='joined'){showToast(-1,'Private channel joined',d.channel||'Ready');wsSend('@c');wsSend('@t')}else if(k=='approved'){showToast(-1,'Private channels',d.message||'Approval sent')}else if(k=='waiting'){showToast(-1,'Private channels',d.message||'Waiting for approval')}else if(k=='denied'){showToast(-1,'Private channels',d.message||'Request denied')}else if(k=='error'){showToast(-1,'Private channel error',d.message||'Try again')}}"
+            "var QCMDS=",
+        )
+        ws = ws.replace(
+            "else if(d.t=='sg'){showSettings(d)}",
+            "else if(d.t=='sg'){showSettings(d)}else if(d.t=='v28'){v28Event(d)}",
+        )
+        ws = ws.replace(
+            "if(cfilter==0&&!csearchq){h+='<div class=row id=discrow>",
+            "if(cfilter==0&&!csearchq){h+='<div class=row id=v28row><div class=rmain><div class=rname>Private channels</div><div class=rsub>Create, join or approve securely</div></div><div class=rtime>\\u203a</div></div>';h+='<div class=row id=discrow>",
+        )
+        ws = ws.replace(
+            " E('clist').innerHTML=h;var dr=E('discrow');if(dr)dr.onclick=function(){wsSend('@dc')};",
+            " E('clist').innerHTML=h;var vr=E('v28row');if(vr)vr.onclick=v28Channels;var dr=E('discrow');if(dr)dr.onclick=function(){wsSend('@dc')};",
+        )
+
         # No dead empty inbox: one button simply opens the existing contacts/channels tab.
         ws = ws.replace(
             "function renderThreads(){var h='';if(!threads.length)h='<div class=empty>No chats yet.<br>Start one from Contacts.</div>';",
