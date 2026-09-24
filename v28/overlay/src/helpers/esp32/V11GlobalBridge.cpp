@@ -722,29 +722,152 @@ bool V11GlobalBridge::performHttp() {
 
 void V11GlobalBridge::completeHttp() {
     const bool ok = _httpOk;
+    const WorkKind kind = _work.kind;
     if (ok) _lastRelayOkMs = millis();
 
-    switch (_work.kind) {
-        case WORK_PUSH_DM:
-            if (ok) dropDmHead();
-            break;
-        case WORK_PUSH_CHANNEL:
-            if (ok) dropChannelHead();
-            break;
-        case WORK_ACK:
-            if (ok) dropAckHead();
-            break;
-        case WORK_POLL_DM:
-        case WORK_POLL_CHANNEL:
-            if (ok) processPollResponse();
-            break;
-        default:
-            break;
+    if (kind == WORK_PUSH_DM) {
+        if (ok) dropDmHead();
+    } else if (kind == WORK_PUSH_CHANNEL) {
+        if (ok) dropChannelHead();
+    } else if (kind == WORK_ACK) {
+        if (ok) dropAckHead();
+    } else if (kind == WORK_POLL_DM || kind == WORK_POLL_CHANNEL) {
+        if (ok) processPollResponse();
+    } else if (kind == WORK_INVITE_CREATE) {
+        if (!ok) {
+            emitEvent(UI_ERROR, "Invite service unavailable");
+        } else {
+            JsonDocument doc;
+            if (deserializeJson(doc, _httpResponse)) {
+                emitEvent(UI_ERROR, "Invalid invite response");
+            } else {
+                const char* code = doc["code"] | "";
+                ChannelDetails cd{};
+                if (code[0] && channelForRoute(_work.route, cd))
+                    emitEvent(UI_INVITE_CREATED, "Share this join code", code, cd.name);
+                else
+                    emitEvent(UI_ERROR, "Invite could not be created");
+            }
+        }
+    } else if (kind == WORK_INVITE_REQUEST) {
+        if (!ok) {
+            emitEvent(UI_ERROR, "Join request failed");
+        } else {
+            JsonDocument doc;
+            if (deserializeJson(doc, _httpResponse) || !(doc["accepted"] | false)) {
+                emitEvent(UI_ERROR, "Join code is invalid or unavailable");
+            } else {
+                const uint32_t inviteId = doc["inviteId"] | 0U;
+                const char* owner = doc["owner"] | "";
+                uint8_t ownerPub[PUB_KEY_SIZE] = {};
+                if (inviteId == 0 || !hexDecode(owner, ownerPub, PUB_KEY_SIZE)) {
+                    emitEvent(UI_ERROR, "Join response was incomplete");
+                } else {
+                    memset(&_pendingJoin, 0, sizeof(_pendingJoin));
+                    _pendingJoin.active = true;
+                    _pendingJoin.inviteId = inviteId;
+                    memcpy(_pendingJoin.ownerPub, ownerPub, PUB_KEY_SIZE);
+                    _pendingJoin.startedMs = millis();
+                    _pendingJoin.nextPollMs = millis() + 1000;
+                    emitEvent(UI_JOIN_REQUESTED, "Waiting for channel owner approval");
+                }
+                memset(ownerPub, 0, sizeof(ownerPub));
+            }
+        }
+    } else if (kind == WORK_INVITE_LIST) {
+        _joinRequestCount = 0;
+        if (!ok) {
+            emitEvent(UI_ERROR, "Could not load join requests");
+        } else {
+            JsonDocument doc;
+            if (deserializeJson(doc, _httpResponse)) {
+                emitEvent(UI_ERROR, "Invalid approval response");
+            } else {
+                JsonArrayConst requests = doc["requests"].as<JsonArrayConst>();
+                for (JsonObjectConst item : requests) {
+                    if (_joinRequestCount >= 8) break;
+                    const uint32_t inviteId = item["inviteId"] | 0U;
+                    const char* route = item["route"] | "";
+                    const char* requester = item["requester"] | "";
+                    ChannelDetails cd{};
+                    uint8_t requesterPub[PUB_KEY_SIZE] = {};
+                    if (inviteId == 0 || strlen(route) != 32 ||
+                        !hexDecode(requester, requesterPub, PUB_KEY_SIZE) ||
+                        !channelForRoute(route, cd)) {
+                        memset(requesterPub, 0, sizeof(requesterPub));
+                        continue;
+                    }
+                    JoinRequest& jr = _joinRequests[_joinRequestCount++];
+                    memset(&jr, 0, sizeof(jr));
+                    jr.inviteId = inviteId;
+                    memcpy(jr.requester, requesterPub, PUB_KEY_SIZE);
+                    strncpy(jr.route, route, sizeof(jr.route) - 1);
+                    strncpy(jr.channel, cd.name, sizeof(jr.channel) - 1);
+                    memset(requesterPub, 0, sizeof(requesterPub));
+                }
+                emitEvent(UI_JOIN_LIST_READY,
+                          _joinRequestCount ? "Join request ready for approval"
+                                            : "No pending join requests");
+            }
+        }
+    } else if (kind == WORK_INVITE_DECIDE) {
+        if (!ok) {
+            emitEvent(UI_ERROR, "Approval could not be sent");
+        } else {
+            emitEvent(UI_JOIN_APPROVED,
+                      _work.approve ? "Join approved securely" : "Join request denied");
+        }
+    } else if (kind == WORK_INVITE_STATUS) {
+        if (ok && _pendingJoin.active) {
+            JsonDocument doc;
+            if (!deserializeJson(doc, _httpResponse)) {
+                const char* status = doc["status"] | "";
+                const char* owner = doc["owner"] | "";
+                uint8_t ownerPub[PUB_KEY_SIZE] = {};
+                const bool ownerOk = hexDecode(owner, ownerPub, PUB_KEY_SIZE) &&
+                                     memcmp(ownerPub, _pendingJoin.ownerPub, PUB_KEY_SIZE) == 0;
+                memset(ownerPub, 0, sizeof(ownerPub));
+
+                if (ownerOk && strcmp(status, "approved") == 0) {
+                    const char* bundle64 = doc["bundle"] | "";
+                    uint8_t bundle[JOIN_BUNDLE_LEN] = {};
+                    size_t bundleLen = 0;
+                    char channel[32] = {};
+                    uint8_t secret[16] = {};
+                    bool joined = false;
+                    if (base64Decode(bundle64, bundle, sizeof(bundle), bundleLen) &&
+                        bundleLen == JOIN_BUNDLE_LEN &&
+                        decryptJoinBundle(_pendingJoin.ownerPub, bundle, channel, secret)) {
+                        for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+                            ChannelDetails existing{};
+                            if (_mesh->v27GetChannelByIndex((uint8_t)i, existing) &&
+                                memcmp(existing.channel.secret, secret, 16) == 0) {
+                                joined = true;
+                                break;
+                            }
+                        }
+                        if (!joined) {
+                            const int slot = _mesh->findFirstEmptyChannelSlot();
+                            joined = slot >= 0 && _mesh->uiAddOrUpdateChannel(slot, channel, secret);
+                        }
+                    }
+                    memset(bundle, 0, sizeof(bundle));
+                    memset(secret, 0, sizeof(secret));
+                    _pendingJoin.active = false;
+                    if (joined) emitEvent(UI_JOINED, "Private channel joined", nullptr, channel);
+                    else emitEvent(UI_ERROR, "Approved channel could not be installed");
+                } else if (ownerOk && strcmp(status, "denied") == 0) {
+                    _pendingJoin.active = false;
+                    emitEvent(UI_JOIN_DENIED, "Join request was denied");
+                }
+            }
+        }
     }
 
     if (!ok) {
         _nextPollAt = millis() + 3000;
-    } else if (_work.kind == WORK_POLL_DM || _work.kind == WORK_POLL_CHANNEL) {
+    } else if (kind == WORK_POLL_DM || kind == WORK_POLL_CHANNEL ||
+               kind == WORK_INVITE_STATUS) {
         _nextPollAt = millis() + POLL_INTERVAL_MS;
     } else {
         _nextPollAt = millis() + 250;
