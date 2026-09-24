@@ -81,10 +81,34 @@ def main() -> None:
 """
     expected = replace_once(expected, old_group, new_group, "group route")
 
-    if expected != after:
-        die("MyMesh changed outside the two approved RF-first routing edits")
+    old_mirror = """      (attempt == 0 && recipient.type == ADV_TYPE_CHAT)
+          ? v11_global_bridge.mirrorDM(recipient, timestamp, text,
+                                       result != MSG_SEND_FAILED)
+          : false;"""
+    new_mirror = """      (attempt == 0 && recipient.type == ADV_TYPE_CHAT)
+          ? v11_global_bridge.mirrorDM(recipient, timestamp, text, true)
+          : false;"""
+    expected = replace_once(expected, old_mirror, new_mirror, "independent Internet route")
 
-    print("V28 MyMesh exact-diff contract PASS")
+    old_truth = """  if (result == MSG_SEND_FAILED && v11_global_ok) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }"""
+    new_truth = """  if (result == MSG_SEND_FAILED && v11_global_ok &&
+      v11_global_bridge.connected()) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }"""
+    expected = replace_once(expected, old_truth, new_truth, "truthful Internet status")
+
+    if expected != after:
+        die("MyMesh changed outside the four approved V28 routing edits")
+
+    print("V28 MyMesh exact-diff contract PASS (four bounded routing edits)")
 
 if __name__ == "__main__":
     main()
