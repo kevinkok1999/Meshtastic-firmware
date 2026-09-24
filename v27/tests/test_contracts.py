@@ -163,6 +163,18 @@ def main() -> None:
     if "const bool signatureOk = signer.verify(signature, signData" not in bridge_cpp:
         die("global channel post must verify Ed25519 sender signature before UI insertion")
 
+    if "subscribeContacts()" in bridge_cpp or "subscribeChannels()" in bridge_cpp:
+        die("background connect path must not bulk-walk contact/channel tables")
+    for marker in (
+        "bool V11GlobalBridge::subscribeStep()",
+        "void V11GlobalBridge::resetSubscriptions()",
+        "if (!_subscriptionsReady)",
+        "const uint32_t idx = _subContactIdx++",
+        "const uint8_t idx = _subChannelIdx++",
+    ):
+        if marker not in bridge_cpp:
+            die("incremental main-loop subscription guard missing " + marker)
+
     for marker in (
         "RX_RATE_WINDOW_MS = 10000",
         "RX_RATE_MAX_PER_WINDOW = 100",
