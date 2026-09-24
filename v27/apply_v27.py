@@ -237,7 +237,8 @@ void MyMesh::v11InjectGlobalDm"""
         "mbedtls_gcm_crypt_and_tag",
         "mbedtls_gcm_auth_decrypt",
         "MOG27-DM-KEY",
-        "PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT",
+        "MOG27-DM-ROUTE",
+        "PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT",
         "v27GetContactCount",
         "v27GetContactByIndex",
         "v27GetChannelByIndex",
@@ -246,6 +247,7 @@ void MyMesh::v11InjectGlobalDm"""
         "mirrorChannelPacket",
         "noteLoRaChannel",
         "MOG27-CH-KEY",
+        "MOG27-CH-SIGN",
     ):
         if marker not in joined:
             fail("hybrid/privacy baseline missing " + marker)
