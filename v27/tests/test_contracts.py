@@ -15,6 +15,7 @@ def main() -> None:
     pio = (root / "platformio.ini").read_text()
     main_src = (root / "src/main.cpp").read_text()
     mesh_cpp = (root / "src/MyMesh.cpp").read_text()
+    mesh_h = (root / "src/MyMesh.h").read_text()
     bridge_h = (root / "src/helpers/esp32/V11GlobalBridge.h").read_text()
     bridge_cpp = (root / "src/helpers/esp32/V11GlobalBridge.cpp").read_text()
 
@@ -55,6 +56,8 @@ def main() -> None:
     ):
         if marker not in tdeck:
             die("P1 V8/T-Deck RF contract missing " + marker)
+    if "#define LORA_CR 5" not in mesh_h:
+        die("P1 V8/T-Deck RF contract missing CR5 default")
 
     # V27 must not add a competing radio profile.
     forbidden_rf = (
@@ -65,7 +68,7 @@ def main() -> None:
         "V27_TX_POWER",
     )
     for marker in forbidden_rf:
-        if marker in "\n".join((pio, main_src, mesh_cpp, bridge_h, bridge_cpp)):
+        if marker in "\n".join((pio, main_src, mesh_h, mesh_cpp, bridge_h, bridge_cpp)):
             die("V27 must not override RF via " + marker)
 
     # Existing hybrid behavior must survive: one logical DM mirrors to Internet,
