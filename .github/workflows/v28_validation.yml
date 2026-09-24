@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: meshoffgridnl-v28-validation
+  group: meshoffgridnl-v28-master-validation
   cancel-in-progress: true
 
 permissions:
