@@ -19,13 +19,20 @@ V27 is a worldwide messaging product layered on the existing off-grid mesh. A su
 - Channel secret is never transmitted to the relay.
 - Global envelopes are fixed-size.
 - No chat payloads, private keys, Wi-Fi passwords or channel secrets in logs.
-- Open Wi-Fi auto-join remains off by default.
+- The legacy unsandboxed open-Wi-Fi auto-join remains disabled.
+- V27 opportunistic unknown-open Wi-Fi may auto-connect only through the Untrusted Internet sandbox; verified TLS + E2E are mandatory and unknown APs are never promoted to trusted automatically.
 - No location upload as a side effect of messaging.
 - Production relay must use authenticated device access; anonymous public-broker access is development-only.
 - Production transport must provide server authentication/TLS or an equivalent verified secure transport in addition to E2E payload encryption.
 - Device credentials must be revocable and short-lived where possible.
 - Backend stores ciphertext only for offline delivery.
 - Store-and-forward data has a TTL and bounded retention.
+
+## Global-first routing gates
+- V27-to-V27 direct messages use the authenticated global route first whenever GLOBAL_READY and peer capability are known.
+- RF is route 2/fallback for V27 peers, while P1/legacy compatibility may require RF immediately.
+- Mixed/legacy group compatibility must never be broken by global-first optimization.
+- Global timeout/failure triggers bounded RF fallback without duplicate visible messages.
 
 ## Reliability gates
 - RF works with the Internet/backend fully unavailable.
@@ -43,6 +50,8 @@ V27 is a worldwide messaging product layered on the existing off-grid mesh. A su
 - T-Deck/T-Deck Plus build succeeds.
 - No unbounded queues or dynamic message-history growth introduced by V27.
 - Global relay buffers remain bounded.
+- Stable protocol uses at least 128-bit logical message IDs and 128-bit opaque conversation route capabilities.
+- Reboot cannot erase the minimum replay/idempotency state required to prevent delayed duplicates.
 - MQTT wire envelope stays within configured client buffer.
 - Long-duration Wi-Fi + BLE + LVGL + LoRa soak test passes without watchdog reset.
 - Heap/PSRAM watermarks remain acceptable during reconnect and burst messaging.
