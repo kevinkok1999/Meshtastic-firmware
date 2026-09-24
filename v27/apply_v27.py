@@ -87,7 +87,8 @@ def main() -> None:
 """
     new_h = """  bool v11LookupChatContact(const uint8_t pub[32], ContactInfo& out);
 #if defined(MESH_OFFGRIDNL_V27)
-  bool v27LookupChatContactByPrefix(const uint8_t prefix[8], ContactInfo& out);
+  uint32_t v27GetContactCount();
+  bool v27GetContactByIndex(uint32_t idx, ContactInfo& out);
   bool v27GetChannelByIndex(uint8_t idx, ChannelDetails& out);
   void v27InjectGlobalChannel(const mesh::GroupChannel& channel, uint32_t timestamp, const char* text);
 #endif
@@ -119,13 +120,12 @@ void MyMesh::v11InjectGlobalDm"""
 #if defined(MESH_OFFGRIDNL_V27)
 static bool s_v27_global_channel_inject = false;
 
-bool MyMesh::v27LookupChatContactByPrefix(const uint8_t prefix[8], ContactInfo& out) {
-  if (!prefix) return false;
-  ContactInfo* c = lookupContactByPubKey(prefix, 8);
-  if (!c || c->type != ADV_TYPE_CHAT) return false;
-  if (memcmp(c->id.pub_key, prefix, 8) != 0) return false;
-  out = *c;
-  return true;
+uint32_t MyMesh::v27GetContactCount() {
+  return getNumContacts();
+}
+
+bool MyMesh::v27GetContactByIndex(uint32_t idx, ContactInfo& out) {
+  return getContactByIdx(idx, out);
 }
 
 bool MyMesh::v27GetChannelByIndex(uint8_t idx, ChannelDetails& out) {
@@ -214,7 +214,8 @@ void MyMesh::v11InjectGlobalDm"""
         "mbedtls_gcm_auth_decrypt",
         "MOG27-DM-KEY",
         "PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT",
-        "v27LookupChatContactByPrefix",
+        "v27GetContactCount",
+        "v27GetContactByIndex",
         "v27GetChannelByIndex",
         "v27InjectGlobalChannel",
         "mirrorChannelPacket",
