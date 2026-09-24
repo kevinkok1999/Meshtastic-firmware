@@ -1,0 +1,132 @@
+name: V28 UX Integrity Validation
+
+on:
+  push:
+    branches:
+      - v28-implementation
+    paths:
+      - "v28/release-trigger.txt"
+  workflow_dispatch:
+
+concurrency:
+  group: meshoffgridnl-v28-validation
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-v28:
+    name: V27 frozen base + V28 UX + no-dead-end build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned WadaMesh beta_83
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf upstream-wadamesh
+          git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          cd upstream-wadamesh
+          test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+
+      - name: Apply frozen V11 through V27
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v11/apply_v11.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v17/apply_v17.py upstream-wadamesh
+          python v18/apply_v18.py upstream-wadamesh
+          python v19/apply_v19.py upstream-wadamesh
+          python v26/apply_v26.py upstream-wadamesh
+          python v27/apply_v27.py upstream-wadamesh
+          python v27/tests/test_contracts.py upstream-wadamesh
+
+      - name: Freeze native chat core hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum upstream-wadamesh/src/MyMesh.cpp > /tmp/mymesh.before
+          sha256sum upstream-wadamesh/src/MyMesh.h > /tmp/mymesh-h.before
+
+      - name: Apply V28 UX shell and contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v28/apply_v28.py upstream-wadamesh
+          python v28/tests/test_ux_contracts.py upstream-wadamesh
+          sha256sum upstream-wadamesh/src/MyMesh.cpp > /tmp/mymesh.after
+          sha256sum upstream-wadamesh/src/MyMesh.h > /tmp/mymesh-h.after
+          diff -u /tmp/mymesh.before /tmp/mymesh.after
+          diff -u /tmp/mymesh-h.before /tmp/mymesh-h.after
+
+      - name: Verify immutable P1 Pro V8 reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, urllib.request
+          url = "https://raw.githubusercontent.com/kevinkok1999/Meshtastic-firmware/c2d99ac83d702de0f9e8cb66e0f9bff2cb283360/p1pro-v8/profile.json"
+          with urllib.request.urlopen(url, timeout=20) as r:
+              profile = json.load(r)
+          rf = profile["radioProfile"]
+          assert rf["frequencyMHz"] == 869.618
+          assert rf["bandwidthKHz"] == 62.5
+          assert rf["spreadingFactor"] == 8
+          assert rf["codingRate"] == 5
+          assert rf["txPowerMaxDbm"] == 22
+          assert rf["locked"] is True
+          print("P1 Pro V8 immutable reference PASS")
+          PY
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U --no-build-isolation --no-cache-dir "setuptools<72"
+          pip install -U platformio --no-build-isolation
+
+      - name: Build V28 T-Deck Plus
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DFIRMWARE_RELEASE_TAG='"mog-v28.0.0-dev1"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V28 UX Dev1"'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream-wadamesh
+          pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
+
+      - name: Verify V28 artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          test -f "$BUILD_DIR/firmware.bin"
+          test -f "$BUILD_DIR/firmware-merged.bin"
+          mkdir -p dist
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V28-TDeck-Plus-dev1.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V28-TDeck-Plus-dev1-merged.bin
+          sha256sum dist/*
+
+      - name: Upload V28 validation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MeshOffGridNL-V28-TDeck-Plus-dev1-validation
+          path: dist/*
+          retention-days: 14
