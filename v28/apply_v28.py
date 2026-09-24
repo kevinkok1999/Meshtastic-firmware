@@ -41,6 +41,8 @@ def main() -> None:
             "  -D MESH_OFFGRIDNL_V27=1\n",
             "  -D MESH_OFFGRIDNL_V27=1\n"
             "  -D MESH_OFFGRIDNL_V28=1\n"
+            "  -D V28_RF_FIRST=1\n"
+            "  -D V28_INTERNET_SECONDARY=1\n"
             "  -D V28_PRO_UX=1\n"
             "  -D V28_NO_DEAD_ENDS=1\n"
             "  -D V28_BROWSER_CHAT_SHELL=1\n",
@@ -48,6 +50,44 @@ def main() -> None:
         )
         pio = pio[:tdeck_start] + block + pio[tdeck_end:]
         pio_path.write_text(pio)
+
+
+    # V28 transport policy: undo V27's early global-first short-circuit.
+    # RF remains the first route; the existing V27 mirror path may publish the
+    # same logical message over Internet afterwards when Wi-Fi/relay is ready.
+    mesh_path = root / "src/MyMesh.cpp"
+    if not mesh_path.exists():
+        fail("missing " + str(mesh_path))
+    mesh = mesh_path.read_text()
+
+    v27_global_first = """#if defined(MESH_OFFGRIDNL_V27)
+  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
+      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }
+#endif
+
+"""
+    v28_rf_first = """#if defined(MESH_OFFGRIDNL_V27) && !defined(MESH_OFFGRIDNL_V28)
+  if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&
+      v11_global_bridge.tryGlobalFirstDM(recipient, timestamp, text)) {
+    expected_ack = 0;
+    est_timeout = 0;
+    if (out_packet_hash4) *out_packet_hash4 = 0;
+    return MSG_SEND_SENT_DIRECT;
+  }
+#endif
+
+"""
+    if v27_global_first in mesh:
+        mesh = mesh.replace(v27_global_first, v28_rf_first, 1)
+    elif v28_rf_first not in mesh:
+        fail("V27 global-first anchor missing")
+
+    mesh_path.write_text(mesh)
 
     ui = ui_path.read_text()
 
