@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - v27-global-relay
+      - v27-rc2-work
     paths:
       - "v27/release-trigger.txt"
   workflow_dispatch:
