@@ -108,6 +108,28 @@ def main() -> None:
         if marker not in "\n".join((main_src, mesh_cpp, bridge_h, bridge_cpp)):
             die("global/off-grid compatibility marker missing " + marker)
 
+
+    # RC2 secure Internet transport: server-authenticated TLS only.
+    if "#include <WiFiClientSecure.h>" not in bridge_h:
+        die("V27 global relay must use WiFiClientSecure")
+    if "WiFiClientSecure _wc;" not in bridge_h:
+        die("V27 global relay client must be the secure client")
+    for marker in (
+        '#define V27_GLOBAL_PORT 8883',
+        "V27_EMQX_ROOT_CA",
+        "_wc.setCACert(V27_EMQX_ROOT_CA);",
+        "DigiCert Global Root G2",
+    ):
+        if marker not in bridge_cpp:
+            die("verified TLS transport marker missing " + marker)
+    for forbidden in (
+        "#define V27_GLOBAL_PORT 1883",
+        "setInsecure(",
+        "WiFiClient _wc;",
+    ):
+        if forbidden in bridge_h + "\n" + bridge_cpp:
+            die("insecure relay transport forbidden: " + forbidden)
+
     # V26 RF guard remains untouched.
     for marker in (
         "V26_RF_EVAL_MS = 15000",
