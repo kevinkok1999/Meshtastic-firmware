@@ -48,14 +48,18 @@ private:
     // 14..21 truncated sender contact prefix (routing hint only)
     // 22..33 random GCM nonce
     // 34..   fixed-size ciphertext:
-    //        sender pub[32] | timestamp[4] | text_len[2] | text/padding[160]
+    //        common fixed-size plaintext budget[262]. DM uses:
+    //        sender pub[32] | timestamp[4] | text_len[2] | text/padding.
+    //        Channel uses:
+    //        sender pub[32] | Ed25519 sig[64] | timestamp[4] | text_len[2] |
+    //        text/padding. Identity + signature stay encrypted.
     // tail   GCM tag[16]
     //
     // Exact timestamp, full sender key and exact text length are therefore not
     // visible to the broker. Every DM has the same on-wire payload size.
     static constexpr size_t HEADER_LEN = 34;
     static constexpr size_t AAD_LEN = 22;
-    static constexpr size_t PLAIN_LEN = 32 + 4 + 2 + MAX_TEXT;
+    static constexpr size_t PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT;
     static constexpr size_t TAG_LEN = 16;
     static constexpr size_t MAX_WIRE = HEADER_LEN + PLAIN_LEN + TAG_LEN;
 
@@ -67,7 +71,7 @@ private:
     static constexpr uint32_t RETRY_MAX_MS = 60000;
     static constexpr uint32_t RX_RATE_WINDOW_MS = 10000;
     static constexpr uint16_t RX_RATE_MAX_PER_WINDOW = 100;
-    static_assert(MAX_WIRE == 248, "V27 privacy envelope size changed unexpectedly");
+    static_assert(MAX_WIRE == 312, "V27 privacy envelope size changed unexpectedly");
     static_assert(MAX_WIRE < 400, "V27 envelope must stay comfortably inside the MQTT client buffer");
 
     struct Pending {
