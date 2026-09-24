@@ -345,6 +345,47 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
     if 'make_launcher(TR("Noodmodus")' not in ui:
         ui = replace_once(ui, home_anchor, home_new, "V29 Home emergency entry")
 
+    # Surface received emergency events in plain language on the T-Deck.
+    # This drains the V29 event queue from the existing UI loop; no second app loop.
+    v29_event_anchor = '''  // Web mesh terminal: run any command the browser typed through the exact same dispatch
+'''
+    v29_event_code = r'''#if defined(MESH_OFFGRIDNL_V29)
+  {
+    V29EmergencyFabric::Event ev;
+    while (v29_emergency_fabric.takeEvent(ev)) {
+      const char* msg = "Noodbericht ontvangen via lokaal netwerk";
+      char detail[144] = {};
+
+      if (ev.kind == V29EmergencyFabric::Kind::CheckIn && ev.bodyLen >= 2) {
+        const auto state = (V29EmergencyFabric::CheckInState)ev.body[1];
+        if (state == V29EmergencyFabric::CheckInState::Safe)
+          msg = "Noodcontact meldt: ik ben veilig";
+        else if (state == V29EmergencyFabric::CheckInState::NeedHelp)
+          msg = "Noodcontact meldt: ik heb hulp nodig";
+        else if (state == V29EmergencyFabric::CheckInState::Moving)
+          msg = "Noodcontact meldt: ik ben onderweg";
+        else if (state == V29EmergencyFabric::CheckInState::AtMeetingPoint)
+          msg = "Noodcontact meldt: ik ben bij het verzamelpunt";
+      } else if (ev.kind == V29EmergencyFabric::Kind::HelpRequest) {
+        msg = "Hulpvraag ontvangen via lokaal netwerk - 112 is niet automatisch gebeld";
+      } else if (ev.kind == V29EmergencyFabric::Kind::MeetingPoint) {
+        msg = "Update over verzamelpunt ontvangen";
+      } else if (ev.kind == V29EmergencyFabric::Kind::Household) {
+        msg = "Gezinsupdate ontvangen via lokaal netwerk";
+      }
+
+      snprintf(detail, sizeof(detail), "%s [%02X%02X%02X]", msg,
+               ev.origin[0], ev.origin[1], ev.origin[2]);
+      if (g_lv.task) g_lv.task->showAlert(detail,
+          ev.priority == V29EmergencyFabric::Priority::Critical ? 5200 : 3200);
+    }
+  }
+#endif
+  // Web mesh terminal: run any command the browser typed through the exact same dispatch
+'''
+    if "Noodcontact meldt: ik ben veilig" not in ui:
+        ui = replace_once(ui, v29_event_anchor, v29_event_code, "V29 received emergency events")
+
     ui_path.write_text(ui)
 
     joined = "\n".join((
@@ -369,6 +410,9 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
         "Ik ben veilig",
         "Ik heb hulp nodig",
         "112 is niet automatisch gebeld",
+        "Noodcontact meldt: ik ben veilig",
+        "Hulpvraag ontvangen via lokaal netwerk",
+        "v29_emergency_fabric.takeEvent",
         "MOG29-DIRECT-V1",
         "v29q0.bin",
         "v29q1.bin",
