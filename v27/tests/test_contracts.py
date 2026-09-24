@@ -109,6 +109,46 @@ def main() -> None:
             die("global/off-grid compatibility marker missing " + marker)
 
 
+
+    # Broad 2.4-GHz compatibility ladder. The ESP32-S3 is physically 2.4 GHz
+    # only; V27 broadens supported AP/security behavior rather than pretending
+    # firmware can add a 5-GHz RF front-end.
+    for marker in (
+        "V27_WIFI_BROAD_COMPAT=1",
+        "[V27][wifi] profile=1 standard",
+        "[V27][wifi] profile=2 modern-transition",
+        "[V27][wifi] profile=3 legacy-ht20",
+        "[V27][wifi] profile=4 eu13-mesh-rescue",
+        "WIFI_AUTH_WPA_PSK",
+        "cfg.sta.pmf_cfg.capable = true;",
+        "cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;",
+        "WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N",
+        "WIFI_BW_HT20",
+        'esp_wifi_set_country_code("NL", false);',
+        "wifiConfigGetApHint",
+        "cfg.sta.bssid_set = true;",
+        "hint_channel >= 1 && hint_channel <= 13",
+        "wifiConfigClearApHint();",
+        "g_v16_wifi_attempt >= 4",
+    ):
+        if marker not in pio + "\n" + main_src:
+            die("broad Wi-Fi compatibility marker missing " + marker)
+
+    ui = (root / "src/ui-touch/UITask.cpp").read_text()
+    for marker in (
+        "Connecting... (1/4)",
+        "Compatibility... (2/4)",
+        "Compatibility... (3/4)",
+        "Router recovery... (4/4)",
+    ):
+        if marker not in ui:
+            die("four-profile zero-config Wi-Fi UI marker missing " + marker)
+
+    # Security floor: explicit password networks may use WPA/WPA2/WPA3, but
+    # V27 must not add WEP fallback.
+    if "WIFI_AUTH_WEP" in main_src:
+        die("V27 broad Wi-Fi compatibility must not enable WEP")
+
     # RC2 secure Internet transport: server-authenticated TLS only.
     if "#include <WiFiClientSecure.h>" not in bridge_h:
         die("V27 global relay must use WiFiClientSecure")
