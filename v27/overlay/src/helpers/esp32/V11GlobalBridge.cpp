@@ -67,12 +67,6 @@ bool hmac256(const uint8_t* key, size_t keyLen, const uint8_t* data, size_t len,
     return info && mbedtls_md_hmac(info, key, keyLen, data, len, out) == 0;
 }
 
-uint64_t idToU64(const uint8_t id[8]) {
-    uint64_t v = 0;
-    memcpy(&v, id, sizeof(v));
-    return v;
-}
-
 bool due(uint32_t now, uint32_t at) {
     return at == 0 || (int32_t)(now - at) >= 0;
 }
@@ -224,7 +218,7 @@ void V11GlobalBridge::routeTopicFor(const uint8_t pub[32], char* out, size_t out
     // identical at both peers because deriveDmKey() is pair-wise canonical.
     char tag[33] = {};
     for (int i = 0; i < 16; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
-    snprintf(out, outCap, "mog27/v2/r/%s", tag);
+    snprintf(out, outCap, "mog27/v3/r/%s", tag);
 
     memset(digest, 0, sizeof(digest));
     memset(pairKey, 0, sizeof(pairKey));
@@ -240,7 +234,7 @@ void V11GlobalBridge::routeTopicForChannel(const uint8_t secret[PUB_KEY_SIZE], c
     // Keep group and DM opaque routes at the same 128-bit capability width.
     char tag[33] = {};
     for (int i = 0; i < 16; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
-    snprintf(out, outCap, "mog27/v2/r/%s", tag);
+    snprintf(out, outCap, "mog27/v3/r/%s", tag);
     memset(digest, 0, sizeof(digest));
 }
 
@@ -276,7 +270,7 @@ bool V11GlobalBridge::deriveChannelKey(const uint8_t secret[PUB_KEY_SIZE], uint8
 }
 
 bool V11GlobalBridge::messageIdFor(const uint8_t peerPub[32], uint32_t timestamp,
-                                   const char* text, uint8_t out[8]) const {
+                                   const char* text, uint8_t out[MSG_ID_LEN]) const {
     if (!peerPub || !text || !out) return false;
 
     uint8_t key[32] = {};
@@ -300,7 +294,7 @@ bool V11GlobalBridge::messageIdFor(const uint8_t peerPub[32], uint32_t timestamp
 
     uint8_t digest[32] = {};
     const bool ok = hmac256(key, sizeof(key), input, n, digest);
-    if (ok) memcpy(out, digest, 8);
+    if (ok) memcpy(out, digest, MSG_ID_LEN);
     memset(key, 0, sizeof(key));
     memset(input, 0, sizeof(input));
     memset(digest, 0, sizeof(digest));
@@ -308,7 +302,7 @@ bool V11GlobalBridge::messageIdFor(const uint8_t peerPub[32], uint32_t timestamp
 }
 
 bool V11GlobalBridge::channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], uint32_t timestamp,
-                                          const char* text, uint8_t out[8]) const {
+                                          const char* text, uint8_t out[MSG_ID_LEN]) const {
     if (!secret || !text || !out) return false;
 
     uint8_t key[32] = {};
@@ -331,7 +325,7 @@ bool V11GlobalBridge::channelMessageIdFor(const uint8_t secret[PUB_KEY_SIZE], ui
 
     uint8_t digest[32] = {};
     const bool ok = hmac256(key, sizeof(key), input, n, digest);
-    if (ok) memcpy(out, digest, 8);
+    if (ok) memcpy(out, digest, MSG_ID_LEN);
     memset(key, 0, sizeof(key));
     memset(input, 0, sizeof(input));
     memset(digest, 0, sizeof(digest));
@@ -349,17 +343,38 @@ bool V11GlobalBridge::allowInbound() {
     return true;
 }
 
-bool V11GlobalBridge::seenOrRemember(const uint8_t id[8]) {
-    const uint64_t v = idToU64(id);
-    if (v == 0) return false;
+bool V11GlobalBridge::seenOrRemember(const uint8_t id[MSG_ID_LEN]) {
+    if (!id) return false;
+    bool any = false;
+    for (size_t j = 0; j < MSG_ID_LEN; ++j) any = any || id[j] != 0;
+    if (!any) return false;
 
     for (int i = 0; i < DEDUP_CAP; ++i) {
-        if (_dedup[i] == v) return true;
+        if (memcmp(_dedup[i], id, MSG_ID_LEN) == 0) return true;
     }
 
-    _dedup[_dedupNext] = v;
+    memcpy(_dedup[_dedupNext], id, MSG_ID_LEN);
     _dedupNext = (uint8_t)((_dedupNext + 1) % DEDUP_CAP);
     return false;
+}
+
+bool V11GlobalBridge::hasGlobalPeer(const uint8_t pub[PUB_KEY_SIZE]) const {
+    if (!pub) return false;
+    for (int i = 0; i < GLOBAL_PEER_CAP; ++i) {
+        if (memcmp(_globalPeers[i], pub, PUB_KEY_SIZE) == 0) return true;
+    }
+    return false;
+}
+
+void V11GlobalBridge::markGlobalPeer(const uint8_t pub[PUB_KEY_SIZE]) {
+    if (!pub || hasGlobalPeer(pub)) return;
+    const uint8_t slot = _globalPeerCount < GLOBAL_PEER_CAP
+        ? _globalPeerCount++
+        : _globalPeerNext;
+    memcpy(_globalPeers[slot], pub, PUB_KEY_SIZE);
+    if (_globalPeerCount >= GLOBAL_PEER_CAP) {
+        _globalPeerNext = (uint8_t)((_globalPeerNext + 1) % GLOBAL_PEER_CAP);
+    }
 }
 
 bool V11GlobalBridge::enqueue(const uint8_t recipient[32], uint32_t timestamp, const char* text) {
@@ -453,6 +468,15 @@ void V11GlobalBridge::flushOneChannel() {
     --_pendingChannelCount;
 }
 
+bool V11GlobalBridge::tryGlobalFirstDM(const ContactInfo& recipient,
+                                       uint32_t timestamp,
+                                       const char* text) {
+    if (!_started || !_mesh || !text || recipient.type != ADV_TYPE_CHAT) return false;
+    if (WiFi.status() != WL_CONNECTED || _connecting || !_mqtt.connected()) return false;
+    if (!hasGlobalPeer(recipient.id.pub_key)) return false;
+    return publishDMNow(recipient.id.pub_key, timestamp, text);
+}
+
 bool V11GlobalBridge::mirrorDM(const ContactInfo& recipient, uint32_t timestamp,
                                const char* text, bool allowQueue) {
     if (!_started || !_mesh || !text || recipient.type != ADV_TYPE_CHAT) return false;
@@ -515,13 +539,13 @@ bool V11GlobalBridge::publishDMNow(const uint8_t recipient[32],
     wire[4] = PROTOCOL_VERSION;
     wire[5] = KIND_DM;
 
-    uint8_t msgId[8] = {};
+    uint8_t msgId[MSG_ID_LEN] = {};
     if (!messageIdFor(recipient, timestamp, text, msgId)) return false;
-    memcpy(wire + 6, msgId, 8);
+    memcpy(wire + 6, msgId, MSG_ID_LEN);
     // Pair-wise secret topic identifies the conversation to the two endpoints;
     // keep the visible header unlinkable to the sender identity.
-    esp_fill_random(wire + 14, 8);
-    esp_fill_random(wire + 22, 12);
+    esp_fill_random(wire + 22, 8);
+    esp_fill_random(wire + 30, 12);
 
     uint8_t plain[PLAIN_LEN] = {};
     esp_fill_random(plain, sizeof(plain));
@@ -570,14 +594,14 @@ bool V11GlobalBridge::publishChannelNow(const uint8_t secret[PUB_KEY_SIZE],
     wire[4] = PROTOCOL_VERSION;
     wire[5] = KIND_CHANNEL;
 
-    uint8_t msgId[8] = {};
+    uint8_t msgId[MSG_ID_LEN] = {};
     if (!channelMessageIdFor(secret, timestamp, text, msgId)) return false;
-    memcpy(wire + 6, msgId, 8);
+    memcpy(wire + 6, msgId, MSG_ID_LEN);
     // We subscribe to the same channel topic we publish to. Remember our own
     // keyed ID before publish so broker loopback cannot create a second bubble.
     seenOrRemember(msgId);
-    esp_fill_random(wire + 14, 8);
-    esp_fill_random(wire + 22, 12);
+    esp_fill_random(wire + 22, 8);
+    esp_fill_random(wire + 30, 12);
 
     // Sign the logical group post with the device's existing Ed25519
     // identity. The public key and signature are encrypted below, so the relay
@@ -762,7 +786,7 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
         mbedtls_gcm_init(&gcm);
         int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
         if (rc == 0) {
-            rc = mbedtls_gcm_auth_decrypt(&gcm, PLAIN_LEN, payload + 22, 12,
+            rc = mbedtls_gcm_auth_decrypt(&gcm, PLAIN_LEN, payload + 30, 12,
                                           payload, AAD_LEN,
                                           payload + HEADER_LEN + PLAIN_LEN, TAG_LEN,
                                           payload + HEADER_LEN, plain);
@@ -786,10 +810,10 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
         memcpy(text, plain + 38, tlen);
         text[tlen] = '\0';
 
-        uint8_t expectedId[8] = {};
+        uint8_t expectedId[MSG_ID_LEN] = {};
         const bool reject =
             !messageIdFor(contact.id.pub_key, timestamp, text, expectedId) ||
-            memcmp(expectedId, payload + 6, 8) != 0 ||
+            memcmp(expectedId, payload + 6, MSG_ID_LEN) != 0 ||
             seenOrRemember(expectedId);
         memset(plain, 0, sizeof(plain));
         if (reject) {
@@ -797,6 +821,7 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
             return;
         }
 
+        markGlobalPeer(contact.id.pub_key);
         _mesh->v11InjectGlobalDm(contact.id.pub_key, timestamp, text);
         memset(text, 0, sizeof(text));
         return;
@@ -814,7 +839,7 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
         mbedtls_gcm_init(&gcm);
         int rc = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
         if (rc == 0) {
-            rc = mbedtls_gcm_auth_decrypt(&gcm, PLAIN_LEN, payload + 22, 12,
+            rc = mbedtls_gcm_auth_decrypt(&gcm, PLAIN_LEN, payload + 30, 12,
                                           payload, AAD_LEN,
                                           payload + HEADER_LEN + PLAIN_LEN, TAG_LEN,
                                           payload + HEADER_LEN, plain);
@@ -843,9 +868,9 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
         memcpy(text, plain + 102, tlen);
         text[tlen] = '\0';
 
-        uint8_t expectedId[8] = {};
+        uint8_t expectedId[MSG_ID_LEN] = {};
         if (!channelMessageIdFor(channel.secret, timestamp, text, expectedId) ||
-            memcmp(expectedId, payload + 6, 8) != 0) {
+            memcmp(expectedId, payload + 6, MSG_ID_LEN) != 0) {
             memset(plain, 0, sizeof(plain));
             memset(text, 0, sizeof(text));
             return;
@@ -887,7 +912,7 @@ bool V11GlobalBridge::noteLoRaDM(const uint8_t senderPub[32],
                                  uint32_t timestamp,
                                  const char* text) {
     if (!_started || !senderPub || !text) return false;
-    uint8_t id[8] = {};
+    uint8_t id[MSG_ID_LEN] = {};
     if (!messageIdFor(senderPub, timestamp, text, id)) return false;
     return seenOrRemember(id);
 }
@@ -896,7 +921,7 @@ bool V11GlobalBridge::noteLoRaChannel(const mesh::GroupChannel& channel,
                                       uint32_t timestamp,
                                       const char* text) {
     if (!_started || !text) return false;
-    uint8_t id[8] = {};
+    uint8_t id[MSG_ID_LEN] = {};
     if (!channelMessageIdFor(channel.secret, timestamp, text, id)) return false;
     return seenOrRemember(id);
 }
