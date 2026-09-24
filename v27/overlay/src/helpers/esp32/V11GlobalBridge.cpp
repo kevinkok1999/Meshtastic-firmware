@@ -507,6 +507,9 @@ bool V11GlobalBridge::publishChannelNow(const uint8_t secret[PUB_KEY_SIZE],
     uint8_t msgId[8] = {};
     if (!channelMessageIdFor(secret, timestamp, text, msgId)) return false;
     memcpy(wire + 6, msgId, 8);
+    // We subscribe to the same channel topic we publish to. Remember our own
+    // keyed ID before publish so broker loopback cannot create a second bubble.
+    seenOrRemember(msgId);
     esp_fill_random(wire + 14, 8);
     esp_fill_random(wire + 22, 12);
 
