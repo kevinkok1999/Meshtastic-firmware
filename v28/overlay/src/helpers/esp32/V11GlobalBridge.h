@@ -211,6 +211,7 @@ private:
                    const uint8_t* envelope,
                    const uint8_t* peerPub = nullptr,
                    const uint8_t* channelSecret = nullptr);
+    bool launchHttp();
     bool buildSignedRequest(const char* action, const char* route, const char* message,
                             const uint8_t* envelope, String& out,
                             const char* extra = "", const char* extraJson = "");
