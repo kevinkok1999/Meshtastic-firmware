@@ -83,6 +83,7 @@ def main() -> None:
         "mbedtls_gcm_auth_decrypt",
         "v27GetContactCount",
         "v27GetContactByIndex",
+        "v27CalcSharedSecretCached",
         "MOG27-DM-KEY",
         "MOG27-DM-ROUTE",
         "MOG27-ID-DM",
@@ -124,6 +125,8 @@ def main() -> None:
         die("Privacy Pro relay header identity-hint bytes must be randomized")
     if "MOG27-DM-ROUTE" not in bridge_cpp or "deriveDmKey(pub, pairKey)" not in bridge_cpp:
         die("DM relay route must derive from the pair-wise shared key")
+    if "v27CalcSharedSecretCached(peerPub, shared)" not in bridge_cpp:
+        die("pair-wise DM routing must reuse the main-thread contact shared-secret cache")
     if "for (int i = 0; i < 16; ++i)" not in bridge_cpp:
         die("DM opaque route token must remain 128 bits")
     if "_dmTopic" in bridge_cpp or "_dmTopic" in bridge_h:
