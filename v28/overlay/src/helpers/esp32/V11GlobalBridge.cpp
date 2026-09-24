@@ -423,6 +423,148 @@ bool V11GlobalBridge::startPoll() {
     return false;
 }
 
+
+bool V11GlobalBridge::startControl() {
+    if (!_control.used || _httpBusy || WiFi.status() != WL_CONNECTED) return false;
+
+    Control control = _control;
+    memset(&_control, 0, sizeof(_control));
+    memset(&_work, 0, sizeof(_work));
+    _work.kind = control.kind;
+
+    String extra;
+    String fields;
+    char route[33] = {};
+
+    if (control.kind == WORK_INVITE_CREATE) {
+        ChannelDetails cd{};
+        if (!_mesh->v27GetChannelByIndex(control.channelSlot, cd) ||
+            !routeHexForChannel(cd.channel.secret, route)) {
+            emitEvent(UI_ERROR, "Channel is no longer available");
+            return false;
+        }
+        strncpy(_work.route, route, sizeof(_work.route) - 1);
+        memcpy(_work.channelSecret, cd.channel.secret, PUB_KEY_SIZE);
+        extra = "24";
+        fields = ",\"ttl_hours\":24";
+        if (!buildSignedRequest("invite_create", route, "", nullptr, _httpBody,
+                                extra.c_str(), fields.c_str())) {
+            emitEvent(UI_ERROR, "Could not prepare invite");
+            return false;
+        }
+    } else if (control.kind == WORK_INVITE_REQUEST) {
+        extra = control.code;
+        fields = ",\"code\":\"" + String(control.code) + "\"";
+        if (!buildSignedRequest("invite_request", "", "", nullptr, _httpBody,
+                                extra.c_str(), fields.c_str())) {
+            emitEvent(UI_ERROR, "Could not prepare join request");
+            return false;
+        }
+    } else if (control.kind == WORK_INVITE_LIST) {
+        if (!buildSignedRequest("invite_list", "", "", nullptr, _httpBody)) {
+            emitEvent(UI_ERROR, "Could not request approvals");
+            return false;
+        }
+    } else if (control.kind == WORK_INVITE_DECIDE) {
+        _work.inviteId = control.inviteId;
+        memcpy(_work.requester, control.requester, PUB_KEY_SIZE);
+        _work.approve = control.approve;
+
+        char requesterHex[PUB_KEY_SIZE * 2 + 1] = {};
+        hexEncode(control.requester, PUB_KEY_SIZE, requesterHex);
+
+        String bundle64;
+        if (control.approve) {
+            JoinRequest match{};
+            bool found = false;
+            for (uint8_t i = 0; i < _joinRequestCount; ++i) {
+                if (_joinRequests[i].inviteId == control.inviteId &&
+                    memcmp(_joinRequests[i].requester, control.requester, PUB_KEY_SIZE) == 0) {
+                    match = _joinRequests[i];
+                    found = true;
+                    break;
+                }
+            }
+            ChannelDetails cd{};
+            if (!found || !channelForRoute(match.route, cd)) {
+                emitEvent(UI_ERROR, "Channel for this request is unavailable");
+                return false;
+            }
+            uint8_t bundle[JOIN_BUNDLE_LEN] = {};
+            if (!buildJoinBundle(control.requester, cd.name, cd.channel.secret, bundle) ||
+                !base64Encode(bundle, sizeof(bundle), bundle64)) {
+                memset(bundle, 0, sizeof(bundle));
+                emitEvent(UI_ERROR, "Could not encrypt channel invite");
+                return false;
+            }
+            memset(bundle, 0, sizeof(bundle));
+        }
+
+        extra = String((unsigned long)control.inviteId) + ":" + requesterHex + ":" +
+                (control.approve ? "1:" : "0:") + bundle64;
+        fields = ",\"invite_id\":" + String((unsigned long)control.inviteId) +
+                 ",\"requester\":\"" + requesterHex + "\"" +
+                 ",\"approve\":" + String(control.approve ? "true" : "false");
+        if (control.approve) fields += ",\"bundle\":\"" + bundle64 + "\"";
+
+        if (!buildSignedRequest("invite_decide", "", "", nullptr, _httpBody,
+                                extra.c_str(), fields.c_str())) {
+            emitEvent(UI_ERROR, "Could not prepare approval");
+            return false;
+        }
+    } else {
+        emitEvent(UI_ERROR, "Unsupported invite action");
+        return false;
+    }
+
+    return launchHttp();
+}
+
+bool V11GlobalBridge::startInviteStatus() {
+    if (!_pendingJoin.active || _httpBusy || WiFi.status() != WL_CONNECTED) return false;
+    const uint32_t now = millis();
+    if ((uint32_t)(now - _pendingJoin.startedMs) > JOIN_STATUS_TTL_MS) {
+        _pendingJoin.active = false;
+        emitEvent(UI_ERROR, "Join request expired");
+        return false;
+    }
+    if ((int32_t)(now - _pendingJoin.nextPollMs) < 0) return false;
+
+    memset(&_work, 0, sizeof(_work));
+    _work.kind = WORK_INVITE_STATUS;
+    _work.inviteId = _pendingJoin.inviteId;
+    memcpy(_work.peerPub, _pendingJoin.ownerPub, PUB_KEY_SIZE);
+
+    String extra = String((unsigned long)_pendingJoin.inviteId);
+    String fields = ",\"invite_id\":" + extra;
+    if (!buildSignedRequest("invite_status", "", "", nullptr, _httpBody,
+                            extra.c_str(), fields.c_str())) {
+        _pendingJoin.nextPollMs = now + JOIN_STATUS_POLL_MS;
+        return false;
+    }
+    _pendingJoin.nextPollMs = now + JOIN_STATUS_POLL_MS;
+    return launchHttp();
+}
+
+bool V11GlobalBridge::launchHttp() {
+    if (_httpBusy || !_started || WiFi.status() != WL_CONNECTED ||
+        _httpBody.length() == 0) return false;
+
+    _httpResponse = "";
+    _httpOk = false;
+    _httpDone = false;
+    _httpBusy = true;
+
+    if (xTaskCreatePinnedToCore(httpTask, "v28_https", 8192, this,
+                                1, nullptr, 0) != pdPASS) {
+        _httpBusy = false;
+        _httpBody = "";
+        memset(&_work, 0, sizeof(_work));
+        return false;
+    }
+    return true;
+}
+
 bool V11GlobalBridge::startHttp(WorkKind kind,
                                 const char* route,
                                 const char* message,
@@ -453,27 +595,16 @@ bool V11GlobalBridge::startHttp(WorkKind kind,
         memset(&_work, 0, sizeof(_work));
         return false;
     }
-
-    _httpResponse = "";
-    _httpOk = false;
-    _httpDone = false;
-    _httpBusy = true;
-
-    if (xTaskCreatePinnedToCore(httpTask, "v28_https", 8192, this,
-                                1, nullptr, 0) != pdPASS) {
-        _httpBusy = false;
-        memset(&_work, 0, sizeof(_work));
-        _httpBody = "";
-        return false;
-    }
-    return true;
+    return launchHttp();
 }
 
 bool V11GlobalBridge::buildSignedRequest(const char* action,
                                          const char* route,
                                          const char* message,
                                          const uint8_t* envelope,
-                                         String& out) {
+                                         String& out,
+                                         const char* extra,
+                                         const char* extraJson) {
     if (!_mesh || !action || !route) return false;
 
     uint8_t nonce[16] = {};
@@ -491,8 +622,16 @@ bool V11GlobalBridge::buildSignedRequest(const char* action,
         memset(digest, 0, sizeof(digest));
     }
 
+    char extraDigestHex[65] = {};
+    if (extra && extra[0]) {
+        uint8_t digest[32] = {};
+        if (!sha256(reinterpret_cast<const uint8_t*>(extra), strlen(extra), digest)) return false;
+        hexEncode(digest, sizeof(digest), extraDigestHex);
+        memset(digest, 0, sizeof(digest));
+    }
+
     String canonical;
-    canonical.reserve(220);
+    canonical.reserve(280);
     canonical += "MOG28-RELAY-V1|";
     canonical += action;
     canonical += "|";
@@ -503,7 +642,8 @@ bool V11GlobalBridge::buildSignedRequest(const char* action,
     canonical += nonceHex;
     canonical += "|";
     canonical += digestHex;
-    canonical += "|";  // empty extraDigest for push/poll/ack
+    canonical += "|";
+    canonical += extraDigestHex;
 
     uint8_t signature[SIGNATURE_SIZE] = {};
     _mesh->v27SignGlobal(
@@ -530,7 +670,7 @@ bool V11GlobalBridge::buildSignedRequest(const char* action,
     if (envelope && !base64Encode(envelope, MAX_WIRE, env64)) return false;
 
     out = "";
-    out.reserve(envelope ? 850 : 380);
+    out.reserve(envelope ? 900 : 620);
     out += "{\"action\":\"";
     out += action;
     out += "\",\"route\":\"";
@@ -552,6 +692,7 @@ bool V11GlobalBridge::buildSignedRequest(const char* action,
         out += env64;
         out += "\"";
     }
+    if (extraJson && extraJson[0]) out += extraJson;
     out += "}";
     return true;
 }
