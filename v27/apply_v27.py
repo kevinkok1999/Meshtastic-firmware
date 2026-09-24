@@ -211,10 +211,10 @@ def main() -> None:
     wifiConfigClearApHint();
   }
 
-  const esp_err_t cfg_rc = esp_wifi_set_config(WIFI_IF_STA, &v27_cfg);
-  const esp_err_t con_rc = (cfg_rc == ESP_OK) ? esp_wifi_connect() : cfg_rc;
+  const esp_err_t v27_cfg_rc = esp_wifi_set_config(WIFI_IF_STA, &v27_cfg);
+  const esp_err_t v27_con_rc = (v27_cfg_rc == ESP_OK) ? esp_wifi_connect() : v27_cfg_rc;
   Serial.printf("[V27][wifi] profile=%u cfg=%d connect=%d\\n",
-                (unsigned)profile, (int)cfg_rc, (int)con_rc);
+                (unsigned)profile, (int)v27_cfg_rc, (int)v27_con_rc);
   return;
 #elif defined(MESH_OFFGRIDNL_V19)
   // V19 assumes the installer already performed the destructive factory clean.
