@@ -33,6 +33,7 @@ def main() -> None:
         "MESH_OFFGRIDNL_V27=1",
         "V27_PRIVACY_PRO=1",
         "V27_P1_V8_COMPAT=1",
+        "V27_ZERO_CONFIG=1",
     ):
         if flag not in pio:
             die("missing " + flag)
@@ -93,7 +94,15 @@ def main() -> None:
         if marker not in main_src:
             die("V26 RF guard missing " + marker)
 
-    print("V27 contracts OK: V26 preserved, P1 Pro V8 RF path preserved, hybrid chat baseline preserved")
+    prefs = (root / "src/helpers/esp32/TouchPrefsStore.cpp").read_text()
+    # Low-level MQTT remains hidden from the normal user surface by default.
+    if "APPHIDE_MQTT" not in prefs or "app_hide" not in prefs:
+        die("zero-config UX lost the hidden-by-default MQTT guard")
+    # Do not silently opt users into open Wi-Fi auto-join.
+    if "c.boot_wifi_open    = 0" not in prefs:
+        die("zero-config privacy requires open Wi-Fi auto-join OFF by default")
+
+    print("V27 contracts OK: V26 preserved, P1 Pro V8 preserved, hybrid chat preserved, zero-config privacy defaults preserved")
 
 if __name__ == "__main__":
     main()
