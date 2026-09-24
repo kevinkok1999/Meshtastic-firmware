@@ -137,8 +137,10 @@ def main() -> None:
         die("legacy per-message metadata logging leaked into V27")
     if 'broker=%s' in bridge_cpp:
         die("broker/route metadata must not be printed in normal V27 logs")
-    if "return enqueue(recipient.id.pub_key, timestamp, text);" not in bridge_cpp:
-        die("zero-config offline global DM mirror queue missing")
+    if "return allowQueue ? enqueue(recipient.id.pub_key, timestamp, text) : false;" not in bridge_cpp:
+        die("zero-config DM mirror must only queue when the accepted RF path allows it")
+    if "result != MSG_SEND_FAILED" not in mesh_cpp or "mirrorDM(recipient, timestamp, text," not in mesh_cpp:
+        die("DM UI send state must not hide total RF+Internet failure behind a RAM queue")
     if "return enqueueChannel(channel.secret, timestamp, text);" not in bridge_cpp:
         die("zero-config offline global channel mirror queue missing")
     if 'snprintf(out, outCap, "mog27/v2/r/%s", tag);' not in bridge_cpp:
