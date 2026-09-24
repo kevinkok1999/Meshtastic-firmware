@@ -130,6 +130,8 @@ def main() -> None:
 
     mesh_path.write_text(mesh)
 
+    ui = ui_path.read_text()
+
     # V28 UX changes presentation/navigation only. Native message format,
     # storage and chat behavior remain unchanged; the only MyMesh difference
     # allowed by V28 is RF-first / Internet-second route ordering.
