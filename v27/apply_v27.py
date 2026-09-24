@@ -89,6 +89,7 @@ def main() -> None:
 #if defined(MESH_OFFGRIDNL_V27)
   uint32_t v27GetContactCount();
   bool v27GetContactByIndex(uint32_t idx, ContactInfo& out);
+  bool v27CalcSharedSecretCached(const uint8_t peerPub[32], uint8_t out[32]);
   bool v27GetChannelByIndex(uint8_t idx, ChannelDetails& out);
   void v27SignGlobal(const uint8_t* data, size_t len, uint8_t sig[SIGNATURE_SIZE]);
   void v27InjectGlobalChannel(const mesh::GroupChannel& channel, uint32_t timestamp, const char* text);
@@ -127,6 +128,14 @@ uint32_t MyMesh::v27GetContactCount() {
 
 bool MyMesh::v27GetContactByIndex(uint32_t idx, ContactInfo& out) {
   return getContactByIdx(idx, out);
+}
+
+bool MyMesh::v27CalcSharedSecretCached(const uint8_t peerPub[32], uint8_t out[32]) {
+  if (!peerPub || !out) return false;
+  ContactInfo* contact = lookupContactByPubKey(peerPub, PUB_KEY_SIZE);
+  if (!contact || contact->type != ADV_TYPE_CHAT) return false;
+  memcpy(out, contact->getSharedSecret(self_id), PUB_KEY_SIZE);
+  return true;
 }
 
 bool MyMesh::v27GetChannelByIndex(uint8_t idx, ChannelDetails& out) {
@@ -241,6 +250,7 @@ void MyMesh::v11InjectGlobalDm"""
         "PLAIN_LEN = 32 + 64 + 4 + 2 + MAX_TEXT",
         "v27GetContactCount",
         "v27GetContactByIndex",
+        "v27CalcSharedSecretCached",
         "v27GetChannelByIndex",
         "v27SignGlobal",
         "v27InjectGlobalChannel",
