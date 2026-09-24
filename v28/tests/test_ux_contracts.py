@@ -23,6 +23,8 @@ def main() -> None:
         "V28_PRO_UX=1",
         "V28_NO_DEAD_ENDS=1",
         "V28_BROWSER_CHAT_SHELL=1",
+        "V28_RF_PRIMARY=1",
+        "V28_INTERNET_SECONDARY=1",
     ):
         if marker not in pio:
             die("missing build marker " + marker)
@@ -65,9 +67,34 @@ def main() -> None:
         if forbidden in ui + mesh + mesh_h:
             die("parallel native chat implementation detected: " + forbidden)
 
-    # UX layer is forbidden from touching MyMesh with V28-specific behavior.
-    if "MESH_OFFGRIDNL_V28" in mesh or "MESH_OFFGRIDNL_V28" in mesh_h:
-        die("V28 UX leaked into native MyMesh chat core")
+    # V28 may touch MyMesh only for the explicit routing priority override.
+    if "MESH_OFFGRIDNL_V28" in mesh_h:
+        die("V28 routing must not alter MyMesh public chat API")
+    rf_gate = "#if defined(MESH_OFFGRIDNL_V27) && !defined(MESH_OFFGRIDNL_V28)"
+    if rf_gate not in mesh:
+        die("inherited V27 global-first shortcut is not disabled for V28")
+    dm_start = mesh.find("int MyMesh::sendMessage(")
+    dm_end = mesh.find("int MyMesh::sendCommandData(", dm_start)
+    if dm_start < 0 or dm_end < 0:
+        die("DM send function missing")
+    dm = mesh[dm_start:dm_end]
+    if dm.find("BaseChatMesh::sendMessage") < 0 or dm.find("v11_global_bridge.mirrorDM") < 0:
+        die("RF or Internet DM route missing")
+    if dm.find("BaseChatMesh::sendMessage") > dm.find("v11_global_bridge.mirrorDM"):
+        die("Internet DM route occurs before RF route")
+
+    grp_start = mesh.find("void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel")
+    grp_end = mesh.find("void MyMesh::onMessageRecv(", grp_start)
+    if grp_start < 0 or grp_end < 0:
+        die("group send function missing")
+    grp = mesh[grp_start:grp_end]
+    mirror_pos = grp.find("v11_global_bridge.mirrorChannelPacket")
+    rf_plain = grp.find("sendFlood(pkt")
+    rf_scoped = grp.find("sendFloodScoped(*scope")
+    if mirror_pos < 0 or rf_plain < 0 or rf_scoped < 0:
+        die("RF/Internet group route markers missing")
+    if mirror_pos < rf_plain or mirror_pos < rf_scoped:
+        die("Internet #channel mirror occurs before RF send")
 
     # Browser layer may be restyled, but the existing command protocol remains.
     if "V28_BROWSER_CHAT_SHELL" not in ws:
@@ -87,7 +114,7 @@ def main() -> None:
         if marker not in ui:
             die("existing channel flow missing " + marker)
 
-    print("V28 professional UX + no-dead-end contracts PASS")
+    print("V28 RF-first + Internet-second + professional UX/no-dead-end contracts PASS")
 
 if __name__ == "__main__":
     main()
