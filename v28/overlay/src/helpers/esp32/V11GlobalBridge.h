@@ -8,6 +8,7 @@
 
 class MyMesh;
 struct ContactInfo;
+struct ChannelDetails;
 
 // V28 keeps the proven V11/V27 chat integration surface but replaces the
 // development MQTT transport with MeshOffGridNL's signed HTTPS store-and-forward

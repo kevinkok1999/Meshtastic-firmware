@@ -911,13 +911,6 @@ bool V11GlobalBridge::buildDmEnvelope(const uint8_t recipient[32],
         return false;
     }
 
-    uint8_t aad[12] = {};
-    memcpy(aad, out, 8);
-    aad[8] = (uint8_t)(inviteId >> 24);
-    aad[9] = (uint8_t)(inviteId >> 16);
-    aad[10] = (uint8_t)(inviteId >> 8);
-    aad[11] = (uint8_t)inviteId;
-
     uint8_t tag[TAG_LEN] = {};
     mbedtls_gcm_context gcm;
     mbedtls_gcm_init(&gcm);
@@ -932,7 +925,6 @@ bool V11GlobalBridge::buildDmEnvelope(const uint8_t recipient[32],
     }
     mbedtls_gcm_free(&gcm);
     memset(key, 0, sizeof(key));
-    memset(aad, 0, sizeof(aad));
     memset(plain, 0, sizeof(plain));
     if (rc != 0) return false;
 
@@ -1047,6 +1039,15 @@ bool V11GlobalBridge::buildJoinBundle(
     plain[16] = (uint8_t)n;
     if (n) memcpy(plain + 17, channel, n);
 
+    // Bind this opaque bundle to the exact invite request without increasing
+    // wire size. Both trusted peers know inviteId; the relay never needs it.
+    uint8_t aad[12] = {};
+    memcpy(aad, out, 8);
+    aad[8] = (uint8_t)(inviteId >> 24);
+    aad[9] = (uint8_t)(inviteId >> 16);
+    aad[10] = (uint8_t)(inviteId >> 8);
+    aad[11] = (uint8_t)inviteId;
+
     uint8_t tag[TAG_LEN] = {};
     mbedtls_gcm_context gcm;
     mbedtls_gcm_init(&gcm);
@@ -1061,6 +1062,7 @@ bool V11GlobalBridge::buildJoinBundle(
     }
     mbedtls_gcm_free(&gcm);
     memset(key, 0, sizeof(key));
+    memset(aad, 0, sizeof(aad));
     memset(plain, 0, sizeof(plain));
     if (rc != 0) return false;
 
