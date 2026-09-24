@@ -1324,6 +1324,31 @@ bool V11GlobalBridge::deriveDmKey(const uint8_t peerPub[32],
     return ok;
 }
 
+bool V11GlobalBridge::deriveDmKeyAny(const uint8_t peerPub[32],
+                                     uint8_t key[32]) const {
+    if (!_mesh || !peerPub || !key) return false;
+    uint8_t shared[32] = {};
+    if (!_mesh->v28CalcSharedSecretAny(peerPub, shared)) return false;
+
+    uint8_t info[96] = {};
+    static const char ctx[] = "MOG28-PAIR-KEY";
+    size_t n = 0;
+    memcpy(info + n, ctx, sizeof(ctx) - 1);
+    n += sizeof(ctx) - 1;
+    if (memcmp(_selfPub, peerPub, PUB_KEY_SIZE) <= 0) {
+        memcpy(info + n, _selfPub, PUB_KEY_SIZE); n += PUB_KEY_SIZE;
+        memcpy(info + n, peerPub, PUB_KEY_SIZE); n += PUB_KEY_SIZE;
+    } else {
+        memcpy(info + n, peerPub, PUB_KEY_SIZE); n += PUB_KEY_SIZE;
+        memcpy(info + n, _selfPub, PUB_KEY_SIZE); n += PUB_KEY_SIZE;
+    }
+
+    const bool ok = hmac256(shared, sizeof(shared), info, n, key);
+    memset(shared, 0, sizeof(shared));
+    memset(info, 0, sizeof(info));
+    return ok;
+}
+
 bool V11GlobalBridge::deriveChannelKey(
     const uint8_t secret[PUB_KEY_SIZE],
     uint8_t key[32]) const {
@@ -1452,6 +1477,21 @@ bool V11GlobalBridge::channelStillConfigured(
         ChannelDetails cd{};
         if (_mesh->v27GetChannelByIndex((uint8_t)i, cd) &&
             memcmp(cd.channel.secret, secret, PUB_KEY_SIZE) == 0) return true;
+    }
+    return false;
+}
+
+bool V11GlobalBridge::channelForRoute(const char* route, ChannelDetails& out) const {
+    if (!_mesh || !route || strlen(route) != 32) return false;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        ChannelDetails cd{};
+        if (!_mesh->v27GetChannelByIndex((uint8_t)i, cd)) continue;
+        char candidate[33] = {};
+        if (routeHexForChannel(cd.channel.secret, candidate) &&
+            strcmp(candidate, route) == 0) {
+            out = cd;
+            return true;
+        }
     }
     return false;
 }
