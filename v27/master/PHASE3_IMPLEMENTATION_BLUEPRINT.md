@@ -24,6 +24,24 @@ Deliverables:
 
 No code until Wave 0 signed off.
 
+### Wave 0A — Existing-code quarantine and extraction
+Owners:
+- Architecture Master
+- Firmware Master
+- Security Master
+- Validation Master
+
+Actions:
+- keep v27-rc1 immutable as known-good reference;
+- keep v27-rc2-work explicitly experimental;
+- extract proven components only through reviewed patches;
+- do not merge RC2 wholesale;
+- add tests that older/P1 source trees remain byte-for-byte untouched by V27 work.
+
+Exit gate:
+- keep/rewrite matrix approved;
+- no hidden dependency on public broker or RC2 Wi-Fi assumptions.
+
 ### Wave 1 — Embedded foundations
 Owners:
 - Firmware Master
@@ -32,7 +50,10 @@ Owners:
 
 Implement:
 - V27 compile guards
-- Transport Orchestrator
+- Transport Orchestrator with GLOBAL-FIRST policy for V27 peers and RF-second/fallback semantics
+- capability registry / safe legacy detection
+- 128-bit logical message identity core
+- crash-safe bounded message journal
 - Internet health state separate from Wi-Fi link
 - deterministic Wi-Fi compatibility ladder
 - bounded retry/backoff
@@ -44,7 +65,7 @@ Exit gate:
 - P1 RF profile unchanged
 - no UI blocking
 
-### Wave 2 — Secure global transport
+### Wave 2 — Secure global transport + production relay contract
 Owners:
 - Security Master
 - Relay Master
@@ -55,15 +76,17 @@ Implement:
 - device authentication
 - short-lived credential lifecycle
 - opaque route authorization
-- fixed-size encrypted envelopes
-- no insecure fallback
+- fixed-size encrypted protocol-v3 envelopes
+- 128-bit opaque route capabilities
+- authenticated multi-region/failover relay endpoint contract
+- no insecure or anonymous production fallback
 
 Exit gate:
 - invalid certificate rejected
 - invalid credential rejected
 - RF continues during all failures
 
-### Wave 3 — Delivery & offline behavior
+### Wave 3 — Delivery, offline behavior & abuse resistance
 Owners:
 - Relay Master
 - Data Master
@@ -76,6 +99,10 @@ Implement:
 - TTL cleanup
 - idempotent replay
 - accurate UI state mapping
+- recipient-device delivery receipts
+- unknown-sender request/quarantine flow
+- device + relay rate limits and quotas
+- block/mute semantics independent of transport
 
 Exit gate:
 - no duplicates
@@ -100,7 +127,7 @@ Exit gate:
 - T-Deck requires no gateway-specific chat code
 - removing gateway simply causes RF/global failover
 
-### Wave 5 — Installer / product integration
+### Wave 5 — Secure lifecycle + installer / product integration
 Owners:
 - Installer Master
 - UX Master
@@ -110,7 +137,10 @@ Implement:
 - RC/full-flash artifacts
 - manifest
 - checksums
-- rollback
+- signed firmware verification
+- rollback-capable update path
+- anti-rollback production policy
+- separate network reset vs ownership reset
 - website installer
 - clear RC vs Stable labeling
 
@@ -149,6 +179,7 @@ Reference:
 - v27-master-design: design-only source of truth
 
 After design signoff:
+- v27-impl-wave0-extract
 - v27-impl-wave1
 - v27-impl-wave2
 - v27-impl-wave3
@@ -260,7 +291,17 @@ No Stable if:
 - UI freeze
 - reconnect storm
 
-## 9. Production backend gates
+## 9. Worldwide resilience gates
+
+Before Stable:
+- at least two independent relay failure domains or an equivalently tested automatic failover architecture;
+- one region/failure domain can disappear without losing local RF operation or corrupting message state;
+- device chooses healthy endpoint without user action;
+- ciphertext queues remain idempotent across failover;
+- no plaintext social graph is required for message routing;
+- relay health outages cannot trigger Wi-Fi reconnect storms.
+
+## 10. Production backend gates
 
 Before Stable:
 - authenticated relay
@@ -274,7 +315,7 @@ Before Stable:
 - abuse/rate limits
 - audit without plaintext
 
-## 10. Release ladder
+## 11. Release ladder
 
 1. Design Approved
 2. Engineering Dev
@@ -289,7 +330,7 @@ Before Stable:
 
 V26/RC1 remain rollback until step 10.
 
-## 11. Definition of "fully functional"
+## 12. Definition of "fully functional"
 
 V27 may only be called fully functional when:
 - ordinary user needs no transport configuration;
@@ -301,7 +342,10 @@ V27 may only be called fully functional when:
 - P1 V8 bidirectional tests pass;
 - no duplicate visible messages;
 - delivery state is accurate;
-- verified production relay is live;
+- verified authenticated production relay with failover is live;
+- opportunistic open Wi-Fi sandbox passes malicious/invalid-TLS tests;
+- signed update + rollback recovery is validated;
+- crash/reboot duplicate suppression is validated;
 - hardware soak passes;
 - installer and rollback are validated.
 
