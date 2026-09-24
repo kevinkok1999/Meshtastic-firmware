@@ -29,10 +29,11 @@ def main() -> None:
     pio_path = root / "platformio.ini"
     main_path = root / "src/main.cpp"
     mesh_path = root / "src/MyMesh.cpp"
+    mesh_h_path = root / "src/MyMesh.h"
     bridge_h = root / "src/helpers/esp32/V11GlobalBridge.h"
     bridge_cpp = root / "src/helpers/esp32/V11GlobalBridge.cpp"
 
-    for p in (pio_path, main_path, mesh_path, bridge_h, bridge_cpp):
+    for p in (pio_path, main_path, mesh_path, mesh_h_path, bridge_h, bridge_cpp):
         if not p.exists():
             fail("missing " + str(p))
 
@@ -71,6 +72,10 @@ def main() -> None:
     ):
         if marker not in tdeck:
             fail("P1 Pro V8 compatibility marker missing " + marker)
+
+    mesh_h_text = mesh_h_path.read_text()
+    if "#define LORA_CR 5" not in mesh_h_text:
+        fail("P1 Pro V8 compatibility marker missing #define LORA_CR 5")
 
     # Existing hybrid DM behavior is intentionally retained while the V27
     # privacy transport replaces its network side in later patch stages.
