@@ -13,7 +13,7 @@ V27 MUST remain interoperable with the existing MeshOffGridNL P1 Pro V8 V19 BLE 
 - Frequency: 869.618 MHz
 - Bandwidth: 62.5 kHz
 - Spreading factor: SF8
-- Coding rate: CR5
+- Coding rate: CR5 (explicitly guarded against the pinned WadaMesh `#define LORA_CR 5`)
 - TX power default: 22 dBm
 - TX power ceiling: 22 dBm
 
