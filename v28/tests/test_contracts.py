@@ -78,8 +78,14 @@ def main() -> None:
         die("V28 GCM nonce must use bytes 30..41 consistently")
     if "wire + 22, 12" in bridge_cpp:
         die("V28 must not reuse unlinkability padding as GCM nonce")
-    if "return enqueue(recipient.id.pub_key, timestamp, text);" not in bridge_cpp:
-        die("V28 Internet route 2 must remain queued/non-blocking after RF")
+    if "mirrorDM(recipient, timestamp, text, true)" not in mesh:
+        die("RF failure must not suppress the independent Internet route")
+    if "WiFi.status() != WL_CONNECTED" not in bridge_cpp or "Route 2 is independent" not in bridge_cpp:
+        die("Internet route must require usable Wi-Fi before queue acceptance")
+    if "return queued && connected();" not in bridge_cpp:
+        die("queued Internet work must not be reported as delivered without recent relay health")
+    if "result == MSG_SEND_FAILED && v11_global_ok &&" not in mesh or "v11_global_bridge.connected()" not in mesh:
+        die("RF-failed send may report Internet success only with healthy relay")
 
 
     # Professional shell / no dead ends.
