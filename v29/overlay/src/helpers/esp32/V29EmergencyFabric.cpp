@@ -346,6 +346,47 @@ bool V29EmergencyFabric::sendHelpRequest(
                           body, sizeof(body));
 }
 
+uint8_t V29EmergencyFabric::emergencyContactCount() const {
+    if (!_mesh) return 0;
+    uint8_t count = 0;
+    const uint32_t total = _mesh->v27GetContactCount();
+    for (uint32_t i = 0; i < total; ++i) {
+        ContactInfo contact{};
+        if (!_mesh->v27GetContactByIndex(i, contact)) continue;
+        if (contact.type != ADV_TYPE_CHAT) continue;
+        if ((contact.flags & 0x01U) == 0) continue; // existing Favorite bit
+        if (count < 0xff) ++count;
+    }
+    return count;
+}
+
+uint8_t V29EmergencyFabric::sendCheckInToEmergencyContacts(CheckInState state) {
+    if (!_mesh) return 0;
+    uint8_t sent = 0;
+    const uint32_t total = _mesh->v27GetContactCount();
+    for (uint32_t i = 0; i < total; ++i) {
+        ContactInfo contact{};
+        if (!_mesh->v27GetContactByIndex(i, contact)) continue;
+        if (contact.type != ADV_TYPE_CHAT || (contact.flags & 0x01U) == 0) continue;
+        if (sendCheckIn(contact.id.pub_key, state) && sent < 0xff) ++sent;
+    }
+    return sent;
+}
+
+uint8_t V29EmergencyFabric::sendHelpToEmergencyContacts(uint8_t helpType,
+                                                         uint8_t severity) {
+    if (!_mesh) return 0;
+    uint8_t sent = 0;
+    const uint32_t total = _mesh->v27GetContactCount();
+    for (uint32_t i = 0; i < total; ++i) {
+        ContactInfo contact{};
+        if (!_mesh->v27GetContactByIndex(i, contact)) continue;
+        if (contact.type != ADV_TYPE_CHAT || (contact.flags & 0x01U) == 0) continue;
+        if (sendHelpRequest(contact.id.pub_key, helpType, severity) && sent < 0xff) ++sent;
+    }
+    return sent;
+}
+
 int V29EmergencyFabric::findRecordById(const uint8_t id[ID_LEN]) const {
     if (!_records || !id) return -1;
     for (uint16_t i = 0; i < _capacity; ++i) {
