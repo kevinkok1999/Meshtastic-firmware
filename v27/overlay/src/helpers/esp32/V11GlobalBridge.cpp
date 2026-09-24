@@ -89,15 +89,7 @@ bool V11GlobalBridge::connectNow() {
         return false;
     }
 
-    if (!subscribeContacts() || !subscribeChannels()) {
-        _mqtt.disconnect();
-        _nextConnectAt = millis() + _retryDelayMs + (esp_random() % 1200U);
-        return false;
-    }
-
-    _contactFingerprint = contactFingerprint();
-    _channelFingerprint = channelFingerprint();
-    _lastConfigCheckMs = millis();
+    resetSubscriptions();
     _retryDelayMs = RETRY_MIN_MS;
     _nextConnectAt = 0;
     Serial.println("[V27] Global transport connected");
@@ -111,6 +103,7 @@ void V11GlobalBridge::loop() {
     if (!wifiUp) {
         _wifiWasConnected = false;
         if (_mqtt.connected()) _mqtt.disconnect();
+        resetSubscriptions();
         return;
     }
 
@@ -140,6 +133,18 @@ void V11GlobalBridge::loop() {
         return;
     }
 
+    // Contact/channel tables belong to the main firmware task. Build MQTT
+    // subscriptions here one at a time rather than reading those tables from
+    // the background connect task.
+    if (!_subscriptionsReady) {
+        if (!subscribeStep()) {
+            _mqtt.disconnect();
+            _nextConnectAt = millis() + RETRY_MIN_MS;
+            return;
+        }
+        if (!_subscriptionsReady) return;
+    }
+
     const uint32_t now = millis();
     if ((uint32_t)(now - _lastConfigCheckMs) >= 30000UL) {
         _lastConfigCheckMs = now;
@@ -151,6 +156,7 @@ void V11GlobalBridge::loop() {
             _contactFingerprint = contactFp;
             _channelFingerprint = channelFp;
             _mqtt.disconnect();
+            resetSubscriptions();
             _nextConnectAt = 0;
             return;
         }
@@ -593,16 +599,45 @@ bool V11GlobalBridge::publishChannelNow(const uint8_t secret[PUB_KEY_SIZE],
     return topic[0] && _mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false);
 }
 
-bool V11GlobalBridge::subscribeContacts() {
+void V11GlobalBridge::resetSubscriptions() {
+    _subscriptionsReady = false;
+    _subContactIdx = 0;
+    _subChannelIdx = 0;
+    _contactFingerprint = 0;
+    _channelFingerprint = 0;
+    _lastConfigCheckMs = 0;
+}
+
+bool V11GlobalBridge::subscribeStep() {
     if (!_mesh || !_mqtt.connected()) return false;
-    const uint32_t count = _mesh->v27GetContactCount();
-    for (uint32_t i = 0; i < count; ++i) {
+
+    const uint32_t contactCount = _mesh->v27GetContactCount();
+    while (_subContactIdx < contactCount) {
         ContactInfo contact{};
-        if (!_mesh->v27GetContactByIndex(i, contact) || contact.type != ADV_TYPE_CHAT) continue;
+        const uint32_t idx = _subContactIdx++;
+        if (!_mesh->v27GetContactByIndex(idx, contact) || contact.type != ADV_TYPE_CHAT) continue;
+
         char topic[80] = {};
         routeTopicFor(contact.id.pub_key, topic, sizeof(topic));
-        if (!topic[0] || !_mqtt.subscribe(topic, 1)) return false;
+        if (!topic[0]) continue;
+        return _mqtt.subscribe(topic, 1);
     }
+
+    while (_subChannelIdx < MAX_GROUP_CHANNELS) {
+        ChannelDetails cd{};
+        const uint8_t idx = _subChannelIdx++;
+        if (!_mesh->v27GetChannelByIndex(idx, cd)) continue;
+
+        char topic[64] = {};
+        routeTopicForChannel(cd.channel.secret, topic, sizeof(topic));
+        if (!topic[0]) continue;
+        return _mqtt.subscribe(topic, 1);
+    }
+
+    _contactFingerprint = contactFingerprint();
+    _channelFingerprint = channelFingerprint();
+    _lastConfigCheckMs = millis();
+    _subscriptionsReady = true;
     return true;
 }
 
@@ -635,18 +670,6 @@ bool V11GlobalBridge::findContactForTopic(const char* topic, ContactInfo& out) c
         }
     }
     return false;
-}
-
-bool V11GlobalBridge::subscribeChannels() {
-    if (!_mesh || !_mqtt.connected()) return false;
-    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
-        ChannelDetails cd{};
-        if (!_mesh->v27GetChannelByIndex((uint8_t)i, cd)) continue;
-        char topic[64] = {};
-        routeTopicForChannel(cd.channel.secret, topic, sizeof(topic));
-        if (!topic[0] || !_mqtt.subscribe(topic, 1)) return false;
-    }
-    return true;
 }
 
 uint32_t V11GlobalBridge::channelFingerprint() const {
