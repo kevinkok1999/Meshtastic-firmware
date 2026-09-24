@@ -4,6 +4,7 @@
 #include "../../MyMesh.h"
 #include <WiFi.h>
 #include <Utils.h>
+#include <Identity.h>
 #include <esp_random.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/md.h>
@@ -534,12 +535,37 @@ bool V11GlobalBridge::publishChannelNow(const uint8_t secret[PUB_KEY_SIZE],
     esp_fill_random(wire + 14, 8);
     esp_fill_random(wire + 22, 12);
 
+    // Sign the logical group post with the device's existing Ed25519
+    // identity. The public key and signature are encrypted below, so the relay
+    // does not learn the sender identity.
+    uint8_t signData[192] = {};
+    static const char signCtx[] = "MOG27-CH-SIGN";
+    size_t signLen = 0;
+    memcpy(signData + signLen, signCtx, sizeof(signCtx) - 1);
+    signLen += sizeof(signCtx) - 1;
+    memcpy(signData + signLen, msgId, sizeof(msgId));
+    signLen += sizeof(msgId);
+    memcpy(signData + signLen, &timestamp, 4);
+    signLen += 4;
+    signData[signLen++] = (uint8_t)(tlen & 0xff);
+    signData[signLen++] = (uint8_t)((tlen >> 8) & 0xff);
+    memcpy(signData + signLen, text, tlen);
+    signLen += tlen;
+
+    uint8_t signature[SIGNATURE_SIZE] = {};
+    _mesh->v27SignGlobal(signData, signLen, signature);
+
     uint8_t plain[PLAIN_LEN] = {};
     esp_fill_random(plain, sizeof(plain));
-    memcpy(plain, &timestamp, 4);
-    plain[4] = (uint8_t)(tlen & 0xff);
-    plain[5] = (uint8_t)((tlen >> 8) & 0xff);
-    memcpy(plain + 6, text, tlen);
+    memcpy(plain, _selfPub, 32);
+    memcpy(plain + 32, signature, SIGNATURE_SIZE);
+    memcpy(plain + 96, &timestamp, 4);
+    plain[100] = (uint8_t)(tlen & 0xff);
+    plain[101] = (uint8_t)((tlen >> 8) & 0xff);
+    memcpy(plain + 102, text, tlen);
+
+    memset(signature, 0, sizeof(signature));
+    memset(signData, 0, sizeof(signData));
 
     uint8_t key[32] = {};
     if (!deriveChannelKey(secret, key)) {
@@ -739,25 +765,54 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
             return;
         }
 
+        uint8_t senderPub[PUB_KEY_SIZE] = {};
+        uint8_t signature[SIGNATURE_SIZE] = {};
+        memcpy(senderPub, plain, PUB_KEY_SIZE);
+        memcpy(signature, plain + 32, SIGNATURE_SIZE);
+
         uint32_t timestamp = 0;
-        memcpy(&timestamp, plain, 4);
-        const uint16_t tlen = (uint16_t)plain[4] | ((uint16_t)plain[5] << 8);
+        memcpy(&timestamp, plain + 96, 4);
+        const uint16_t tlen = (uint16_t)plain[100] | ((uint16_t)plain[101] << 8);
         if (tlen == 0 || tlen > MAX_TEXT) {
             memset(plain, 0, sizeof(plain));
             return;
         }
 
         char text[MAX_TEXT + 1] = {};
-        memcpy(text, plain + 6, tlen);
+        memcpy(text, plain + 102, tlen);
         text[tlen] = '\0';
 
         uint8_t expectedId[8] = {};
-        const bool reject =
-            !channelMessageIdFor(channel.secret, timestamp, text, expectedId) ||
-            memcmp(expectedId, payload + 6, 8) != 0 ||
-            seenOrRemember(expectedId);
+        if (!channelMessageIdFor(channel.secret, timestamp, text, expectedId) ||
+            memcmp(expectedId, payload + 6, 8) != 0) {
+            memset(plain, 0, sizeof(plain));
+            memset(text, 0, sizeof(text));
+            return;
+        }
+
+        uint8_t signData[192] = {};
+        static const char signCtx[] = "MOG27-CH-SIGN";
+        size_t signLen = 0;
+        memcpy(signData + signLen, signCtx, sizeof(signCtx) - 1);
+        signLen += sizeof(signCtx) - 1;
+        memcpy(signData + signLen, expectedId, sizeof(expectedId));
+        signLen += sizeof(expectedId);
+        memcpy(signData + signLen, &timestamp, 4);
+        signLen += 4;
+        signData[signLen++] = (uint8_t)(tlen & 0xff);
+        signData[signLen++] = (uint8_t)((tlen >> 8) & 0xff);
+        memcpy(signData + signLen, text, tlen);
+        signLen += tlen;
+
+        mesh::Identity signer(senderPub);
+        const bool signatureOk = signer.verify(signature, signData, (int)signLen);
+        memset(signature, 0, sizeof(signature));
+        memset(signData, 0, sizeof(signData));
+        memset(senderPub, 0, sizeof(senderPub));
+
+        const bool duplicate = signatureOk ? seenOrRemember(expectedId) : true;
         memset(plain, 0, sizeof(plain));
-        if (reject) {
+        if (!signatureOk || duplicate) {
             memset(text, 0, sizeof(text));
             return;
         }
