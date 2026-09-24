@@ -3,6 +3,9 @@
 
 #include "RadioLibInterface.h"
 #include "configuration.h"
+#ifdef MESHOFFGRID_RF_INTELLIGENCE
+#include "RFIntelligence.h"
+#endif
 
 /**
  * \brief Adapter for SX126x radio family. Implements common logic for child classes.
@@ -90,6 +93,24 @@ template <class T> class SX126xInterface : public RadioLibInterface
 #endif
     /** Some boards require GPIO control of tx vs rx paths */
     void setTransmitEnable(bool txon);
+
+#ifdef MESHOFFGRID_RF_INTELLIGENCE
+    struct RFIntelligenceRuntime {
+        bool packetMetricsReady = false;
+        bool gainBoosted = false;
+        float rssiEwma = -120.0f;
+        float snrEwma = 0.0f;
+        uint32_t cadChecks = 0;
+        uint32_t cadBusy = 0;
+        uint32_t lastGood = 0;
+        uint32_t lastBad = 0;
+        uint8_t qualityScore = 0;
+    } rfIntel;
+
+    void rfRecordPacket(float rssi, float snr);
+    void rfRecordCad(bool busy);
+    bool rfChooseBoostedGain();
+#endif
 
     /** Program all modem parameters into the chip; returns the first RadioLib error, or RADIOLIB_ERR_NONE */
     int16_t programModemParams();
