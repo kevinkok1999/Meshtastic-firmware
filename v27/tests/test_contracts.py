@@ -89,6 +89,15 @@ def main() -> None:
         "PENDING_TTL_MS",
         "RETRY_MAX_MS = 60000",
         "_mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false)",
+        "mirrorChannelPacket",
+        "noteLoRaChannel",
+        "v27GetChannelByIndex",
+        "v27InjectGlobalChannel",
+        "MOG27-CH-KEY",
+        "MOG27-ID-CH",
+        "routeTopicForChannel",
+        "mesh::Utils::MACThenDecrypt",
+        "PENDING_CHANNEL_CAP = 8",
     ):
         if marker not in "\n".join((main_src, mesh_cpp, bridge_h, bridge_cpp)):
             die("global/off-grid compatibility marker missing " + marker)
@@ -117,7 +126,21 @@ def main() -> None:
     if 'broker=%s' in bridge_cpp:
         die("broker/route metadata must not be printed in normal V27 logs")
     if "return enqueue(recipient.id.pub_key, timestamp, text);" not in bridge_cpp:
-        die("zero-config offline global mirror queue missing")
+        die("zero-config offline global DM mirror queue missing")
+    if "return enqueueChannel(channel.secret, timestamp, text);" not in bridge_cpp:
+        die("zero-config offline global channel mirror queue missing")
+    if 'snprintf(out, outCap, "mog27/v2/r/%s", tag);' not in bridge_cpp:
+        die("DM/channel relay topics must share the opaque V27 routing namespace")
+    if 'snprintf(out, outCap, "mog27/v2/d/%s", tag);' in bridge_cpp:
+        die("legacy DM-labelled routing namespace leaks message class")
+    if "seenOrRemember(msgId);" not in bridge_cpp:
+        die("global channel self-echo suppression missing")
+    if "v11_global_bridge.noteLoRaChannel(channel, timestamp, text)" not in mesh_cpp:
+        die("RF/global channel dedup hook missing")
+    if "v11_global_bridge.mirrorChannelPacket(channel, pkt)" not in mesh_cpp:
+        die("shared channel send choke-point mirror missing")
+    if "memcpy(plain, secret" in bridge_cpp or "memcpy(wire, secret" in bridge_cpp:
+        die("channel secret must never be copied into relay payloads")
 
     prefs = (root / "src/helpers/esp32/TouchPrefsStore.cpp").read_text()
     # Low-level MQTT remains hidden from the normal user surface by default.
@@ -127,7 +150,7 @@ def main() -> None:
     if "c.boot_wifi_open    = 0" not in prefs:
         die("zero-config privacy requires open Wi-Fi auto-join OFF by default")
 
-    print("V27 contracts OK: V26 preserved, P1 Pro V8 preserved, hybrid chat preserved, zero-config privacy defaults preserved")
+    print("V27 contracts OK: V26 + P1 V8 preserved, zero-config global DM/channels, fixed-size Privacy Pro envelopes and cross-transport dedup preserved")
 
 if __name__ == "__main__":
     main()
