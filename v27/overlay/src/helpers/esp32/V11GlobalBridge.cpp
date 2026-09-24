@@ -49,7 +49,6 @@ void V11GlobalBridge::begin(MyMesh* mesh) {
     _started = true;
     s_instance = this;
     memcpy(_selfPub, _mesh->getSelfPubKey(), sizeof(_selfPub));
-    routeTopicFor(_selfPub, _dmTopic, sizeof(_dmTopic));
 
     _mqtt.setServer(V27_GLOBAL_BROKER, V27_GLOBAL_PORT);
     _mqtt.setKeepAlive(45);
@@ -89,14 +88,15 @@ bool V11GlobalBridge::connectNow() {
         return false;
     }
 
-    if (!_mqtt.subscribe(_dmTopic, 1) || !subscribeChannels()) {
+    if (!subscribeContacts() || !subscribeChannels()) {
         _mqtt.disconnect();
         _nextConnectAt = millis() + _retryDelayMs + (esp_random() % 1200U);
         return false;
     }
 
+    _contactFingerprint = contactFingerprint();
     _channelFingerprint = channelFingerprint();
-    _lastChannelCheckMs = millis();
+    _lastConfigCheckMs = millis();
     _retryDelayMs = RETRY_MIN_MS;
     _nextConnectAt = 0;
     Serial.println("[V27] Global transport connected");
@@ -140,13 +140,15 @@ void V11GlobalBridge::loop() {
     }
 
     const uint32_t now = millis();
-    if ((uint32_t)(now - _lastChannelCheckMs) >= 30000UL) {
-        _lastChannelCheckMs = now;
-        const uint32_t fp = channelFingerprint();
-        if (fp != _channelFingerprint) {
-            // Reconnect is the cleanest way to atomically drop subscriptions
-            // for deleted channels and subscribe newly-added ones.
-            _channelFingerprint = fp;
+    if ((uint32_t)(now - _lastConfigCheckMs) >= 30000UL) {
+        _lastConfigCheckMs = now;
+        const uint32_t contactFp = contactFingerprint();
+        const uint32_t channelFp = channelFingerprint();
+        if (contactFp != _contactFingerprint || channelFp != _channelFingerprint) {
+            // Reconnect atomically refreshes pair-wise DM routes and group
+            // subscriptions after contacts/channels are added, removed or changed.
+            _contactFingerprint = contactFp;
+            _channelFingerprint = channelFp;
             _mqtt.disconnect();
             _nextConnectAt = 0;
             return;
@@ -158,25 +160,30 @@ void V11GlobalBridge::loop() {
 }
 
 void V11GlobalBridge::routeTopicFor(const uint8_t pub[32], char* out, size_t outCap) const {
-    uint8_t input[64] = {};
-    static const char ctx[] = "MOG27-INBOX";
-    size_t n = 0;
-    memcpy(input + n, ctx, sizeof(ctx) - 1);
-    n += sizeof(ctx) - 1;
-    memcpy(input + n, pub, 32);
-    n += 32;
+    if (!pub || !out || outCap == 0) return;
 
-    uint8_t digest[32] = {};
-    if (!sha256(input, n, digest)) {
-        if (outCap) out[0] = '\0';
+    uint8_t pairKey[32] = {};
+    if (!deriveDmKey(pub, pairKey)) {
+        out[0] = '\0';
         return;
     }
 
-    char tag[17] = {};
-    for (int i = 0; i < 8; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
+    static const uint8_t ctx[] = "MOG27-DM-ROUTE";
+    uint8_t digest[32] = {};
+    if (!hmac256(pairKey, sizeof(pairKey), ctx, sizeof(ctx) - 1, digest)) {
+        out[0] = '\0';
+        memset(pairKey, 0, sizeof(pairKey));
+        return;
+    }
+
+    // 128-bit opaque route token: not derivable from a public key alone and
+    // identical at both peers because deriveDmKey() is pair-wise canonical.
+    char tag[33] = {};
+    for (int i = 0; i < 16; ++i) snprintf(tag + i * 2, 3, "%02x", digest[i]);
     snprintf(out, outCap, "mog27/v2/r/%s", tag);
+
     memset(digest, 0, sizeof(digest));
-    memset(input, 0, sizeof(input));
+    memset(pairKey, 0, sizeof(pairKey));
 }
 
 void V11GlobalBridge::routeTopicForChannel(const uint8_t secret[PUB_KEY_SIZE], char* out, size_t outCap) const {
@@ -465,7 +472,9 @@ bool V11GlobalBridge::publishDMNow(const uint8_t recipient[32],
     uint8_t msgId[8] = {};
     if (!messageIdFor(recipient, timestamp, text, msgId)) return false;
     memcpy(wire + 6, msgId, 8);
-    memcpy(wire + 14, _selfPub, 8);
+    // Pair-wise secret topic identifies the conversation to the two endpoints;
+    // keep the visible header unlinkable to the sender identity.
+    esp_fill_random(wire + 14, 8);
     esp_fill_random(wire + 22, 12);
 
     uint8_t plain[PLAIN_LEN] = {};
@@ -557,6 +566,50 @@ bool V11GlobalBridge::publishChannelNow(const uint8_t secret[PUB_KEY_SIZE],
     return topic[0] && _mqtt.publish(topic, wire, (unsigned int)MAX_WIRE, false);
 }
 
+bool V11GlobalBridge::subscribeContacts() {
+    if (!_mesh || !_mqtt.connected()) return false;
+    const uint32_t count = _mesh->v27GetContactCount();
+    for (uint32_t i = 0; i < count; ++i) {
+        ContactInfo contact{};
+        if (!_mesh->v27GetContactByIndex(i, contact) || contact.type != ADV_TYPE_CHAT) continue;
+        char topic[80] = {};
+        routeTopicFor(contact.id.pub_key, topic, sizeof(topic));
+        if (!topic[0] || !_mqtt.subscribe(topic, 1)) return false;
+    }
+    return true;
+}
+
+uint32_t V11GlobalBridge::contactFingerprint() const {
+    if (!_mesh) return 0;
+    uint32_t fp = 2166136261UL;
+    const uint32_t count = _mesh->v27GetContactCount();
+    for (uint32_t i = 0; i < count; ++i) {
+        ContactInfo contact{};
+        if (!_mesh->v27GetContactByIndex(i, contact) || contact.type != ADV_TYPE_CHAT) continue;
+        for (size_t j = 0; j < PUB_KEY_SIZE; ++j) {
+            fp ^= contact.id.pub_key[j];
+            fp *= 16777619UL;
+        }
+    }
+    return fp;
+}
+
+bool V11GlobalBridge::findContactForTopic(const char* topic, ContactInfo& out) const {
+    if (!_mesh || !topic) return false;
+    const uint32_t count = _mesh->v27GetContactCount();
+    for (uint32_t i = 0; i < count; ++i) {
+        ContactInfo contact{};
+        if (!_mesh->v27GetContactByIndex(i, contact) || contact.type != ADV_TYPE_CHAT) continue;
+        char candidate[80] = {};
+        routeTopicFor(contact.id.pub_key, candidate, sizeof(candidate));
+        if (candidate[0] && strcmp(candidate, topic) == 0) {
+            out = contact;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool V11GlobalBridge::subscribeChannels() {
     if (!_mesh || !_mqtt.connected()) return false;
     for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
@@ -610,10 +663,8 @@ void V11GlobalBridge::onMqtt(char* topic, uint8_t* payload, unsigned int len) {
         payload[4] != PROTOCOL_VERSION) return;
 
     if (payload[5] == KIND_DM) {
-        if (strcmp(topic, _dmTopic) != 0) return;
-
         ContactInfo contact{};
-        if (!_mesh->v27LookupChatContactByPrefix(payload + 14, contact)) return;
+        if (!findContactForTopic(topic, contact)) return;
 
         uint8_t key[32] = {};
         if (!deriveDmKey(contact.id.pub_key, key)) return;
