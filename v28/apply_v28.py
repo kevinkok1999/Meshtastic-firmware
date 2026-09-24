@@ -402,6 +402,113 @@ bool MyMesh::v28CalcSharedSecretAny(const uint8_t peerPub[32], uint8_t out[32]) 
         fail("V28 join modal anchor missing")
     ui = replace_once(ui, join_modal_sig, join_modal_v28, "V28 simple join modal")
 
+    approval_anchor = 'static void addChannelCreatePrivateCb(lv_event_t* e) {\n'
+    approval_code = '''#if defined(MESH_OFFGRIDNL_V28)
+static uint32_t s_v28_approve_invite = 0;
+static uint8_t s_v28_approve_requester[PUB_KEY_SIZE] = {};
+
+static void v28ApproveJoinApply() {
+  if (!s_v28_approve_invite) return;
+  if (!v11_global_bridge.decideJoinRequest(s_v28_approve_invite,
+                                            s_v28_approve_requester, true)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Could not queue approval"), 1600);
+  } else if (g_lv.task) {
+    g_lv.task->showAlert(TR("Approving securely..."), 1400);
+  }
+}
+
+static void v28ApproveJoinCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeAddChannelSheet();
+  if (!v11_global_bridge.refreshJoinRequests()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Could not check join requests"), 1600);
+  } else if (g_lv.task) {
+    g_lv.task->showAlert(TR("Checking join requests..."), 1200);
+  }
+}
+#endif
+
+''' + approval_anchor
+    if approval_anchor not in ui:
+        fail("V28 approval callback anchor missing")
+    ui = replace_once(ui, approval_anchor, approval_code, "V28 owner approval callbacks")
+
+    rows_old = '''  const int rows  = 4;
+  const int pad   = PSC(10);
+'''
+    rows_new = '''#if defined(MESH_OFFGRIDNL_V28)
+  const int rows  = 5;
+#else
+  const int rows  = 4;
+#endif
+  const int pad   = PSC(10);
+'''
+    if rows_old not in ui:
+        fail("V28 channel-sheet rows anchor missing")
+    ui = replace_once(ui, rows_old, rows_new, "V28 channel-sheet approvals row")
+
+    buttons_old = '''  mk(TR("Create a private channel"), addChannelCreatePrivateCb);
+  mk(TR("Join a private channel"), addChannelJoinPrivateCb);
+  mk(TR("Join the public channel"), addChannelJoinPublicCb);
+'''
+    buttons_new = '''  mk(TR("Create a private channel"), addChannelCreatePrivateCb);
+  mk(TR("Join a private channel"), addChannelJoinPrivateCb);
+#if defined(MESH_OFFGRIDNL_V28)
+  mk(TR("Approve join request"), v28ApproveJoinCb);
+#endif
+  mk(TR("Join the public channel"), addChannelJoinPublicCb);
+'''
+    if buttons_old not in ui:
+        fail("V28 channel-sheet buttons anchor missing")
+    ui = replace_once(ui, buttons_old, buttons_new, "V28 channel-sheet approval action")
+
+    event_anchor = '''  // Web mesh terminal: run any command the browser typed through the exact same dispatch
+'''
+    event_code = '''#if defined(MESH_OFFGRIDNL_V28)
+  {
+    V11GlobalBridge::UiEvent ev;
+    while (v11_global_bridge.takeUiEvent(ev)) {
+      if (ev.type == V11GlobalBridge::UI_INVITE_CREATED) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%s: %s", ev.channel[0] ? ev.channel : "Private", ev.code);
+        if (g_lv.task) g_lv.task->showAlert(msg, 4200);
+      } else if (ev.type == V11GlobalBridge::UI_JOIN_REQUESTED) {
+        if (g_lv.task) g_lv.task->showAlert(TR("Waiting for owner approval"), 1800);
+      } else if (ev.type == V11GlobalBridge::UI_JOIN_LIST_READY) {
+        V11GlobalBridge::JoinRequest jr{};
+        if (v11_global_bridge.joinRequestCount() > 0 &&
+            v11_global_bridge.getJoinRequest(0, jr)) {
+          s_v28_approve_invite = jr.inviteId;
+          memcpy(s_v28_approve_requester, jr.requester, PUB_KEY_SIZE);
+          char msg[120];
+          snprintf(msg, sizeof(msg), "Allow %02X%02X%02X... to join %s?",
+                   jr.requester[0], jr.requester[1], jr.requester[2],
+                   jr.channel[0] ? jr.channel : "private channel");
+          showConfirm(msg, TR("Approve"), v28ApproveJoinApply);
+        } else if (g_lv.task) {
+          g_lv.task->showAlert(TR("No pending join requests"), 1400);
+        }
+      } else if (ev.type == V11GlobalBridge::UI_JOIN_APPROVED) {
+        if (g_lv.task) g_lv.task->showAlert(ev.message, 1500);
+      } else if (ev.type == V11GlobalBridge::UI_JOINED) {
+        if (g_lv.task) {
+          g_lv.task->refreshThreadsFromMesh();
+          g_lv.dirty_threads = true;
+          g_lv.task->showAlert(TR("Private channel joined"), 1800);
+        }
+      } else if (ev.type == V11GlobalBridge::UI_JOIN_DENIED ||
+                 ev.type == V11GlobalBridge::UI_ERROR) {
+        if (g_lv.task) g_lv.task->showAlert(ev.message[0] ? ev.message : "V28 join error", 2200);
+      }
+    }
+  }
+#endif
+  // Web mesh terminal: run any command the browser typed through the exact same dispatch
+'''
+    if event_anchor not in ui:
+        fail("V28 bridge event loop anchor missing")
+    ui = replace_once(ui, event_anchor, event_code, "V28 native invite events")
+
     # V28 UX changes presentation/navigation only. Native message format,
     # storage and chat behavior remain unchanged; the only MyMesh difference
     # allowed by V28 is RF-first / Internet-second route ordering.
