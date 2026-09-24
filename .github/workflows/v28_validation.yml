@@ -2,8 +2,11 @@ name: V28 Master Validation
 
 on:
   push:
-    branches: [v28-implementation, v28-release-candidate]
+    branches:
+      - v28-implementation
+      - v28-release-candidate
     paths:
+      - "v28/release-trigger.txt"
       - "v28/**"
       - ".github/workflows/v28_validation.yml"
   workflow_dispatch:
@@ -16,62 +19,123 @@ permissions:
   contents: write
 
 jobs:
-  validate:
+  validate-v28:
+    name: V19/V26/P1 + V27 base + V28 build
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 55
     steps:
-      - uses: actions/checkout@v7
-        with: {fetch-depth: 1}
-      - uses: actions/setup-python@v7.0.0
-        with: {python-version: "3.12"}
-      - name: Fetch pinned WadaMesh
+      - name: Checkout firmware workspace
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch pinned WadaMesh beta_83
+        shell: bash
         run: |
+          set -euo pipefail
+          rm -rf upstream-wadamesh
           git clone --depth 1 --branch beta_83 https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
           cd upstream-wadamesh
           test "$(git rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
-      - name: Apply V11-V28 + contracts
+
+      - name: Apply V11 through V28 and run contracts
+        shell: bash
         run: |
           set -euo pipefail
-          for v in 11 12 13 15 16 17 18 19 26 27; do
-            python v$v/apply_v$v.py upstream-wadamesh
-            python v$v/tests/test_contracts.py upstream-wadamesh
-          done
+          python v11/apply_v11.py upstream-wadamesh
+          python v11/tests/test_contracts.py upstream-wadamesh
+          python v12/apply_v12.py upstream-wadamesh
+          python v12/tests/test_contracts.py upstream-wadamesh
+          python v13/apply_v13.py upstream-wadamesh
+          python v13/tests/test_contracts.py upstream-wadamesh
+          python v15/apply_v15.py upstream-wadamesh
+          python v15/tests/test_contracts.py upstream-wadamesh
+          python v16/apply_v16.py upstream-wadamesh
+          python v16/tests/test_contracts.py upstream-wadamesh
+          python v17/apply_v17.py upstream-wadamesh
+          python v17/tests/test_contracts.py upstream-wadamesh
+          python v18/apply_v18.py upstream-wadamesh
+          python v18/tests/test_contracts.py upstream-wadamesh
+          python v19/apply_v19.py upstream-wadamesh
+          python v19/tests/test_contracts.py upstream-wadamesh
+          python v26/apply_v26.py upstream-wadamesh
+          python v26/tests/test_contracts.py upstream-wadamesh
+          python v27/apply_v27.py upstream-wadamesh
+          python v27/tests/test_contracts.py upstream-wadamesh
           python v28/apply_v28.py upstream-wadamesh
           python v28/tests/test_contracts.py upstream-wadamesh
-      - name: P1 V8 immutable contract
+
+      - name: Verify pinned P1 Pro V8 contract
+        shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
-          import json,urllib.request
-          u="https://raw.githubusercontent.com/kevinkok1999/Meshtastic-firmware/c2d99ac83d702de0f9e8cb66e0f9bff2cb283360/p1pro-v8/profile.json"
-          p=json.load(urllib.request.urlopen(u,timeout=20)); r=p["radioProfile"]
-          assert (r["frequencyMHz"],r["bandwidthKHz"],r["spreadingFactor"],r["codingRate"],r["txPowerMaxDbm"])==(869.618,62.5,8,5,22)
-          assert r["locked"] is True
-          print("P1 V8 immutable contract PASS")
+          import json, urllib.request
+          url="https://raw.githubusercontent.com/kevinkok1999/Meshtastic-firmware/c2d99ac83d702de0f9e8cb66e0f9bff2cb283360/p1pro-v8/profile.json"
+          with urllib.request.urlopen(url, timeout=20) as r:
+              profile=json.load(r)
+          rf=profile["radioProfile"]
+          assert rf["frequencyMHz"] == 869.618
+          assert rf["bandwidthKHz"] == 62.5
+          assert rf["spreadingFactor"] == 8
+          assert rf["codingRate"] == 5
+          assert rf["txPowerMaxDbm"] == 22
+          assert rf["locked"] is True
+          print("P1 Pro V8 pinned reference contract OK")
           PY
+
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip
           pip install -U --no-build-isolation --no-cache-dir "setuptools<72"
           pip install -U platformio --no-build-isolation
-      - name: Build V28 T-Deck Plus
+
+      - name: Build V28 T-Deck / T-Deck Plus
         env:
           PLATFORMIO_BUILD_FLAGS: >-
             -DFIRMWARE_RELEASE_TAG='"mog-v28.0.0-rc1"'
             -DFIRMWARE_VERSION='"MeshOffGridNL V28 RF-First RC1"'
+        shell: bash
         run: |
+          set -euo pipefail
           cd upstream-wadamesh
           pio run -e LilyGo_TDeck_companion_radio_touch -t mergebin
-      - name: Verify artifacts
+
+      - name: Verify V28 artifacts
+        shell: bash
         run: |
-          B=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
-          test -f "$B/firmware.bin"
-          test -f "$B/firmware-merged.bin"
+          set -euo pipefail
+          BUILD_DIR=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          test -f "$BUILD_DIR/firmware.bin"
+          test -f "$BUILD_DIR/firmware-merged.bin"
           mkdir -p dist
-          cp "$B/firmware.bin" dist/MeshOffGridNL-V28-TDeck-Plus-RC1.bin
-          cp "$B/firmware-merged.bin" dist/MeshOffGridNL-V28-TDeck-Plus-RC1-merged.bin
+          cp "$BUILD_DIR/firmware.bin" dist/MeshOffGridNL-V28-TDeck-Plus-RC1.bin
+          cp "$BUILD_DIR/firmware-merged.bin" dist/MeshOffGridNL-V28-TDeck-Plus-RC1-merged.bin
           sha256sum dist/*
-      - uses: actions/upload-artifact@v7
+
+      - name: Upload validation artifact
+        uses: actions/upload-artifact@v7
         with:
           name: MeshOffGridNL-V28-TDeck-Plus-RC1-validation
           path: dist/*
           retention-days: 30
+
+      - name: Publish V28 RC1 prerelease
+        if: github.ref == 'refs/heads/v28-release-candidate'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="mesh-v28.0.0-rc1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/MeshOffGridNL-V28-TDeck-Plus-RC1.bin dist/MeshOffGridNL-V28-TDeck-Plus-RC1-merged.bin --clobber
+          else
+            gh release create "$TAG"               dist/MeshOffGridNL-V28-TDeck-Plus-RC1.bin               dist/MeshOffGridNL-V28-TDeck-Plus-RC1-merged.bin               --target "$GITHUB_SHA"               --title "MeshOffGridNL V28 RC1"               --notes "V28 RC1: RF route 1, encrypted Internet route 2, professional T-Deck/browser UX, existing chat core preserved, P1 Pro V8 compatibility preserved."               --prerelease
+          fi
