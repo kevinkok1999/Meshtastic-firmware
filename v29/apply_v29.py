@@ -25,8 +25,9 @@ def main() -> None:
     mesh_h_path = root / "src/MyMesh.h"
     mesh_cpp_path = root / "src/MyMesh.cpp"
     main_path = root / "src/main.cpp"
+    ui_path = root / "src/ui-touch/UITask.cpp"
 
-    for p in (pio_path, mesh_h_path, mesh_cpp_path, main_path):
+    for p in (pio_path, mesh_h_path, mesh_cpp_path, main_path, ui_path):
         if not p.exists():
             fail("missing " + str(p))
 
@@ -177,11 +178,181 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
 
     main_path.write_text(main_cpp)
 
+    # Native V29 emergency UI: intentionally simple and human-readable.
+    # The heavy routing/crypto/storage logic stays inside V29EmergencyFabric.
+    ui = ui_path.read_text()
+
+    ui_include_old = '''#if defined(MESH_OFFGRIDNL_V28)
+#include "../helpers/esp32/V11GlobalBridge.h"
+#endif
+'''
+    ui_include_new = ui_include_old + '''#if defined(MESH_OFFGRIDNL_V29)
+#include "../helpers/esp32/V29EmergencyFabric.h"
+#endif
+'''
+    if "V29EmergencyFabric.h" not in ui:
+        ui = replace_once(ui, ui_include_old, ui_include_new, "V29 UI fabric include")
+
+    v28_cb_anchor = '''static void v28HomeSettingsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  goToTab(SETTINGS_TAB_INDEX);
+}
+#endif
+'''
+    v29_cb_code = v28_cb_anchor + r'''
+#if defined(MESH_OFFGRIDNL_V29) && defined(HAS_TDECK_GT911)
+static lv_obj_t* s_v29_emergency_overlay = nullptr;
+
+static void v29EmergencyCloseOverlay() {
+  if (!s_v29_emergency_overlay) return;
+  lv_obj_del(s_v29_emergency_overlay);
+  s_v29_emergency_overlay = nullptr;
+}
+
+static void v29EmergencyCloseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  v29EmergencyCloseOverlay();
+}
+
+static void v29EmergencySafeCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t n = v29_emergency_fabric.sendCheckInToEmergencyContacts(
+      V29EmergencyFabric::CheckInState::Safe);
+  if (g_lv.task) {
+    if (n) {
+      char msg[96];
+      snprintf(msg, sizeof(msg), "Veilig-melding bewaard/verzonden naar %u noodcontact%s",
+               (unsigned)n, n == 1 ? "" : "en");
+      g_lv.task->showAlert(msg, 2400);
+    } else {
+      g_lv.task->showAlert("Geen noodcontacten ingesteld. Markeer eerst een contact als favoriet.", 3200);
+    }
+  }
+}
+
+static void v29EmergencyHelpCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t n = v29_emergency_fabric.sendHelpToEmergencyContacts(0, 2);
+  if (g_lv.task) {
+    if (n) {
+      g_lv.task->showAlert("Lokale mesh-hulpvraag bewaard/verzonden. 112 is niet automatisch gebeld.", 4200);
+    } else {
+      g_lv.task->showAlert("Geen noodcontacten ingesteld. 112 is niet automatisch gebeld.", 4200);
+    }
+  }
+}
+
+static void v29EmergencyMessageCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  v29EmergencyCloseOverlay();
+  goToTab(CHAT_INBOX_TAB_INDEX);
+}
+
+static void v29EmergencyInfoCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (g_lv.task) {
+    g_lv.task->showAlert(
+      "Noodinformatie: controleer directe veiligheid. Gebruik 112 als telefonie werkt en volg officiële informatie zodra beschikbaar.",
+      5200);
+  }
+}
+
+static void v29EmergencyFamilyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  v29EmergencyCloseOverlay();
+  goToTab(CONTACTS_TAB_INDEX);
+  if (g_lv.task) g_lv.task->showAlert("Favorieten zijn je V29-noodcontacten.", 2400);
+}
+
+static void v29EmergencyStatusCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const auto st = v29_emergency_fabric.memoryStats();
+  const uint8_t contacts = v29_emergency_fabric.emergencyContactCount();
+  char msg[160];
+  snprintf(msg, sizeof(msg),
+           "Lokaal noodnetwerk actief - %u noodcontact%s - %u bericht%s bewaard",
+           (unsigned)contacts, contacts == 1 ? "" : "en",
+           (unsigned)st.queueUsed, st.queueUsed == 1 ? "" : "en");
+  if (g_lv.task) g_lv.task->showAlert(msg, 3600);
+}
+
+static lv_obj_t* v29EmergencyButton(lv_obj_t* parent, const char* text,
+                                    lv_coord_t x, lv_coord_t y,
+                                    lv_event_cb_t cb) {
+  lv_obj_t* b = lv_btn_create(parent);
+  lv_obj_set_size(b, 142, 46);
+  lv_obj_set_pos(b, x, y);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* l = lv_label_create(b);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(l, 126);
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(l, text);
+  lv_obj_center(l);
+  return b;
+}
+
+static void v29EmergencyHomeCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_v29_emergency_overlay) return;
+
+  v29_emergency_fabric.setEmergencyMode(true);
+  s_v29_emergency_overlay = lv_obj_create(lv_scr_act());
+  lv_obj_set_size(s_v29_emergency_overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_pos(s_v29_emergency_overlay, 0, 0);
+  lv_obj_clear_flag(s_v29_emergency_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = lv_label_create(s_v29_emergency_overlay);
+  lv_label_set_text(title, "NOODMODUS");
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_pos(title, 12, 10);
+
+  lv_obj_t* sub = lv_label_create(s_v29_emergency_overlay);
+  lv_label_set_text(sub, "Werkt lokaal zonder internet");
+  lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(sub, 12, 30);
+
+  lv_obj_t* close = lv_btn_create(s_v29_emergency_overlay);
+  lv_obj_set_size(close, 52, 30);
+  lv_obj_set_pos(close, 252, 8);
+  lv_obj_add_event_cb(close, v29EmergencyCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* closeLabel = lv_label_create(close);
+  lv_label_set_text(closeLabel, "Sluiten");
+  lv_obj_center(closeLabel);
+
+  v29EmergencyButton(s_v29_emergency_overlay, "Ik ben veilig",       8,  52, v29EmergencySafeCb);
+  v29EmergencyButton(s_v29_emergency_overlay, "Ik heb hulp nodig", 164,  52, v29EmergencyHelpCb);
+  v29EmergencyButton(s_v29_emergency_overlay, "Stuur bericht",       8, 106, v29EmergencyMessageCb);
+  v29EmergencyButton(s_v29_emergency_overlay, "Noodinformatie",    164, 106, v29EmergencyInfoCb);
+  v29EmergencyButton(s_v29_emergency_overlay, "Gezin / contacten",   8, 160, v29EmergencyFamilyCb);
+  v29EmergencyButton(s_v29_emergency_overlay, "Netwerkstatus",     164, 160, v29EmergencyStatusCb);
+}
+#endif
+'''
+    if "v29EmergencyHomeCb" not in ui:
+        ui = replace_once(ui, v28_cb_anchor, v29_cb_code, "V29 emergency callbacks")
+
+    home_anchor = '''    s_home_nav_right[HOME_NAV_TERMINAL] =
+        make_launcher(TR(LV_SYMBOL_ENVELOPE "  Chats"), tdBtnY(1), v28HomeChatsCb, 0, td_btn_h);
+'''
+    home_new = '''#if defined(MESH_OFFGRIDNL_V29)
+    s_home_nav_right[HOME_NAV_TERMINAL] =
+        make_launcher(TR("Noodmodus"), tdBtnY(1), v29EmergencyHomeCb, 0, td_btn_h);
+#else
+''' + home_anchor + '''#endif
+'''
+    if 'make_launcher(TR("Noodmodus")' not in ui:
+        ui = replace_once(ui, home_anchor, home_new, "V29 Home emergency entry")
+
+    ui_path.write_text(ui)
+
     joined = "\n".join((
         pio_path.read_text(),
         mesh_h_path.read_text(),
         mesh_cpp_path.read_text(),
         main_path.read_text(),
+        ui_path.read_text(),
         (root / "src/helpers/esp32/V29EmergencyFabric.h").read_text(),
         (root / "src/helpers/esp32/V29EmergencyFabric.cpp").read_text(),
     ))
@@ -194,6 +365,10 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
         "v29_emergency_fabric.onRawFrame",
         "v29_emergency_fabric.begin(&the_mesh)",
         "v29_emergency_fabric.loop()",
+        "v29EmergencyHomeCb",
+        "Ik ben veilig",
+        "Ik heb hulp nodig",
+        "112 is niet automatisch gebeld",
         "MOG29-DIRECT-V1",
         "v29q0.bin",
         "v29q1.bin",
