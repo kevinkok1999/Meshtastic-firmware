@@ -133,6 +133,8 @@ def main() -> None:
     # V28 UX changes presentation/navigation only. Native message format,
     # storage and chat behavior remain unchanged; the only MyMesh difference
     # allowed by V28 is RF-first / Internet-second route ordering.
+    ui = ui_path.read_text()
+
     cb_anchor = """static void homeUnreadClickedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   goToTab(CHAT_INBOX_TAB_INDEX);
