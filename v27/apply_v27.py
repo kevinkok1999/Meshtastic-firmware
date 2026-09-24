@@ -150,32 +150,32 @@ def main() -> None:
     return;
   }
 
-  wifi_config_t cfg = {};
-  strlcpy(reinterpret_cast<char*>(cfg.sta.ssid), ssid, sizeof(cfg.sta.ssid));
+  wifi_config_t v27_cfg = {};
+  strlcpy(reinterpret_cast<char*>(v27_cfg.sta.ssid), ssid, sizeof(v27_cfg.sta.ssid));
   if (v27_pwd)
-    strlcpy(reinterpret_cast<char*>(cfg.sta.password), v27_pwd, sizeof(cfg.sta.password));
-  cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
-  cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-  cfg.sta.bssid_set = false;
-  cfg.sta.channel = 0;
-  cfg.sta.threshold.rssi = -127;
-  cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
-  cfg.sta.failure_retry_cnt = profile == 4 ? 4 : 3;
+    strlcpy(reinterpret_cast<char*>(v27_cfg.sta.password), v27_pwd, sizeof(v27_cfg.sta.password));
+  v27_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  v27_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+  v27_cfg.sta.bssid_set = false;
+  v27_cfg.sta.channel = 0;
+  v27_cfg.sta.threshold.rssi = -127;
+  v27_cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+  v27_cfg.sta.failure_retry_cnt = profile == 4 ? 4 : 3;
 
   if (profile == 2) {
     // Modern mixed WPA2/WPA3 routers/hotspots. PMF is advertised but optional;
     // WPA3 APs can still require it. Both SAE element methods are accepted.
-    cfg.sta.pmf_cfg.capable = true;
-    cfg.sta.pmf_cfg.required = false;
-    cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    v27_cfg.sta.pmf_cfg.capable = true;
+    v27_cfg.sta.pmf_cfg.required = false;
+    v27_cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     Serial.printf("[V27][wifi] profile=2 modern-transition ssid='%s' reason=%u\\n",
                   ssid, (unsigned)g_wifi_last_disc_reason);
   } else if (profile == 3) {
     // Older/quirky 2.4-GHz routers. Only this explicit fallback lowers the
     // auth threshold to WPA so modern profiles never silently weaken security.
-    cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
-    cfg.sta.pmf_cfg.capable = false;
-    cfg.sta.pmf_cfg.required = false;
+    v27_cfg.sta.threshold.authmode = v27_pwd ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+    v27_cfg.sta.pmf_cfg.capable = false;
+    v27_cfg.sta.pmf_cfg.required = false;
     esp_wifi_set_protocol(WIFI_IF_STA,
         WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
     esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
@@ -186,20 +186,20 @@ def main() -> None:
     // operation for the final rescue attempt; this also covers hidden SSIDs on
     // channels 12/13 that world-safe passive scanning can miss.
     esp_wifi_set_country_code("NL", false);
-    cfg.sta.pmf_cfg.capable = true;
-    cfg.sta.pmf_cfg.required = false;
-    cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    v27_cfg.sta.pmf_cfg.capable = true;
+    v27_cfg.sta.pmf_cfg.required = false;
+    v27_cfg.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
 
     int32_t hint_channel = 0;
     uint8_t hint_bssid[6] = {};
-    wifi_auth_mode_t hint_auth = WIFI_AUTH_OPEN;
+    uint8_t hint_auth = 0;
     const bool have_hint =
         wifiConfigGetApHint(ssid, &hint_channel, hint_bssid, &hint_auth) &&
         hint_channel >= 1 && hint_channel <= 13;
     if (have_hint) {
-      cfg.sta.bssid_set = true;
-      cfg.sta.channel = (uint8_t)hint_channel;
-      memcpy(cfg.sta.bssid, hint_bssid, sizeof(hint_bssid));
+      v27_cfg.sta.bssid_set = true;
+      v27_cfg.sta.channel = (uint8_t)hint_channel;
+      memcpy(v27_cfg.sta.bssid, hint_bssid, sizeof(hint_bssid));
     }
     esp_wifi_set_protocol(WIFI_IF_STA,
         WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
@@ -211,7 +211,7 @@ def main() -> None:
     wifiConfigClearApHint();
   }
 
-  const esp_err_t cfg_rc = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+  const esp_err_t cfg_rc = esp_wifi_set_config(WIFI_IF_STA, &v27_cfg);
   const esp_err_t con_rc = (cfg_rc == ESP_OK) ? esp_wifi_connect() : cfg_rc;
   Serial.printf("[V27][wifi] profile=%u cfg=%d connect=%d\\n",
                 (unsigned)profile, (int)cfg_rc, (int)con_rc);
