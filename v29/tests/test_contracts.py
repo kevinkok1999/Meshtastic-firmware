@@ -19,6 +19,8 @@ def main() -> None:
     ui = (root / "src/ui-touch/UITask.cpp").read_text()
     h = (root / "src/helpers/esp32/V29EmergencyFabric.h").read_text()
     cpp = (root / "src/helpers/esp32/V29EmergencyFabric.cpp").read_text()
+    portal_h = (root / "src/helpers/esp32/V29EmergencyPortal.h").read_text()
+    portal_cpp = (root / "src/helpers/esp32/V29EmergencyPortal.cpp").read_text()
 
     for flag in (
         "MESH_OFFGRIDNL_V29=1",
@@ -38,6 +40,8 @@ def main() -> None:
         "DEFAULT_MAX_CARRY = 4",
         "LOCAL_FORWARD_LIMIT = 3",
         "CheckInState",
+        "PowerMode",
+        "setPowerMode",
         "sendCheckIn",
         "sendHelpRequest",
         "takeEvent",
@@ -63,6 +67,8 @@ def main() -> None:
         "snapshotValid",
         "flushSnapshot",
         "remaining <= maxCarry",
+        "PowerMode::Critical",
+        "PowerMode::Emergency",
     ):
         if marker not in cpp:
             die("fabric implementation marker missing " + marker)
@@ -102,6 +108,8 @@ def main() -> None:
         "Netwerkstatus",
         "112 is niet automatisch gebeld",
         "Werkt lokaal zonder internet",
+        "Telefoon verbinden",
+        "v29PortalStartApply",
         "Noodcontact meldt: ik ben veilig",
         "Hulpvraag ontvangen via lokaal netwerk",
         "v29_emergency_fabric.takeEvent",
@@ -113,6 +121,32 @@ def main() -> None:
     for forbidden in ("RSSI", "SNR", "spreading factor", "hop count", "channel key"):
         if forbidden.lower() in primary_ui.lower():
             die("technical jargon leaked into primary emergency UI: " + forbidden)
+
+    for marker in (
+        "WiFi.softAP",
+        "DNSServer",
+        "SESSION_MAX_MS",
+        "IDLE_STOP_MS",
+        "MeshOffGridNL-",
+        "112 is niet automatisch gebeld",
+        "sendCheckInToEmergencyContacts",
+        "sendHelpToEmergencyContacts",
+    ):
+        if marker not in portal_h + "\n" + portal_cpp:
+            die("local emergency portal marker missing " + marker)
+
+    for forbidden in ("HTTPClient", "WiFiClientSecure", "V28_RELAY_URL", "PubSubClient"):
+        if forbidden in portal_h + "\n" + portal_cpp:
+            die("local emergency portal must not depend on Internet/cloud: " + forbidden)
+
+    for marker in (
+        "const bool v29_portal_active",
+        "wifiConfigWantsWifi() || v29_portal_active",
+        "wifi_state_machine_active && !v29_portal_active",
+        "wifi_started && !v29_portal_active",
+    ):
+        if marker not in main_cpp:
+            die("portal/main Wi-Fi ownership interlock missing " + marker)
 
     # V28/P1 foundations remain present and unchanged in intent.
     for marker in (
@@ -128,7 +162,7 @@ def main() -> None:
         if marker not in pio:
             die("inherited V28/P1 invariant missing " + marker)
 
-    print("V29 contracts OK: offline emergency core, signed E2E bundles, 80/20 memory governor, V28/P1 preserved")
+    print("V29 contracts OK: offline emergency core, simple UX, 80/20 governor, power modes, local portal, V28/P1 preserved")
 
 if __name__ == "__main__":
     main()

@@ -48,6 +48,20 @@ void V29EmergencyFabric::begin(MyMesh* mesh) {
                   (unsigned long)s.storageUsed, (unsigned long)s.storageTotal);
 }
 
+void V29EmergencyFabric::setEmergencyMode(bool enabled) {
+    _emergencyMode = enabled;
+    if (enabled && _powerMode == PowerMode::Normal) {
+        _powerMode = PowerMode::Emergency;
+    } else if (!enabled && _powerMode != PowerMode::Normal) {
+        _powerMode = PowerMode::Normal;
+    }
+}
+
+void V29EmergencyFabric::setPowerMode(PowerMode mode) {
+    _powerMode = mode;
+    _emergencyMode = mode != PowerMode::Normal;
+}
+
 bool V29EmergencyFabric::allocateQueue() {
     const uint32_t psramTotal = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     const uint32_t psramFree = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
@@ -461,15 +475,35 @@ uint32_t V29EmergencyFabric::recordAgeMinutes(const Record& r, uint32_t now) con
 }
 
 uint32_t V29EmergencyFabric::forwardIntervalMs(const Record& r) const {
-    uint32_t base = 600000UL;
-    switch ((Priority)r.wire[7]) {
-        case Priority::Critical: base = 20000UL; break;
-        case Priority::High: base = 60000UL; break;
-        case Priority::Normal: base = 180000UL; break;
-        case Priority::Bulk: base = 600000UL; break;
+    const Priority p = (Priority)r.wire[7];
+
+    // Normal preserves responsive V29 behaviour. Emergency and Critical keep
+    // life-safety traffic moving while deliberately backing off less important
+    // retransmissions to save battery and airtime over multi-day outages.
+    if (_powerMode == PowerMode::Critical) {
+        switch (p) {
+            case Priority::Critical: return 45000UL;
+            case Priority::High:     return 300000UL;
+            case Priority::Normal:   return 900000UL;
+            case Priority::Bulk:     return 3600000UL;
+        }
     }
-    if (_emergencyMode && base > 30000UL) base /= 2;
-    return base;
+    if (_powerMode == PowerMode::Emergency) {
+        switch (p) {
+            case Priority::Critical: return 20000UL;
+            case Priority::High:     return 90000UL;
+            case Priority::Normal:   return 300000UL;
+            case Priority::Bulk:     return 1800000UL;
+        }
+    }
+
+    switch (p) {
+        case Priority::Critical: return 20000UL;
+        case Priority::High:     return 60000UL;
+        case Priority::Normal:   return 180000UL;
+        case Priority::Bulk:     return 600000UL;
+    }
+    return 600000UL;
 }
 
 void V29EmergencyFabric::expireRecords(uint32_t now) {

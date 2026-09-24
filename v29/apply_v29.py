@@ -140,6 +140,7 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
 """
     main_include_new = main_include_anchor + """    #if defined(MESH_OFFGRIDNL_V29)
       #include "helpers/esp32/V29EmergencyFabric.h"
+      #include "helpers/esp32/V29EmergencyPortal.h"
     #endif
 """
     if "V29EmergencyFabric.h" not in main_cpp:
@@ -152,6 +153,7 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
 """
     begin_new = begin_anchor + """#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && defined(MESH_OFFGRIDNL_V29)
   v29_emergency_fabric.begin(&the_mesh);
+  v29_emergency_portal.begin();
 #endif
 """
     if "v29_emergency_fabric.begin(&the_mesh)" not in main_cpp:
@@ -170,11 +172,45 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
   STALL_SCOPE("v29-emergency", v29_emergency_fabric.loop());
 #else
   v29_emergency_fabric.loop();
+  v29_emergency_portal.loop();
 #endif
 #endif
 """
     if "v29_emergency_fabric.loop()" not in main_cpp:
         main_cpp = replace_once(main_cpp, loop_anchor, loop_new, "V29 main loop")
+
+    # The local emergency portal owns AP mode while active. Keep the ordinary
+    # STA reconnect state machine from forcing WIFI_STA over it, and do not
+    # start the companion TCP/WS listeners on the same emergency session.
+    wifi_anchor = "  bool wifi_radio_en = wifiConfigWantsWifi();\n"
+    wifi_new = """#if defined(MESH_OFFGRIDNL_V29)
+  const bool v29_portal_active = v29_emergency_portal.active();
+  bool wifi_radio_en = wifiConfigWantsWifi() || v29_portal_active;
+#else
+  bool wifi_radio_en = wifiConfigWantsWifi();
+#endif
+"""
+    if "const bool v29_portal_active" not in main_cpp:
+        main_cpp = replace_once(main_cpp, wifi_anchor, wifi_new, "V29 portal Wi-Fi ownership")
+
+    sm_anchor = "  bool wifi_state_machine_active = wifi_radio_en;\n"
+    sm_new = """  bool wifi_state_machine_active = wifi_radio_en;
+#if defined(MESH_OFFGRIDNL_V29)
+  wifi_state_machine_active = wifi_state_machine_active && !v29_portal_active;
+#endif
+"""
+    if "!v29_portal_active" not in main_cpp:
+        main_cpp = replace_once(main_cpp, sm_anchor, sm_new, "V29 portal STA interlock")
+
+    tcp_anchor = "  if (millis() > TCP_DEFER_MS && wifi_started) {\n"
+    tcp_new = """#if defined(MESH_OFFGRIDNL_V29)
+  if (millis() > TCP_DEFER_MS && wifi_started && !v29_portal_active) {
+#else
+  if (millis() > TCP_DEFER_MS && wifi_started) {
+#endif
+"""
+    if "wifi_started && !v29_portal_active" not in main_cpp:
+        main_cpp = replace_once(main_cpp, tcp_anchor, tcp_new, "V29 portal TCP interlock")
 
     main_path.write_text(main_cpp)
 
@@ -188,6 +224,7 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
 '''
     ui_include_new = ui_include_old + '''#if defined(MESH_OFFGRIDNL_V29)
 #include "../helpers/esp32/V29EmergencyFabric.h"
+#include "../helpers/esp32/V29EmergencyPortal.h"
 #endif
 '''
     if "V29EmergencyFabric.h" not in ui:
@@ -248,13 +285,29 @@ static void v29EmergencyMessageCb(lv_event_t* e) {
   goToTab(CHAT_INBOX_TAB_INDEX);
 }
 
+static void v29PortalStartApply() {
+  if (!v29_emergency_portal.start()) {
+    if (g_lv.task) g_lv.task->showAlert("Lokaal telefoonnetwerk kon niet starten.", 2800);
+    return;
+  }
+  char msg[176];
+  snprintf(msg, sizeof(msg),
+           "Telefoon: verbind met %s  wachtwoord %s  open http://%s",
+           v29_emergency_portal.ssid(),
+           v29_emergency_portal.password(),
+           v29_emergency_portal.ipText());
+  if (g_lv.task) g_lv.task->showAlert(msg, 9000);
+}
+
 static void v29EmergencyInfoCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  if (g_lv.task) {
-    g_lv.task->showAlert(
-      "Noodinformatie: controleer directe veiligheid. Gebruik 112 als telefonie werkt en volg officiële informatie zodra beschikbaar.",
-      5200);
+  if (v29_emergency_portal.active()) {
+    v29PortalStartApply();
+    return;
   }
+  showConfirm(
+      "Noodinformatie blijft lokaal beschikbaar. Start tijdelijk een telefoonnetwerk zonder internet?",
+      "Telefoon verbinden", v29PortalStartApply);
 }
 
 static void v29EmergencyFamilyCb(lv_event_t* e) {
@@ -406,6 +459,8 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
         "v29_emergency_fabric.onRawFrame",
         "v29_emergency_fabric.begin(&the_mesh)",
         "v29_emergency_fabric.loop()",
+        "v29_emergency_portal.begin()",
+        "v29_emergency_portal.loop()",
         "v29EmergencyHomeCb",
         "Ik ben veilig",
         "Ik heb hulp nodig",
@@ -413,6 +468,10 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
         "Noodcontact meldt: ik ben veilig",
         "Hulpvraag ontvangen via lokaal netwerk",
         "v29_emergency_fabric.takeEvent",
+        "v29PortalStartApply",
+        "Telefoon verbinden",
+        "const bool v29_portal_active",
+        "wifi_started && !v29_portal_active",
         "MOG29-DIRECT-V1",
         "v29q0.bin",
         "v29q1.bin",

@@ -31,6 +31,12 @@ public:
         AtMeetingPoint = 4,
     };
 
+    enum class PowerMode : uint8_t {
+        Normal = 0,
+        Emergency = 1,
+        Critical = 2,
+    };
+
     struct Event {
         Kind kind = Kind::System;
         Priority priority = Priority::Normal;
@@ -67,8 +73,10 @@ public:
     bool onRawFrame(const uint8_t* data, size_t len);
     bool takeEvent(Event& out);
 
-    void setEmergencyMode(bool enabled) { _emergencyMode = enabled; }
+    void setEmergencyMode(bool enabled);
     bool emergencyMode() const { return _emergencyMode; }
+    void setPowerMode(PowerMode mode);
+    PowerMode powerMode() const { return _powerMode; }
     MemoryStats memoryStats() const;
 
 private:
@@ -127,6 +135,7 @@ private:
     uint16_t _used = 0;
     bool _started = false;
     bool _emergencyMode = false;
+    PowerMode _powerMode = PowerMode::Normal;
     bool _dirty = false;
     uint32_t _generation = 0;
     uint32_t _lastFlushMs = 0;
