@@ -5,6 +5,7 @@ on:
     branches:
       - v27-global-relay
       - v27-impl-wave1
+      - v27-impl-wave2
     paths:
       - "v27/release-trigger.txt"
   workflow_dispatch:
