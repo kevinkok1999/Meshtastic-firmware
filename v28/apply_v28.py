@@ -500,6 +500,55 @@ static void v28ApproveJoinCb(lv_event_t* e) {
                  ev.type == V11GlobalBridge::UI_ERROR) {
         if (g_lv.task) g_lv.task->showAlert(ev.message[0] ? ev.message : "V28 join error", 2200);
       }
+
+#if !defined(HAS_TANMATSU)
+      // Mirror the SAME event to the browser controller. The browser never
+      // receives channel secrets or ECDH material; it only gets human UX state.
+      if (s_webdata_buf && g_web_mirror.termActive()) {
+        char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+        const char* kind =
+            ev.type == V11GlobalBridge::UI_INVITE_CREATED ? "created" :
+            ev.type == V11GlobalBridge::UI_JOIN_REQUESTED ? "waiting" :
+            ev.type == V11GlobalBridge::UI_JOIN_LIST_READY ? "list" :
+            ev.type == V11GlobalBridge::UI_JOIN_APPROVED ? "approved" :
+            ev.type == V11GlobalBridge::UI_JOINED ? "joined" :
+            ev.type == V11GlobalBridge::UI_JOIN_DENIED ? "denied" : "error";
+        p += snprintf(p, e - p, "{\\\"t\\\":\\\"v28\\\",\\\"k\\\":\\\"%s\\\",\\\"message\\\":\\\"", kind);
+        jsonEsc(p, e, ev.message);
+        p += snprintf(p, e - p, "\\\"");
+        if (ev.code[0]) {
+          p += snprintf(p, e - p, ",\\\"code\\\":\\\"");
+          jsonEsc(p, e, ev.code);
+          p += snprintf(p, e - p, "\\\"");
+        }
+        if (ev.channel[0]) {
+          p += snprintf(p, e - p, ",\\\"channel\\\":\\\"");
+          jsonEsc(p, e, ev.channel);
+          p += snprintf(p, e - p, "\\\"");
+        }
+        if (ev.type == V11GlobalBridge::UI_JOIN_LIST_READY) {
+          p += snprintf(p, e - p, ",\\\"requests\\\":[");
+          for (uint8_t i = 0; i < v11_global_bridge.joinRequestCount() && p < e - 180; ++i) {
+            V11GlobalBridge::JoinRequest br{};
+            if (!v11_global_bridge.getJoinRequest(i, br)) continue;
+            if (i) *p++ = ',';
+            char requesterHex[PUB_KEY_SIZE * 2 + 1] = {};
+            static const char hx[] = "0123456789abcdef";
+            for (size_t b = 0; b < PUB_KEY_SIZE; ++b) {
+              requesterHex[b * 2] = hx[br.requester[b] >> 4];
+              requesterHex[b * 2 + 1] = hx[br.requester[b] & 15];
+            }
+            p += snprintf(p, e - p, "{\\\"id\\\":%lu,\\\"requester\\\":\\\"%s\\\",\\\"channel\\\":\\\"",
+                          (unsigned long)br.inviteId, requesterHex);
+            jsonEsc(p, e, br.channel);
+            p += snprintf(p, e - p, "\\\"}");
+          }
+          p += snprintf(p, e - p, "]");
+        }
+        p += snprintf(p, e - p, "}");
+        g_web_mirror.pushTermData(s_webdata_buf);
+      }
+#endif
     }
   }
 #endif
