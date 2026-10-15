@@ -1,4 +1,10 @@
 #include "configuration.h"
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
+#include "xr/XREspNowTransport.h"
+#if defined(MESHOFFGRID_ENABLE_XBEE_XR868) && defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
+#include "xr/XRXBeeTransport.h"
+#endif
+#endif
 #if !MESHTASTIC_EXCLUDE_INPUTBROKER
 #include "buzz/BuzzerFeedbackThread.h"
 #include "modules/SystemCommandsModule.h"
@@ -293,6 +299,14 @@ void setupModules()
     // actually present.
 #ifdef OPTIONAL_MODULES_SETUP
     OPTIONAL_MODULES_SETUP();
+#endif
+#if defined(ARCH_ESP32) && defined(T_DECK) && defined(MESHOFFGRID_ENABLE_XR)
+    // Construct late enough that Meshtastic preferences/filesystem are ready. The OSThreads
+    // run after setup(), so sidecar initialization cannot race the remaining board/radio setup.
+    meshoffgrid::xr::xrEspNowTransport = new meshoffgrid::xr::XREspNowTransport();
+#if defined(MESHOFFGRID_ENABLE_XBEE_XR868) && defined(MESHOFFGRID_XBEE_RX_PIN) && defined(MESHOFFGRID_XBEE_TX_PIN)
+    meshoffgrid::xr::xrXBeeTransport = new meshoffgrid::xr::XRXBeeTransport();
+#endif
 #endif
     // NOTE! This module must be added LAST because it likes to check for replies from other modules and avoid sending extra
     // acks
