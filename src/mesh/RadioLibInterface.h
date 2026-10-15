@@ -151,7 +151,7 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
      * Get the current calculated noise floor in dBm
      * Returns -120 dBm if not yet calibrated
      */
-    int32_t getNoiseFloor();
+    int32_t getNoiseFloor() override;
 
     /**
      * Calculate the average noise floor from collected samples
