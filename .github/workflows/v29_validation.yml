@@ -155,7 +155,8 @@ jobs:
           files = []
           for name, (source, offset) in required.items():
               dest = out / ("MeshOffGridNL-V29-" + name + ".bin")
-              shutil.copyfile(source, dest)
+              if source.resolve() != dest.resolve():
+                  shutil.copyfile(source, dest)
               data = dest.read_bytes()
               if offset + len(data) > 16 * 1024 * 1024:
                   raise SystemExit("V29 flash segment exceeds 16MB")
@@ -192,6 +193,7 @@ jobs:
         run: |
           set -euo pipefail
           python v29/tests/test_flash_bundle.py v29-release
+          python v29/tests/test_flash_bundle_negative.py v29-release
 
       - name: Upload V29 candidate artifact
         uses: actions/upload-artifact@v4
