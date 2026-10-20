@@ -32,6 +32,7 @@ def main() -> None:
         "MESH_OFFGRIDNL_V26=1",
         "MESH_OFFGRIDNL_V27=1",
         "V27_PRIVACY_PRO=1",
+        "V27_PRIVACY_FUNCTION_PRESERVING=1",
         "V27_P1_V8_COMPAT=1",
         "V27_ZERO_CONFIG=1",
         "V27_WIFI_BROAD_COMPAT=1",
@@ -177,6 +178,27 @@ def main() -> None:
     ):
         if forbidden in bridge_h + "\n" + bridge_cpp:
             die("insecure relay transport forbidden: " + forbidden)
+
+
+    # Privacy/functionality coexistence invariants.
+    # Encryption/auth failures may reject the global copy, but may not disable RF.
+    if "tryGlobalFirstDM(recipient, timestamp, text)" not in mesh_cpp:
+        die("privacy/global-first must be attempted before RF only for proven peers")
+    if "if (attempt == 0 && recipient.type == ADV_TYPE_CHAT &&" not in mesh_cpp:
+        die("global-first must remain narrowly scoped to direct chat attempt zero")
+    if "result != MSG_SEND_FAILED" not in mesh_cpp:
+        die("global privacy queue may not create false send success after RF failure")
+    if "return publishDMNow(recipient.id.pub_key, timestamp, text);" not in bridge_cpp:
+        die("global-first must fall through to RF unless encrypted publish actually succeeds")
+    for forbidden in (
+        "WiFi.disconnect(true",
+        "WiFi.mode(WIFI_OFF)",
+        "esp_wifi_stop()",
+    ):
+        if forbidden in bridge_cpp:
+            die("privacy/global bridge must not tear down Wi-Fi or RF state: " + forbidden)
+    if ".setInsecure(" in bridge_cpp:
+        die("privacy transport must never bypass TLS verification")
 
     # V26 RF guard remains untouched.
     for marker in (
