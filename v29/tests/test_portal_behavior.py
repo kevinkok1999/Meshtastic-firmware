@@ -48,6 +48,22 @@ def main() -> None:
         actual = token_ok(path, t)
         if actual != expected:
             raise SystemExit(f"portal corpus mismatch: {path!r}: {actual} != {expected}")
+    # Prevent regression where GET / emitted token-bearing HTML on STA.
+    # The production C++ handler must gate AP-only access BEFORE serving
+    # root/captive endpoints or extending its session activity timeout.
+    from pathlib import Path
+    portal = Path(__file__).resolve().parents[1] / "overlay/src/helpers/esp32/V29EmergencyPortal.cpp"
+    handler = portal.read_text(encoding="utf-8").split(
+        "void V29EmergencyPortal::handleClient(", 1
+    )[1].split("void V29EmergencyPortal::loop(", 1)[0]
+    boundary = handler.index("c.localIP() != WiFi.softAPIP()")
+    root = handler.index('strcmp(path, "/") == 0')
+    page = handler.index("sendPage(c);")
+    activity = handler.index("_lastActivityMs = millis();")
+    assert boundary < root < page, "STA client can access token-bearing captive page"
+    assert boundary < activity, "STA client can extend portal activity timeout"
+    assert handler.count("c.localIP() != WiFi.softAPIP()") == 1
+
     print(f"V29 portal behavior corpus OK ({len(cases)} cases)")
 
 
