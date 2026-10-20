@@ -121,6 +121,34 @@ jobs:
           test "$SIZE" -lt $((0x3E0000))
           sha256sum "$BIN"
           python - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+          build = pathlib.Path("upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch")
+          # ESP32-S3 standard app-only image is NOT a complete USB flash bundle.
+          # Fail closed when the bootloader/partition artifacts are absent.
+          required = {
+              "bootloader": (build / "bootloader.bin", 0x0000),
+              "partitions": (build / "partitions.bin", 0x8000),
+              "app": (build / "firmware.bin", 0x10000),
+          }
+          missing = [name for name, (file, _) in required.items() if not file.is_file()]
+          if missing:
+              raise SystemExit("V29 flash bundle missing: " + ", ".join(missing))
+          out = pathlib.Path("v29-release")
+          out.mkdir(exist_ok=True)
+          files = []
+          for name, (source, offset) in required.items():
+              dest = out / ("MeshOffGridNL-V29-" + name + ".bin")
+              shutil.copyfile(source, dest)
+              data = dest.read_bytes()
+              if offset + len(data) > 16 * 1024 * 1024:
+                  raise SystemExit("V29 flash segment exceeds 16MB")
+              files.append({"role":name,"file":dest.name,"offset":offset,"size":len(data),"sha256":hashlib.sha256(data).hexdigest()})
+          for left, right in zip(sorted(files,key=lambda x:x["offset"]),sorted(files,key=lambda x:x["offset"])[1:]):
+              if left["offset"] + left["size"] > right["offset"]:
+                  raise SystemExit("V29 flash segments overlap")
+          (out / "flash-layout.json").write_text(json.dumps({"board":"lilygo-t-deck-plus","flashSizeBytes":16777216,"sourceCommit":os.environ.get("GITHUB_SHA",""),"files":files},indent=2)+"\\n")
+          PY
+          python - <<'PY'
           import hashlib, json, os
           path = "upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin"
           data = open(path, "rb").read()
