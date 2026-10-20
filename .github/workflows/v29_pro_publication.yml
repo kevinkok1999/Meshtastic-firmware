@@ -27,6 +27,7 @@ on:
 permissions:
   actions: read
   contents: write
+  issues: read
 
 concurrency:
   group: meshoffgridnl-v29-release-publication
