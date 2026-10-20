@@ -136,7 +136,7 @@ def main() -> None:
     wallpaper_header = root / "src/ui-touch/V29BeachWallpaper.h"
     if wallpaper_header.exists():
         wallpaper = wallpaper_header.read_text()
-        for marker in ("v29_beach_img", "LV_IMG_DECLARE", "320", "240"):
+        for marker in ("v29_beach_img", "lv_img_dsc_t", "320", "240"):
             if marker not in wallpaper and marker not in ui:
                 die("approved beach wallpaper missing descriptor marker " + marker)
         for marker in (
