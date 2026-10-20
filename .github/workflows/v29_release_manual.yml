@@ -1,0 +1,115 @@
+name: Publish V29 PRO after hardware and security approval
+on:
+  workflow_dispatch:
+    inputs:
+      validated_run_id:
+        description: "Successful V29 CI run number/id for exactly the tested source"
+        required: true
+        type: string
+      hardware_evidence_url:
+        description: "HTTPS URL with real T-Deck Plus boot/USB/RF test log for this firmware SHA"
+        required: true
+        type: string
+      security_evidence_url:
+        description: "HTTPS URL with completed V29 portal/crypto security review"
+        required: true
+        type: string
+      approve_production:
+        description: "Explicit approval to publish the tested V29 binaries publicly"
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: v29-pro-production-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: ${{ inputs.approve_production == true }}
+    runs-on: ubuntu-24.04
+    environment: v29-production
+    steps:
+      - name: Require evidence and exact successful V29 build
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.validated_run_id }}
+          HARDWARE: ${{ inputs.hardware_evidence_url }}
+          SECURITY: ${{ inputs.security_evidence_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid run ID"; exit 1; }
+          [[ "$HARDWARE" =~ ^https:// ]] || { echo "HTTPS hardware evidence required"; exit 1; }
+          [[ "$SECURITY" =~ ^https:// ]] || { echo "HTTPS security evidence required"; exit 1; }
+          meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          test "$(echo "$meta" | jq -r '.status')" = "completed"
+          test "$(echo "$meta" | jq -r '.conclusion')" = "success"
+          test "$(echo "$meta" | jq -r '.head_branch')" = "v29-emergency-fabric"
+          source_sha="$(echo "$meta" | jq -r '.head_sha')"
+          branch_sha="$(gh api "repos/$GITHUB_REPOSITORY/branches/v29-emergency-fabric" --jq '.commit.sha')"
+          test "$source_sha" = "$branch_sha" || {
+            echo "V29 branch changed since this build; build exact current source first."
+            exit 1
+          }
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Hardware proof URL: $HARDWARE"
+          echo "Security proof URL: $SECURITY"
+      - name: Checkout exact tested V29 commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+      - name: Retrieve GitHub Actions artifact for tested commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.validated_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p v29-release
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "MeshOffGridNL-V29-PRO-TDeck-Plus" --dir v29-release
+      - name: Reverify full four-part flash and security controls
+        env:
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v29/tests/test_flash_bundle.py v29-release
+          python v29/tests/test_flash_bundle_negative.py v29-release
+          python - <<'PY'
+          import json, os, pathlib
+          out = pathlib.Path("v29-release")
+          layout = json.loads((out/"flash-layout.json").read_text())
+          manifest = json.loads((out/"manifest.json").read_text())
+          assert layout["sourceCommit"] == os.environ["EXPECTED_SHA"]
+          assert manifest["sourceCommit"] == os.environ["EXPECTED_SHA"]
+          assert manifest["board"] == "lilygo-t-deck-plus"
+          assert manifest["version"].startswith("29.")
+          assert manifest["channel"] == "candidate", "publish workflow only takes approved CI candidate"
+          assert set(x["role"] for x in layout["files"]) == {"bootloader","partitions","boot_app0","app"}
+          release = dict(manifest, version="29.0.0-pro", channel="release")
+          release["releaseTag"] = "v29.0.0-pro"
+          release["hardwareReviewRequired"] = True
+          (out/"release-manifest.json").write_text(json.dumps(release, indent=2)+"\n")
+          PY
+      - name: Publish V29 PRO release once, never overwrite existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          HARDWARE: ${{ inputs.hardware_evidence_url }}
+          SECURITY: ${{ inputs.security_evidence_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "v29.0.0-pro" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Public V29 PRO tag already exists. Refusing to overwrite immutable release."
+            exit 1
+          fi
+          gh release create "v29.0.0-pro" v29-release/*.bin v29-release/*.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$EXPECTED_SHA" \
+            --title "MeshOffGridNL V29 PRO · T-Deck Plus" \
+            --notes "Hardware validation: $HARDWARE. Security review: $SECURITY. ESP32-S3 T-Deck Plus only. Use the SHA-256 hashes and offsets in flash-layout.json. Keep backups and do not erase other flash partitions."
