@@ -98,7 +98,8 @@ jobs:
           assert hashlib.sha256((root/m["file"]).read_bytes()).hexdigest()==m["sha256"]
           assets={x["role"]: {"file":x["file"],"offset":x["offset"],"size":x["size"],"sha256":x["sha256"]} for x in layout["files"]}
           (root/"release-index.json").write_text(json.dumps({
-            "version":"v29","board":"lilygo-t-deck-plus","sourceCommit":sha,
+            "version":"v29","releaseVersion":"29.0.0-pro",
+            "board":"lilygo-t-deck-plus","flashSizeBytes":16777216,"sourceCommit":sha,
             "validationRunId":os.environ["RUN_ID"],
             "hardwareEvidence":os.environ["HARDWARE_REPORT"],
             "securityEvidence":os.environ["SECURITY_REPORT"],
