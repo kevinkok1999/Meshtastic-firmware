@@ -189,6 +189,12 @@ jobs:
           print(json.dumps(manifest, indent=2))
           PY
 
+      - name: Verify palm wallpaper bytes inside the compiled T-Deck app
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v29/tests/test_wallpaper_binary.py upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin upstream-wadamesh/src/ui-touch/UITask.cpp
+
       - name: Verify V29 flash bundle metadata
         shell: bash
         run: |
