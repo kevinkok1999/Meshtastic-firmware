@@ -206,6 +206,12 @@ def main() -> None:
         if forbidden in portal_cpp:
             die("insecure portal token prefix matching returned: " + forbidden)
 
+    # Emergency POST endpoints must be reachable only on the AP interface.
+    if "c.localIP() != WiFi.softAPIP()" not in portal_cpp:
+        die("portal emergency actions are not restricted to AP interface")
+    if portal_cpp.index("c.localIP() != WiFi.softAPIP()") > portal_cpp.index("if (!tokenOk(path))"):
+        die("portal AP interface gate must precede action token checks")
+
     # V28/P1 foundations remain present and unchanged in intent.
     for marker in (
         "MESH_OFFGRIDNL_V28=1",
