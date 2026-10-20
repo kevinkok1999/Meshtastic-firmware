@@ -117,3 +117,32 @@ jobs:
           SIZE=$(stat -c%s "$BIN")
           test "$SIZE" -lt $((0x3E0000))
           sha256sum "$BIN"
+          python - <<'PY'
+          import hashlib, json, os
+          path = "upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin"
+          data = open(path, "rb").read()
+          manifest = {
+              "schema": 1,
+              "version": "29.0.0-dev",
+              "channel": "candidate",
+              "board": "lilygo-t-deck-plus",
+              "chip": "ESP32-S3",
+              "flashSizeBytes": 16777216,
+              "file": "MeshOffGridNL-V29-PRO-TDeck-Plus.bin",
+              "size": len(data),
+              "sha256": hashlib.sha256(data).hexdigest(),
+              "sourceCommit": os.environ.get("GITHUB_SHA", "")
+          }
+          os.makedirs("v29-release", exist_ok=True)
+          open("v29-release/MeshOffGridNL-V29-PRO-TDeck-Plus.bin", "wb").write(data)
+          open("v29-release/manifest.json", "w").write(json.dumps(manifest, indent=2) + "\\n")
+          print(json.dumps(manifest, indent=2))
+          PY
+
+      - name: Upload V29 candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeshOffGridNL-V29-PRO-TDeck-Plus
+          path: v29-release/
+          if-no-files-found: error
+          retention-days: 90
