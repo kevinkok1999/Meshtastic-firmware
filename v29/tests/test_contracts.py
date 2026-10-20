@@ -131,6 +131,23 @@ def main() -> None:
         if marker not in ui:
             die("simple emergency UI marker missing " + marker)
 
+    # Once the approved beach asset is installed, a successful build must
+    # prove that the image is referenced by the actual home-screen UI.
+    wallpaper_header = root / "src/ui-touch/V29BeachWallpaper.h"
+    if wallpaper_header.exists():
+        wallpaper = wallpaper_header.read_text()
+        for marker in ("v29_beach_img", "LV_IMG_DECLARE", "320", "240"):
+            if marker not in wallpaper and marker not in ui:
+                die("approved beach wallpaper missing descriptor marker " + marker)
+        for marker in (
+            '#include "V29BeachWallpaper.h"',
+            "lv_img_create(",
+            "lv_img_set_src(v29_wallpaper, &v29_beach_img)",
+            "lv_obj_move_background(v29_wallpaper)",
+        ):
+            if marker not in ui:
+                die("approved beach wallpaper is not wired to home UI: " + marker)
+
     primary_ui = ui[ui.find("static void v29EmergencyHomeCb"):ui.find("#endif", ui.find("static void v29EmergencyHomeCb"))]
     for forbidden in ("RSSI", "SNR", "spreading factor", "hop count", "channel key"):
         if forbidden.lower() in primary_ui.lower():
