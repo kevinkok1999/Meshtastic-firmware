@@ -143,7 +143,7 @@ jobs:
           expected_ota_sha = "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"
           if len(ota_seed) != 8192 or hashlib.sha256(ota_seed).hexdigest() != expected_ota_sha:
               raise SystemExit("V29 OTA seed does not match pinned trusted release")
-          ota_seed_path = pathlib.Path("v29-release/MeshOffGridNL-V29-boot_app0.bin")
+          ota_seed_path = build / "boot_app0.bin"
           ota_seed_path.parent.mkdir(exist_ok=True)
           ota_seed_path.write_bytes(ota_seed)
           required["boot_app0"] = (ota_seed_path, 0xE000)
