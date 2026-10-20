@@ -1,0 +1,122 @@
+name: Publish V29 PRO only after hardware approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      validation_run_id:
+        description: "Successful four-part V29 validation run ID"
+        required: true
+        type: string
+      hardware_test_report:
+        description: "GitHub issue URL containing real USB, boot and RF test logs"
+        required: true
+        type: string
+      security_review_report:
+        description: "GitHub issue URL containing V29 security review findings"
+        required: true
+        type: string
+      verified_source_sha:
+        description: "Full 40-character SHA of the validated firmware source"
+        required: true
+        type: string
+      publish_confirmation:
+        description: "Type PUBLISH-V29-PRO-AFTER-TESTS to authorize public distribution"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: meshoffgridnl-v29-release-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # This job is deliberately NEVER run by push, CI or a timer.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify explicit authorization and test record references
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.validation_run_id }}
+          HARDWARE: ${{ inputs.hardware_test_report }}
+          SECURITY: ${{ inputs.security_review_report }}
+          EXPECTED_SHA: ${{ inputs.verified_source_sha }}
+          CONFIRM: ${{ inputs.publish_confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRM" = "PUBLISH-V29-PRO-AFTER-TESTS"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HARDWARE" =~ ^https://github.com/kevinkok1999/Meshtastic-firmware/issues/[0-9]+$ ]]
+          [[ "$SECURITY" =~ ^https://github.com/kevinkok1999/Meshtastic-firmware/issues/[0-9]+$ ]]
+          for url in "$HARDWARE" "$SECURITY"; do
+            issue_no="${url##*/}"
+            state="$(gh issue view "$issue_no" --repo "$GITHUB_REPOSITORY" --json state -q .state)"
+            test "$state" = "CLOSED" || { echo "Evidence issue $issue_no is not closed"; exit 1; }
+          done
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          test "$(jq -r .conclusion <<< "$run_json")" = success
+          test "$(jq -r .head_branch <<< "$run_json")" = v29-emergency-fabric
+          test "$(jq -r .head_sha <<< "$run_json")" = "$EXPECTED_SHA"
+          echo "VALIDATED_SHA=$EXPECTED_SHA" >> "$GITHUB_ENV"
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          echo "HARDWARE_REPORT=$HARDWARE" >> "$GITHUB_ENV"
+          echo "SECURITY_REPORT=$SECURITY" >> "$GITHUB_ENV"
+      - name: Checkout exactly validated V29 source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.verified_source_sha }}
+          persist-credentials: false
+      - name: Download only the matching build artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p v29-release
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name MeshOffGridNL-V29-PRO-TDeck-Plus --dir v29-release
+      - name: Verify bytes, chip, partition layout and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v29/tests/test_flash_bundle.py v29-release
+          python v29/tests/test_flash_bundle_negative.py v29-release
+          python - <<'PY'
+          import hashlib,json,os,pathlib
+          root=pathlib.Path("v29-release")
+          m=json.loads((root/"manifest.json").read_text())
+          layout=json.loads((root/"flash-layout.json").read_text())
+          sha=os.environ["VALIDATED_SHA"]
+          assert layout["sourceCommit"]==sha and m["sourceCommit"]==sha
+          assert len(layout["files"])==4
+          assert hashlib.sha256((root/m["file"]).read_bytes()).hexdigest()==m["sha256"]
+          assets={x["role"]: {"file":x["file"],"offset":x["offset"],"size":x["size"],"sha256":x["sha256"]} for x in layout["files"]}
+          (root/"release-index.json").write_text(json.dumps({
+            "version":"v29","board":"lilygo-t-deck-plus","sourceCommit":sha,
+            "validationRunId":os.environ["RUN_ID"],
+            "hardwareEvidence":os.environ["HARDWARE_REPORT"],
+            "securityEvidence":os.environ["SECURITY_REPORT"],
+            "assets":assets
+          },indent=2)+"\n")
+          PY
+      - name: Publish non-overwriting immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="mesh-v29.0.0-pro"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "V29 tag exists: refusing to replace released files"
+            exit 1
+          fi
+          gh release create "$TAG" v29-release/*.bin v29-release/*.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$VALIDATED_SHA" \
+            --title "MeshOffGridNL V29 PRO — T-Deck Plus" \
+            --notes "Hardware report: $HARDWARE_REPORT; security report: $SECURITY_REPORT. Flash only on verified LILYGO T-Deck Plus ESP32-S3. Back up data first. Verify checksums in release-index.json."
