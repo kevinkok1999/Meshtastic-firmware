@@ -5,13 +5,15 @@ on:
     branches:
       - v29-emergency-fabric
     paths:
-      - "v29/**"
+      - "v29/apply_v29.py"
+      - "v29/overlay/**"
+      - "v29/tests/**"
       - ".github/workflows/v29_validation.yml"
   workflow_dispatch:
 
 concurrency:
   group: meshoffgridnl-v29-validation
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
