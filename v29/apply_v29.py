@@ -242,18 +242,6 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
             '#include "V29BeachWallpaper.h"\n#endif',
             "V29 approved wallpaper include",
         )
-        # Embedded RGB565 image; keep it behind controls and non-interactive.
-        home_image_anchor = '    s_home_nav_right[HOME_NAV_TERMINAL] =\n        make_launcher(TR("Noodmodus"), tdBtnY(1), v29EmergencyHomeCb, 0, td_btn_h);'
-        if home_image_anchor not in ui:
-            fail("V29 wallpaper home anchor missing")
-        # Create the image on the active screen behind all widgets. This must
-        # be verified against the actual home-screen object lifecycle.
-        ui = ui.replace(home_image_anchor,
-            '    lv_obj_t* v29_wallpaper = lv_img_create(lv_scr_act());\n'
-            '    lv_img_set_src(v29_wallpaper, &v29_beach_img);\n'
-            '    lv_obj_set_pos(v29_wallpaper, 0, 0);\n'
-            '    lv_obj_clear_flag(v29_wallpaper, LV_OBJ_FLAG_CLICKABLE);\n'
-            '    lv_obj_move_background(v29_wallpaper);\n' + home_image_anchor, 1)
 
     v28_cb_anchor = '''static void v28HomeSettingsCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -435,6 +423,21 @@ static void v29EmergencyHomeCb(lv_event_t* e) {
 '''
     if 'make_launcher(TR("Noodmodus")' not in ui:
         ui = replace_once(ui, home_anchor, home_new, "V29 Home emergency entry")
+
+    if wallpaper_header.exists():
+        # Embedded RGB565 image; keep it behind controls and non-interactive.
+        home_image_anchor = '    s_home_nav_right[HOME_NAV_TERMINAL] =\n        make_launcher(TR("Noodmodus"), tdBtnY(1), v29EmergencyHomeCb, 0, td_btn_h);'
+        if home_image_anchor not in ui:
+            fail("V29 wallpaper home anchor missing")
+        # Create the image on the active screen behind all widgets. This must
+        # be verified against the actual home-screen object lifecycle.
+        ui = ui.replace(home_image_anchor,
+            '    lv_obj_t* v29_wallpaper = lv_img_create(lv_scr_act());\n'
+            '    lv_img_set_src(v29_wallpaper, &v29_beach_img);\n'
+            '    lv_obj_set_pos(v29_wallpaper, 0, 0);\n'
+            '    lv_obj_clear_flag(v29_wallpaper, LV_OBJ_FLAG_CLICKABLE);\n'
+            '    lv_obj_move_background(v29_wallpaper);\n' + home_image_anchor, 1)
+
 
     # Surface received emergency events in plain language on the T-Deck.
     # This drains the V29 event queue from the existing UI loop; no second app loop.
