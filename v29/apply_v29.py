@@ -242,7 +242,7 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
             '#include "V29BeachWallpaper.h"\n#endif',
             "V29 approved wallpaper include",
         )
-        # An image object is transparent to touch and remains behind controls.
+        # Embedded RGB565 image; keep it behind controls and non-interactive.
         home_image_anchor = '    s_home_nav_right[HOME_NAV_TERMINAL] =\n        make_launcher(TR("Noodmodus"), tdBtnY(1), v29EmergencyHomeCb, 0, td_btn_h);'
         if home_image_anchor not in ui:
             fail("V29 wallpaper home anchor missing")
