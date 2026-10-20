@@ -146,7 +146,7 @@ jobs:
           for left, right in zip(sorted(files,key=lambda x:x["offset"]),sorted(files,key=lambda x:x["offset"])[1:]):
               if left["offset"] + left["size"] > right["offset"]:
                   raise SystemExit("V29 flash segments overlap")
-          (out / "flash-layout.json").write_text(json.dumps({"board":"lilygo-t-deck-plus","flashSizeBytes":16777216,"sourceCommit":os.environ.get("GITHUB_SHA",""),"files":files},indent=2)+"\\n")
+          (out / "flash-layout.json").write_text(json.dumps({"board":"lilygo-t-deck-plus","flashSizeBytes":16777216,"sourceCommit":os.environ.get("GITHUB_SHA",""),"files":files},indent=2)+"\n")
           PY
           python - <<'PY'
           import hashlib, json, os
