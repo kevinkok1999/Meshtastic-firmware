@@ -108,10 +108,30 @@ bool V29EmergencyPortal::actionAllowed(uint32_t now) {
 
 bool V29EmergencyPortal::tokenOk(const char* path) const {
     if (!path || !_token[0]) return false;
-    const char* p = strstr(path, "t=");
-    if (!p) return false;
-    p += 2;
-    return strncmp(p, _token, strlen(_token)) == 0;
+    // Accept one exact t= parameter; never accept token prefixes or duplicates.
+    const char* query = strchr(path, '?');
+    if (!query) return false;
+    ++query;
+    const size_t tokenLen = strlen(_token);
+    bool matched = false;
+    while (*query) {
+        const char* end = strchr(query, '&');
+        if (!end) end = query + strlen(query);
+        const size_t fieldLen = (size_t)(end - query);
+        if (fieldLen >= 2 && query[0] == 't' && query[1] == '=') {
+            if (matched || fieldLen != tokenLen + 2) return false;
+            // Constant-time comparison for correctly sized token values.
+            uint8_t diff = 0;
+            for (size_t i = 0; i < tokenLen; ++i) {
+                diff |= (uint8_t)(query[i + 2] ^ _token[i]);
+            }
+            if (diff != 0) return false;
+            matched = true;
+        }
+        if (!*end) break;
+        query = end + 1;
+    }
+    return matched;
 }
 
 void V29EmergencyPortal::sendResponseHeader(WiFiClient& c, const char* type) {
