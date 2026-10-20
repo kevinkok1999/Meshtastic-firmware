@@ -188,6 +188,23 @@ def main() -> None:
         if marker not in portal_h + "\n" + portal_cpp:
             die("V29 portal hardening marker missing " + marker)
 
+    # Exact-match portal token parsing: reject substring/prefix and duplicates.
+    for marker in (
+        "const char* query = strchr(path, '?')",
+        "fieldLen != tokenLen + 2",
+        "if (matched || fieldLen != tokenLen + 2) return false",
+        "diff |= (uint8_t)(query[i + 2] ^ _token[i])",
+        "return matched;",
+    ):
+        if marker not in portal_cpp:
+            die("portal token exact-match safeguard missing " + marker)
+    for forbidden in (
+        'strstr(path, "t=")',
+        "strncmp(p, _token, strlen(_token))",
+    ):
+        if forbidden in portal_cpp:
+            die("insecure portal token prefix matching returned: " + forbidden)
+
     # V28/P1 foundations remain present and unchanged in intent.
     for marker in (
         "MESH_OFFGRIDNL_V28=1",
