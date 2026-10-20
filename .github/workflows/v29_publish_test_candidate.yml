@@ -1,0 +1,83 @@
+name: V29 PRO test candidate (not production)
+on:
+  push:
+    branches: [v29-emergency-fabric]
+    paths: [".github/workflows/v29_publish_test_candidate.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: meshoffgridnl-v29-qa-test-publish
+  cancel-in-progress: false
+jobs:
+  publish-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VALIDATION_RUN: "39465113973"
+      VERIFIED_SHA: "f38a93e142f2e1002e412de75f760c606d10bd9d"
+      PREVIEW_TAG: "mesh-v29.0.0-pro-test"
+    steps:
+      - name: Verify immutable successful V29 build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          data="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATION_RUN")"
+          test "$(jq -r .conclusion <<< "$data")" = "success"
+          test "$(jq -r .head_branch <<< "$data")" = "v29-emergency-fabric"
+          test "$(jq -r .head_sha <<< "$data")" = "$VERIFIED_SHA"
+          if gh release view "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "QA tag already exists: refuse overwrite"
+            exit 1
+          fi
+      - name: Checkout validated firmware source
+        uses: actions/checkout@v4
+        with:
+          ref: f38a93e142f2e1002e412de75f760c606d10bd9d
+          persist-credentials: false
+      - name: Download exact verified GitHub Actions artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p v29-release
+          gh run download "$VALIDATION_RUN" --repo "$GITHUB_REPOSITORY" --name MeshOffGridNL-V29-PRO-TDeck-Plus --dir v29-release
+      - name: Verify four-image layout SHA256 provenance and tamper rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v29/tests/test_flash_bundle.py v29-release
+          python v29/tests/test_flash_bundle_negative.py v29-release
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          folder = pathlib.Path("v29-release")
+          layout = json.loads((folder / "flash-layout.json").read_text())
+          m = json.loads((folder / "manifest.json").read_text())
+          assert layout["sourceCommit"] == m["sourceCommit"] == os.environ["VERIFIED_SHA"]
+          assert len(layout["files"]) == 4
+          app = next(f for f in layout["files"] if f["role"] == "app")
+          assert app["sha256"] == "7ae77b601a382199c7e833f5461fe72398666a25e3f991d9b413a1c436210d21"
+          assert hashlib.sha256((folder / app["file"]).read_bytes()).hexdigest() == app["sha256"]
+          (folder / "test-release-index.json").write_text(json.dumps({
+              "version":"v29","testOnly":True,"productionApproved":False,
+              "board":"lilygo-t-deck-plus",
+              "sourceCommit":layout["sourceCommit"],"validationRunId":os.environ["VALIDATION_RUN"],
+              "hardwareFlashBootAndRf":"NOT-TESTED","securityAudit":"NOT-APPROVED",
+              "files":layout["files"]
+          }, indent=2) + "\n")
+          PY
+      - name: Publish public TEST pre-release never final V29
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$PREVIEW_TAG" v29-release/*.bin v29-release/*.json \
+            --repo "$GITHUB_REPOSITORY" --target "$VERIFIED_SHA" --prerelease \
+            --title "MeshOffGridNL V29 PRO - TEST HARDWARE ONLY (unvalidated)" \
+            --notes "EXPERIMENTAL INSTALLATION CANDIDATE. DO NOT USE FOR REAL EMERGENCIES. Live USB flashing, boot, RF / P1 V8 interoperability and security have NOT been validated on devices. For a spare LILYGO T-Deck Plus ESP32-S3 test unit only. Back up data, verify SHA-256 via flash-layout.json; no erase-all requested but flashing OTA state / app can still affect data. This is NOT the approved V29 PRO production release."
+          gh release view "$PREVIEW_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease,assets --jq '.isPrerelease and (.assets | length >= 7)'
