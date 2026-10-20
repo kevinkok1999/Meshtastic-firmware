@@ -196,7 +196,7 @@ def main() -> None:
         "actionAllowed",
         "/moving?",
         "/meeting?",
-        "millis() + 300UL",
+        "v29ReadHttpRequestLine",
         "method='post'",
         "const bool isPost",
         "Allow: POST",
