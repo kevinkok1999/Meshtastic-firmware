@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "version": "29.0.0-dev",
+  "channel": "candidate-not-public-release",
+  "board": "lilygo-t-deck-plus",
+  "chip": "ESP32-S3",
+  "flashSizeBytes": 16777216,
+  "file": "MeshOffGridNL-V29-PRO-TDeck-Plus.bin",
+  "size": 3619984,
+  "sha256": "31f83215fed7155ed7eba184bb4234f65fe88dd9c608024677f7c87967cef086",
+  "sourceCommit": "8aa8783cbd699f393296b54ea8cd32b08feae7ed",
+  "githubActionsRun": "https://github.com/kevinkok1999/Meshtastic-firmware/actions/runs/39448551646",
+  "artifactId": 12276179216,
+  "artifactName": "MeshOffGridNL-V29-PRO-TDeck-Plus",
+  "ciStatus": "success",
+  "hardwareFlashTest": "BLOCKED_NO_DEVICE_EVIDENCE",
+  "productionInstaller": "NOT_ENABLED_PENDING_RELEASE_GATES",
+  "notes": "Application firmware.bin only; not a verified merged/full-flash image. Requires validated ESP32-S3 flash offsets, bootloader/partition images and physical T-Deck Plus testing."
+}
