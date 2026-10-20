@@ -222,7 +222,7 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
     // Only serve the captive portal on the AP address. A station-side request
     // must not be able to trigger emergency actions via the same web server.
     if (c.localIP() != WiFi.softAPIP()) {
-        c.print("HTTP/1.1 403 Forbidden\\r\\nConnection: close\\r\\n\\r\\n");
+        c.print("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
         return;
     }
 
