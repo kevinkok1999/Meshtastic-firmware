@@ -237,23 +237,23 @@ bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {
     if wallpaper_header.exists():
         ui = replace_once(
             ui,
-            '#include "../helpers/esp32/V29EmergencyPortal.h"\\n#endif',
-            '#include "../helpers/esp32/V29EmergencyPortal.h"\\n'
-            '#include "V29BeachWallpaper.h"\\n#endif',
+            '#include "../helpers/esp32/V29EmergencyPortal.h"\n#endif',
+            '#include "../helpers/esp32/V29EmergencyPortal.h"\n'
+            '#include "V29BeachWallpaper.h"\n#endif',
             "V29 approved wallpaper include",
         )
         # An image object is transparent to touch and remains behind controls.
-        home_image_anchor = '    s_home_nav_right[HOME_NAV_TERMINAL] =\\n        make_launcher(TR("Noodmodus"), tdBtnY(1), v29EmergencyHomeCb, 0, td_btn_h);'
+        home_image_anchor = '    s_home_nav_right[HOME_NAV_TERMINAL] =\n        make_launcher(TR("Noodmodus"), tdBtnY(1), v29EmergencyHomeCb, 0, td_btn_h);'
         if home_image_anchor not in ui:
             fail("V29 wallpaper home anchor missing")
         # Create the image on the active screen behind all widgets. This must
         # be verified against the actual home-screen object lifecycle.
         ui = ui.replace(home_image_anchor,
-            '    lv_obj_t* v29_wallpaper = lv_img_create(lv_scr_act());\\n'
-            '    lv_img_set_src(v29_wallpaper, &v29_beach_img);\\n'
-            '    lv_obj_set_pos(v29_wallpaper, 0, 0);\\n'
-            '    lv_obj_clear_flag(v29_wallpaper, LV_OBJ_FLAG_CLICKABLE);\\n'
-            '    lv_obj_move_background(v29_wallpaper);\\n' + home_image_anchor, 1)
+            '    lv_obj_t* v29_wallpaper = lv_img_create(lv_scr_act());\n'
+            '    lv_img_set_src(v29_wallpaper, &v29_beach_img);\n'
+            '    lv_obj_set_pos(v29_wallpaper, 0, 0);\n'
+            '    lv_obj_clear_flag(v29_wallpaper, LV_OBJ_FLAG_CLICKABLE);\n'
+            '    lv_obj_move_background(v29_wallpaper);\n' + home_image_anchor, 1)
 
     v28_cb_anchor = '''static void v28HomeSettingsCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
