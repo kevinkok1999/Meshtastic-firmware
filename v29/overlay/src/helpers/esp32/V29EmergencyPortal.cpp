@@ -206,6 +206,14 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
         return;
     }
     *end = '\0';
+    // Security boundary: when Wi-Fi is in AP+STA mode the local server
+    // may also answer requests from the station network. All routes,
+    // including GET / and captive detection, must be AP-only because the
+    // rendered HTML contains a live emergency action token.
+    if (c.localIP() != WiFi.softAPIP()) {
+        c.print("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        return;
+    }
     _lastActivityMs = millis();
 
     if (strcmp(path, "/") == 0 || strncmp(path, "/generate_204", 13) == 0 ||
@@ -216,13 +224,6 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
             return;
         }
         sendPage(c);
-        return;
-    }
-
-    // Only serve the captive portal on the AP address. A station-side request
-    // must not be able to trigger emergency actions via the same web server.
-    if (c.localIP() != WiFi.softAPIP()) {
-        c.print("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
         return;
     }
 
