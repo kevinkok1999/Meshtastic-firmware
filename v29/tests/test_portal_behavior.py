@@ -64,6 +64,11 @@ def main() -> None:
     assert boundary < activity, "STA client can extend portal activity timeout"
     assert handler.count("c.localIP() != WiFi.softAPIP()") == 1
 
+    assert "v29ReadHttpRequestLine(" in handler, "request line must wait for LF"
+    assert "strchr(line, ' ')" not in handler, "premature partial-read regression"
+    assert '"HTTP/1.1 414 URI Too Long' in handler, "oversized line must be rejected"
+    assert '"HTTP/1.1 408 Request Timeout' in handler, "truncated line must time out"
+
     print(f"V29 portal behavior corpus OK ({len(cases)} cases)")
 
 

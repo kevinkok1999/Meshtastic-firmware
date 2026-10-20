@@ -2,6 +2,7 @@
 
 #include "V29EmergencyPortal.h"
 #include "V29EmergencyFabric.h"
+#include "V29HttpRequestLine.h"
 
 #include <esp_random.h>
 #include <string.h>
@@ -176,20 +177,17 @@ void V29EmergencyPortal::sendNotFound(WiFiClient& c) {
 
 void V29EmergencyPortal::handleClient(WiFiClient& c) {
     char line[192] = {};
-    size_t n = 0;
-    const uint32_t deadline = millis() + 300UL;
-
-    while (c.connected() && (int32_t)(millis() - deadline) < 0 && n + 1 < sizeof(line)) {
-        while (c.available() && n + 1 < sizeof(line)) {
-            const char ch = (char)c.read();
-            if (ch == '\n') {
-                line[n] = '\0';
-                break;
-            }
-            if (ch != '\r') line[n++] = ch;
+    const V29RequestLineResult request = v29ReadHttpRequestLine(
+        c, line, sizeof(line),
+        []() -> uint32_t { return millis(); },
+        [](uint32_t ms) { delay(ms); }, 700UL);
+    if (request != V29RequestLineResult::Complete) {
+        if (request == V29RequestLineResult::TooLong) {
+            c.print("HTTP/1.1 414 URI Too Long\r\nConnection: close\r\n\r\n");
+        } else {
+            c.print("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n");
         }
-        if (n && strchr(line, ' ')) break;
-        delay(1);
+        return;
     }
 
     const bool isGet = strncmp(line, "GET ", 4) == 0;
@@ -203,6 +201,11 @@ void V29EmergencyPortal::handleClient(WiFiClient& c) {
     char* end = strchr(path, ' ');
     if (!end) {
         sendNotFound(c);
+        return;
+    }
+    if (strcmp(end + 1, "HTTP/1.1") != 0 &&
+        strcmp(end + 1, "HTTP/1.0") != 0) {
+        c.print("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         return;
     }
     *end = '\0';
