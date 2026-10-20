@@ -166,9 +166,15 @@ jobs:
           }
           os.makedirs("v29-release", exist_ok=True)
           open("v29-release/MeshOffGridNL-V29-PRO-TDeck-Plus.bin", "wb").write(data)
-          open("v29-release/manifest.json", "w").write(json.dumps(manifest, indent=2) + "\\n")
+          open("v29-release/manifest.json", "w").write(json.dumps(manifest, indent=2) + "\n")
           print(json.dumps(manifest, indent=2))
           PY
+
+      - name: Verify V29 flash bundle metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python v29/tests/test_flash_bundle.py v29-release
 
       - name: Upload V29 candidate artifact
         uses: actions/upload-artifact@v4
