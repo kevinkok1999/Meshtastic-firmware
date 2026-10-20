@@ -27,10 +27,10 @@ void V29EmergencyPortal::generateCredentials() {
     _password[10] = '\0';
 
     static const char hex[] = "0123456789ABCDEF";
-    for (size_t i = 0; i < 8; ++i) {
+    for (size_t i = 0; i < 16; ++i) {
         _token[i] = hex[(esp_random() >> ((i & 3U) * 8U)) & 0x0fU];
     }
-    _token[8] = '\0';
+    _token[16] = '\0';
 }
 
 bool V29EmergencyPortal::start() {

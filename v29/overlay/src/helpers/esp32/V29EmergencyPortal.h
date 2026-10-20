@@ -39,7 +39,7 @@ private:
     uint32_t _lastActionMs = 0;
     char _ssid[32] = {};
     char _password[16] = {};
-    char _token[12] = {};
+    char _token[20] = {};
     char _ip[20] = {};
 
     void generateCredentials();

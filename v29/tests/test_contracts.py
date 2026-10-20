@@ -195,6 +195,7 @@ def main() -> None:
         "if (matched || fieldLen != tokenLen + 2) return false",
         "diff |= (uint8_t)(query[i + 2] ^ _token[i])",
         "return matched;",
+        "_token[16] = '\\0';",
     ):
         if marker not in portal_cpp:
             die("portal token exact-match safeguard missing " + marker)
