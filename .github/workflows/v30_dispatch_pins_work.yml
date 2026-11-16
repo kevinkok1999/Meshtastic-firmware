@@ -1,0 +1,13 @@
+name: V30 pinned Dispatcher candidate
+on:
+  push:
+    branches: [v30-work-dispatch-pins]
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - run: python v30/tests/test_dispatch_patch.py

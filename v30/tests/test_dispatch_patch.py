@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import tempfile
+import urllib.request
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 PATCH = REPO / "v30/extra_scripts/v30_dispatch_patch.py"
@@ -39,7 +41,7 @@ void Dispatcher::checkSend() {
   if (!outbound) {
     bool success = _radio->startSendRaw(outbound_raw, len);
     if (!success) {
-      logTxFail(outbound, outbound->getRawLength());
+        logTxFail(outbound, outbound->getRawLength());
       releasePacket(outbound);
       outbound = NULL;
     }
@@ -71,6 +73,24 @@ def main() -> None:
     applier = APPLIER.read_text(encoding="utf-8")
     assert "v30_dispatch_patch.py" not in applier
     assert "custom_v30_dispatch_patch" not in applier
+    # Test the actual pinned dependency, not just the shape fixture.
+    base = f"https://raw.githubusercontent.com/ALLFATHER-BV/meshcomod/{module.PIN}/src/"
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        for name, expected in (("Dispatcher.h", module.HEADER_BLOB), ("Dispatcher.cpp", module.SOURCE_BLOB)):
+            with urllib.request.urlopen(base + name, timeout=30) as response:
+                raw = response.read()
+            assert module.git_blob_id(raw) == expected
+            (root / name).write_bytes(raw)
+        hp, sp = module.patch_dependency(root)
+        assert hp.read_text().count("onV30TxComplete") == 1
+        assert sp.read_text().count("onV30TxComplete") == 3
+        try:
+            module.patch_dependency(root)
+        except module.PatchError:
+            pass
+        else:
+            raise AssertionError("modified or unpinned core accepted")
     print("V30 Dispatcher hook candidate tests passed")
 
 if __name__ == "__main__":
