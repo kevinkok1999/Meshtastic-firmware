@@ -1,0 +1,18 @@
+name: V30 isolated module validation
+on:
+  push:
+    branches: [v30-pro-meshmap-nano]
+    paths: ["v30/**", ".github/workflows/v30_modules_validation.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-modules:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Test emergency envelope framing
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_envelope_layout.cpp v30/overlay/src/helpers/esp32/V30EnvelopeLayout.cpp -o /tmp/v30-envelope
+          /tmp/v30-envelope
