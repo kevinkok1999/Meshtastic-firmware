@@ -197,7 +197,7 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
         meta_bytes = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         prefix = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
         candidate = prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
-        if len(candidate) <= budget:
+        if len(candidate) <= budget and len(meta_bytes) <= MAX_METADATA_BYTES and names_count <= MAX_NAMES:
             return candidate, packed, omitted, names_count, roads, working
         if len(working) <= 1:
             raise BuildError(f"pack exceeds budget ({len(candidate)} > {budget})")
@@ -205,15 +205,17 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
         candidates = sorted(working, key=lambda f: (int(priorities.get(f["kind"], 0)), f["id"]))
         batch = max(1, min(len(candidates), len(working) // 8))
         removed = 0
+        removed_ids: set[str] = set()
         for candidate in candidates:
             if counts[candidate["province"]] <= 1:
                 continue
-            working.remove(candidate)
+            removed_ids.add(candidate['id'])
             counts[candidate["province"]] -= 1
             omitted[candidate["kind"]] = omitted.get(candidate["kind"], 0) + 1
             removed += 1
             if removed >= batch:
                 break
+        working = [f for f in working if f['id'] not in removed_ids]
         if removed == 0:
             raise BuildError("budget would remove final feature for a province")
 
