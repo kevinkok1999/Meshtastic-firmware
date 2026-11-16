@@ -68,8 +68,19 @@ def main() -> None:
             (upstream / "src" / name).write_text("// fixture\n", encoding="utf-8")
         ws = upstream / "src/helpers/esp32/WebSocketCompanionServer.cpp"
         ws.parent.mkdir(parents=True)
-        ws.write_text((REPO / "v30/tests/browser_frames/term_fixture.inc").read_text())
-        subprocess.run(["python", str(APPLIER), str(upstream)], cwd=REPO, check=True)
+        ws.write_text((REPO / "v30/tests/browser_frames/term_fixture.inc").read_text() +
+                      "\nvoid WebSocketCompanionServer::serviceMirror(WebMirror& m) {\n"
+                      "  WsClientsLock _lk(_client_mtx);          // held for the whole (quick, non-blocking) pass\n}\n")
+        for name in ("V29EmergencyPortal.h", "V29EmergencyPortal.cpp"):
+            (ws.parent / name).write_bytes((REPO / "v29/overlay/src/helpers/esp32" / name).read_bytes())
+        ui = upstream / "src/ui-touch/UITask.cpp"
+        ui.parent.mkdir(parents=True)
+        ui.write_text((REPO / "v30/patches/portal/callback_v29.inc").read_text())
+        for _ in range(2):
+            subprocess.run(["python", str(APPLIER), str(upstream)], cwd=REPO, check=True)
+        require(ui.read_text(), "approvePending")
+        require(ws.read_text(), "v29_emergency_portal.active()")
+        require((ws.parent / "V29EmergencyPortal.cpp").read_text(), "executeApproved")
         require(ws.read_text(), "V30: no fragmented/reserved/unknown application frames.")
         pio = (upstream / "platformio.ini").read_text(encoding="utf-8")
         require(pio, "MESH_OFFGRIDNL_V29=1")
