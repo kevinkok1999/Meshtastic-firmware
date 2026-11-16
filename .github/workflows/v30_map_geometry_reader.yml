@@ -7,6 +7,7 @@ on:
       - "v30/maps/**"
       - "v30/overlay/src/ui-touch/**"
       - "v30/tests/test_map_pack.cpp"
+      - "v30/tests/esp32_geometry*"
       - "v30/tests/test_map_build.py"
       - "v30/tests/generate_reader_fixture.py"
       - ".github/workflows/v30_map_geometry_reader.yml"
