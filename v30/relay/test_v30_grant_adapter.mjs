@@ -21,7 +21,7 @@ const consumer = rawPublic(consumerDevice.publicKey);
 const scope = '11'.repeat(16);
 const message = '01'.repeat(16);
 const body = Buffer.from('opaque').toString('base64');
-const approved = ({scopeId, originId: origin, right}) =>
+const approved = ({scopeId, originId, right}) =>
   scopeId === scope && originId === origin && right === 'push';
 function issuePush(n, ttl = 5000, nonce = n.toString(16).padStart(32, '0'),
                    authorize = approved, key = device.privateKey) {
