@@ -5,7 +5,7 @@ This tool validates metadata and local artifact bytes. It never opens a serial,
 USB, or hardware device and never writes flash.
 """
 from __future__ import annotations
-import argparse, hashlib, json
+import argparse, hashlib, json, struct, zlib
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,12 @@ MAP_OFFSET = 0x7D0000
 MAP_SIZE = 0x4C0000
 SPIFFS_OFFSET = 0xC90000
 SPIFFS_SIZE = 0x360000
-MAX_PACK_METADATA = 0x380000  # 3.5 MiB
+MAX_PACK_SIZE = 0x380000  # 3.5 MiB logical pack, excluding image padding
+MAX_PACK_METADATA = 65_536  # native NanoMapPack metadata bound
+MAP_MAGIC = b"MMN1"
+MAP_FORMAT_VERSION = 1
+MAP_HEADER_SIZE = 10
+MAP_CRC_SIZE = 4
 
 
 class ManifestError(ValueError):
@@ -61,6 +66,46 @@ def _sha256(path: Path) -> tuple[int, str]:
             size += len(chunk)
             digest.update(chunk)
     return size, digest.hexdigest()
+
+
+
+def _validate_map(path: Path, item: dict[str, Any], manifest: dict[str, Any]) -> None:
+    pack_size = _int(item.get("pack_size"), "map.pack_size")
+    if not MAP_HEADER_SIZE + MAP_CRC_SIZE < pack_size <= MAX_PACK_SIZE:
+        raise ManifestError("map.pack_size must include header, metadata, payload and CRC32 within 3.5 MiB")
+    if type(item.get("padding_byte")) is not int or item["padding_byte"] != 255:
+        raise ManifestError("map.padding_byte must explicitly be 255 (0xFF)")
+    metadata_size = _int(manifest.get("pack_metadata_size"), "pack_metadata_size")
+    if not 0 < metadata_size <= MAX_PACK_METADATA:
+        raise ManifestError("map metadata must be 1..65536 bytes")
+    # The complete fixed-size image has already passed size/hash checks.
+    # Read a bounded image snapshot; neither the pack nor padding is inferred.
+    image = path.read_bytes()
+    if len(image) != MAP_SIZE:
+        raise ManifestError("map image size changed during validation")
+    pack = image[:pack_size]
+    if pack[:4] != MAP_MAGIC:
+        raise ManifestError("map pack magic must be MMN1")
+    version, actual_metadata_size = struct.unpack_from("<HI", pack, 4)
+    if version != MAP_FORMAT_VERSION:
+        raise ManifestError("map pack version must be 1")
+    if actual_metadata_size != metadata_size:
+        raise ManifestError("map metadata size mismatch between manifest and pack header")
+    if MAP_HEADER_SIZE + actual_metadata_size >= pack_size - MAP_CRC_SIZE:
+        raise ManifestError("map metadata extends beyond pack payload")
+    expected_crc = struct.unpack_from("<I", pack, pack_size - MAP_CRC_SIZE)[0]
+    if zlib.crc32(pack[:-MAP_CRC_SIZE]) & 0xffffffff != expected_crc:
+        raise ManifestError("map pack CRC32 mismatch")
+    try:
+        metadata = json.loads(pack[MAP_HEADER_SIZE:MAP_HEADER_SIZE + actual_metadata_size].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ManifestError("map metadata must be complete UTF-8 JSON") from exc
+    if not isinstance(metadata, dict) or type(metadata.get("version")) is not int or metadata["version"] != version:
+        raise ManifestError("map metadata version must match pack header version")
+    if any(value != 255 for value in image[pack_size:]):
+        raise ManifestError("map padding must contain only 0xFF bytes")
+    # CRC32 and SHA256 detect inconsistent bytes, not a trusted publisher.
+    # Production remains rejected until a separate trust anchor is configured.
 
 
 def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".") -> list[str]:
@@ -123,6 +168,8 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
         expected_hash = item.get("sha256")
         if not isinstance(expected_hash, str) or len(expected_hash) != 64 or expected_hash.lower() != actual_hash:
             raise ManifestError(f"{kind} sha256 mismatch")
+        if kind == "map":
+            _validate_map(path, item, manifest)
         end = offset + declared_size
         for other_start, other_end, other_kind in intervals:
             if offset < other_end and other_start < end:
@@ -139,7 +186,7 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
         raise ManifestError("pack_metadata_size is required when a map is present")
     metadata = _int(manifest.get("pack_metadata_size", 0), "pack_metadata_size")
     if metadata < 0 or metadata > MAX_PACK_METADATA:
-        raise ManifestError("pack metadata exceeds 3.5 MiB")
+        raise ManifestError("pack metadata exceeds 65536 bytes")
     return [f"validated {len(artifacts)} artifacts", "offline/read-only validation", "hashes checked; signature status is independent"]
 
 
