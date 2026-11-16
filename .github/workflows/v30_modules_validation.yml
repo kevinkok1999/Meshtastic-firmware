@@ -18,3 +18,13 @@ jobs:
           /tmp/v30-envelope
       - name: Test MeshMap Nano development pack
         run: python -m unittest discover -s v30/tests -p test_map_build.py -v
+      - name: Test conservative airtime accounting
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_airtime.cpp v30/overlay/src/helpers/esp32/V30AirtimeGovernor.cpp -o /tmp/v30-airtime
+          /tmp/v30-airtime
+      - name: Test guarded channel onboarding contract
+        run: |
+          python -m unittest discover -s v30/tests -p test_channel_direct_join.py -v
+          python -m unittest discover -s v30/tests -p test_apply_channel_v30.py -v
+      - name: Test read-only installer validation
+        run: python -m unittest discover -s v30/tests -p test_verify_install_manifest.py -v
