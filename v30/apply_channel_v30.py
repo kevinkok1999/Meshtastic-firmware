@@ -34,15 +34,28 @@ def main():
     direct='''#if defined(MESH_OFFGRIDNL_V30)
   {
     const char* raw = lv_textarea_get_text(s_addch_secret_ta);
-    char compact[33] = {}; size_t n = 0;
-    for (const char* p = raw; *p && n < sizeof(compact)-1; ++p)
-      if (*p != ' ' && *p != '\\t' && *p != '\\r' && *p != '\\n') compact[n++] = *p;
+    char compact[33] = {}; size_t n = 0; bool overflow = false;
+    for (const char* p = raw; *p; ++p) {
+      if (*p == ' ' || *p == '\\\\t' || *p == '\\\\r' || *p == '\\\\n') continue;
+      if (n >= sizeof(compact)-1) { overflow = true; continue; }
+      compact[n++] = *p;
+    }
     uint8_t secret[16] = {};
+    if (overflow) { memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Input is too long.")); return; }
     if (v30_direct_join::parseKey(compact, n, secret)) {
-      const int slot = the_mesh.findFirstEmptyChannelSlot();
-      if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
+      int slot = -1; char existing_name[32] = {};
+#ifdef MAX_GROUP_CHANNELS
+      for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        ChannelDetails cd{};
+        if (the_mesh.getChannel(i, cd) && memcmp(cd.channel.secret, secret, sizeof(secret)) == 0) {
+          slot = i; strncpy(existing_name, cd.name, sizeof(existing_name)-1); break;
+        }
+      }
+#endif
+      if (slot < 0) slot = the_mesh.findFirstEmptyChannelSlot();
+      if (slot < 0) { memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Channel table is full.")); return; }
       const char* entered = s_addch_name_ta ? lv_textarea_get_text(s_addch_name_ta) : nullptr;
-      const char* label = (entered && entered[0]) ? entered : "Private";
+      const char* label = existing_name[0] ? existing_name : ((entered && entered[0]) ? entered : "Private");
       if (!the_mesh.uiAddOrUpdateChannel(slot, label, secret)) {
         memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Failed to save channel.")); return;
       }
