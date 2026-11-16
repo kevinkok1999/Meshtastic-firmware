@@ -38,12 +38,19 @@ void Dispatcher::loop() {
   }
 }
 void Dispatcher::checkSend() {
-  if (!outbound) {
+  if (outbound) {
+    if (len + outbound->payload_len > MAX_TRANS_UNIT) {
+      _mgr->free(outbound);
+      outbound = NULL;
+    } else {
+      uint32_t max_airtime = _radio->getEstAirtimeFor(len)*3/2;
+      outbound_start = _ms->getMillis();
     bool success = _radio->startSendRaw(outbound_raw, len);
     if (!success) {
         logTxFail(outbound, outbound->getRawLength());
       releasePacket(outbound);
       outbound = NULL;
+    }
     }
   }
 }
@@ -61,6 +68,10 @@ def main() -> None:
     header, source = module.patch_sources(HEADER, SOURCE)
     assert header.count("onV30TxComplete") == 1
     assert source.count("onV30TxComplete") == 3
+    assert header.count("onV30TxAdmission") == 1
+    assert header.count("onV30TxDropped") == 1
+    assert source.count("onV30TxAdmission") == 1
+    assert source.count("onV30TxDropped") == 2
     assert "onV30TxComplete(outbound, true, static_cast<uint32_t>(t));" in source
     assert "onV30TxComplete(outbound, false, static_cast<uint32_t>(_ms->getMillis() - outbound_start));" in source
     assert "onV30TxComplete(outbound, false, 0);" in source
@@ -85,6 +96,10 @@ def main() -> None:
         hp, sp = module.patch_dependency(root)
         assert hp.read_text().count("onV30TxComplete") == 1
         assert sp.read_text().count("onV30TxComplete") == 3
+        assert hp.read_text().count("onV30TxAdmission") == 1
+        assert hp.read_text().count("onV30TxDropped") == 1
+        assert sp.read_text().count("onV30TxAdmission") == 1
+        assert sp.read_text().count("onV30TxDropped") == 2
         try:
             module.patch_dependency(root)
         except module.PatchError:
