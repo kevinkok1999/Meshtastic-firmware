@@ -14,7 +14,7 @@ class OSMIngestionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.source = self.root / "sample.osm"
-        self.source.write_text((Path(__file__).parent / "fixtures" / "osm_sample.osm").read_text())
+        self.source.write_text((Path(__file__).parents[1] / "maps" / "fixtures" / "osm_sample.osm").read_text())
     def tearDown(self):
         self.tmp.cleanup()
     def test_xml_normalizes_contract_and_provenance(self):
