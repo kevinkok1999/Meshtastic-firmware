@@ -16,5 +16,6 @@ int main(int argc,char**argv){
  std::FILE*partial=std::fopen(path,"wb"); assert(partial); std::fseek(partial,long(4*sizeof(v30::V30JournalRecord))-2,SEEK_SET); std::fputc(0,partial); std::fclose(partial); assert(!v30::V30FileJournalStorage(path,4).isEmpty(0));
  std::FILE*payload=std::fopen(path,"r+b"); assert(payload); std::fseek(payload,long(4*sizeof(v30::V30JournalRecord))-1,SEEK_SET); std::fputc(0,payload); std::fseek(payload,long(sizeof(v30::V30JournalRecord))-1,SEEK_SET); std::fputc(1,payload); std::fclose(payload); { v30::V30FileJournalStorage nonzero(path,4); v30::V30Journal j4(nonzero); auto r=j4.recover(); assert(r.degraded); }
  { v30::V30FileJournalStorage missing("/no/such/v30-journal-file",4); v30::V30JournalRecord r{}; assert(!missing.read(0,r)); assert(!missing.isEmpty(0)); assert(!missing.flush()); }
+ { v30::V30FileJournalStorage overflow(path,size_t(-1)); assert(!overflow.isEmpty(0)); assert(!overflow.clear(0)); }
  return 0;
 }
