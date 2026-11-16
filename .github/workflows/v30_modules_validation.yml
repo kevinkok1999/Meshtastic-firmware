@@ -39,3 +39,5 @@ jobs:
           /tmp/v30-term
       - name: Test isolated V30 relay contract
         run: node --test v30/relay/test_v30_relay.mjs
+      - name: Test OSM source ingestion and province assignment
+        run: python -m unittest discover -s v30/tests -p test_osm_ingest.py -v

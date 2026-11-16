@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="v30-test">
+  <node id="1" lat="52.10" lon="5.10"/>
+  <node id="2" lat="52.11" lon="5.11"/>
+  <node id="3" lat="52.12" lon="5.12"/>
+  <node id="4" lat="52.13" lon="5.13"/>
+  <node id="5" lat="52.14" lon="5.14"/>
+  <node id="6" lat="52.15" lon="5.15"/>
+  <node id="7" lat="52.16" lon="5.16"/>
+  <node id="8" lat="52.17" lon="5.17"/>
+  <node id="9" lat="52.18" lon="5.18"/>
+  <node id="10" lat="52.19" lon="5.19"/>
+  <node id="11" lat="52.20" lon="5.20"/>
+  <node id="12" lat="52.21" lon="5.21"/>
+  <way id="101"><nd ref="1"/><nd ref="2"/><tag k="highway" v="primary"/><tag k="province" v="Drenthe"/><tag k="name" v="N1"/></way>
+  <way id="102"><nd ref="2"/><nd ref="3"/><tag k="highway" v="trunk"/><tag k="province" v="Flevoland"/></way>
+  <way id="103"><nd ref="3"/><nd ref="4"/><tag k="highway" v="secondary"/><tag k="province" v="Friesland"/></way>
+  <way id="104"><nd ref="4"/><nd ref="5"/><tag k="highway" v="tertiary"/><tag k="province" v="Gelderland"/></way>
+  <way id="105"><nd ref="5"/><nd ref="6"/><tag k="highway" v="motorway"/><tag k="province" v="Groningen"/></way>
+  <way id="106"><nd ref="6"/><nd ref="7"/><tag k="waterway" v="river"/><tag k="province" v="Limburg"/></way>
+  <way id="107"><nd ref="7"/><nd ref="8"/><tag k="highway" v="residential"/><tag k="province" v="Noord-Brabant"/></way>
+  <way id="108"><nd ref="8"/><nd ref="9"/><tag k="highway" v="residential"/><tag k="province" v="Noord-Holland"/></way>
+  <way id="109"><nd ref="9"/><nd ref="10"/><tag k="boundary" v="administrative"/><tag k="province" v="Overijssel"/></way>
+  <way id="110"><nd ref="10"/><nd ref="11"/><tag k="highway" v="residential"/><tag k="province" v="Utrecht"/></way>
+  <way id="111"><nd ref="11"/><nd ref="12"/><tag k="highway" v="residential"/><tag k="province" v="Zeeland"/></way>
+  <node id="20" lat="52.30" lon="5.30"><tag k="place" v="town"/><tag k="province" v="Zuid-Holland"/><tag k="name" v="Teststad"/></node>
+</osm>

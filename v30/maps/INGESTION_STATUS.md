@@ -1,0 +1,3 @@
+# Source ingestion development status
+
+The tested OSM XML adapter and optional PBF path produce normalized JSONL plus provenance. The 12-province boundary fixture is synthetic; it is not a production administrative polygon input. The national PBF path is not exercised by the host fixture. Province assignment by mean coordinate for ways is an initial approximation: boundary-straddling or offshore features can fail and geometry relations are not reconstructed. A real nationally complete extraction, spatial index, provenance/license review, coverage measurement and signed pack are release blockers. No external SD requirement is introduced by this code.
