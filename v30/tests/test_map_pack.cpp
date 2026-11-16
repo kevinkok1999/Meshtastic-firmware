@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
   assert(pack.open(corrupt.data(), corrupt.size()) == PackStatus::MetadataOutOfBounds);
   corrupt = bytes;
   std::string metadata(reinterpret_cast<const char *>(corrupt.data() + 10), static_cast<size_t>(corrupt[6]) | (static_cast<size_t>(corrupt[7]) << 8) | (static_cast<size_t>(corrupt[8]) << 16) | (static_cast<size_t>(corrupt[9]) << 24));
-  const size_t featureKey = metadata.find("\\\"features\\\":12");
+  const size_t featureKey = metadata.find("\"features\":12");
   assert(featureKey != std::string::npos);
   corrupt[10 + featureKey + 11] = 'x';
   write32(corrupt, corrupt.size() - 4, crc32(corrupt.data(), corrupt.size() - 4));
