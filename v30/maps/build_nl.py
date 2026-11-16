@@ -171,7 +171,7 @@ def _encode(features: list[dict[str, Any]], profile: dict[str, Any]) -> tuple[by
     omitted_by_kind: dict[str, int] = {}
     return compressed, packed, omitted_by_kind, len(names), {k: sum(f["kind"] == k for f in features) for k in REQUIRED_KINDS}
 
-def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_sha: str, data_date: str | None) -> tuple[bytes, int, dict[str, int], int, dict[str, int]]:
+def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_sha: str, data_date: str | None) -> tuple[bytes, int, dict[str, int], int, dict[str, int], list[dict[str, Any]]]:
     # Drop the lowest-priority records one at a time only if the budget demands it.
     priorities = profile.get("feature_priorities", {})
     working = list(features)
@@ -209,7 +209,7 @@ def build_pack(source_path: str | Path, profile: str | Path | dict[str, Any], ou
         min(f["bbox"][0] for f in features), min(f["bbox"][1] for f in features),
         max(f["bbox"][2] for f in features), max(f["bbox"][3] for f in features),
     )
-    zoom_inventory = {str(z): sum(1 for f in features if f["zoom_min"] <= z) for z in range(3, 20)}
+    zoom_inventory = {str(z): sum(1 for f in retained if f["zoom_min"] <= z) for z in range(3, 20)}
     report = BuildReport(
         bytes_written=len(pack), budget_bytes=int(profile_obj.get("pack_budget_bytes", DEFAULT_BUDGET)),
         source_features=len(features), packed_features=packed, omitted_features=sum(omitted.values()),
