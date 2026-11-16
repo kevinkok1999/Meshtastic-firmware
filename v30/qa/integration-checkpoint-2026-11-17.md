@@ -12,3 +12,5 @@ No release or hardware ACK claim. V29 branch remains unchanged.
 - Central isolated host run 43982743373 completed successfully on 7b2ddcb4; embedded run 43982803887 remained in progress at this checkpoint.
 
 - Actual local HTTP relay candidate integrated after run 43983477658: two independent Ed25519 clients, client-encrypted payload message exchange over loopback HTTP, durable snapshot/replay after restart, denied invalid and oversized requests and fail-closed disk failures. This is an unexposed single-process development service, not a worldwide HTTPS deployment; no device onboarding, deployed TLS, distributed persistence or native/browser sync proof yet.
+
+- Real file journal backend integrated as dormant module, with exact extent and zero-slot verification, no corrupt-record overwrite, bounded offset arithmetic, durable write/clear and reopen. Code compiled for the actual pinned T-Deck target run 43983051935; additional clear regression passed host on 30a8e56f. Mount/provisioning, actual message-journal binding, and physical power-cut remain unverified; no activation.

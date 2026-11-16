@@ -56,3 +56,7 @@ jobs:
         run: node --test v30/relay/test_v30_grant_adapter.mjs
       - name: Test actual relay HTTP two-client and restart contract
         run: node --test v30/relay/test_v30_http.mjs
+      - name: Test real durable file journal backend
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -I. v30/overlay/src/helpers/esp32/V30Journal.cpp v30/overlay/src/helpers/esp32/V30FileJournalStorage.cpp v30/tests/test_journal_storage.cpp -o /tmp/v30-file-journal
+          /tmp/v30-file-journal /tmp/v30-journal.bin
