@@ -1,0 +1,37 @@
+name: V30 Native Map Reader
+
+on:
+  push:
+    branches: [v30-map-reader]
+    paths:
+      - "v30/maps/**"
+      - "v30/overlay/src/ui-touch/NanoMapPack.*"
+      - "v30/tests/test_map_pack.cpp"
+      - "v30/tests/generate_reader_fixture.py"
+      - ".github/workflows/v30_map_reader.yml"
+  pull_request:
+    paths:
+      - "v30/maps/**"
+      - "v30/overlay/src/ui-touch/NanoMapPack.*"
+      - "v30/tests/test_map_pack.cpp"
+      - "v30/tests/generate_reader_fixture.py"
+      - ".github/workflows/v30_map_reader.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  host-reader:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate fixture with M1 builder
+        run: python v30/tests/generate_reader_fixture.py /tmp/reader-fixture.meshmap
+      - name: Compile native reader host test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror             v30/overlay/src/ui-touch/NanoMapPack.cpp             v30/tests/test_map_pack.cpp             -o /tmp/test_map_pack
+      - name: Run bounds, checksum and lookup tests
+        run: /tmp/test_map_pack /tmp/reader-fixture.meshmap
