@@ -106,6 +106,25 @@ int main(int argc, char **argv) {
   assert(selected >= 1);
 
 
+  // Valid records exceed the dictionary size and exercise streaming wraparound.
+  std::vector<uint8_t> wrapped;
+  for (size_t i = 0; i < 12; ++i) {
+    std::vector<uint8_t> points;
+    varuint(points, 4096);
+    delta(points, 400000); delta(points, 5100000);
+    for (size_t n = 1; n < 4096; ++n) { delta(points, 1); delta(points, 0); }
+    varuint(wrapped, 1); varuint(wrapped, 0); varuint(wrapped, 8);
+    varuint(wrapped, points.size());
+    wrapped.insert(wrapped.end(), points.begin(), points.end());
+    varuint(wrapped, 7);
+    wrapped.insert(wrapped.end(), {'p','r','i','m','a','r','y'});
+  }
+  auto validWrapped = replaceBody(bytes, wrapped);
+  assert(pack.open(validWrapped.data(), validWrapped.size()) == PackStatus::Ok);
+  size_t wrappedCount = 0;
+  assert(pack.forEachFeature(3, 50, 7, 54, 19, [&](const auto &) { ++wrappedCount; return true; }));
+  assert(wrappedCount == 12 * 4095);
+
   // Both source endpoints are outside; output must be clipped to viewport edges.
   auto crossing = replaceBody(bytes, crossingBody());
   assert(pack.open(crossing.data(), crossing.size()) == PackStatus::Ok);
