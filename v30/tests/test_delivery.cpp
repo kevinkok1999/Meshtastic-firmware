@@ -62,19 +62,17 @@ int main() {
   assert(journal.applyReceipt(good) == JournalReceiptResult::Applied);
   assert(journal.applyReceipt(good) == JournalReceiptResult::Duplicate);
 
-  // Reboot recovery retains durable identity and does not duplicate UI admission.
   V30Journal rebooted(storage);
   auto rec = rebooted.recover();
   assert(rec.validRecords >= 1);
   assert(rebooted.receive(first) == JournalAckAction::DuplicateAck);
 
-  // A torn/latest record is discarded while the earlier valid identity remains.
-  storage.corrupt(storage.cap - 1);
+  // Corrupt the latest receipt record; an earlier valid identity remains.
+  storage.corrupt(3);
   V30Journal recovered(storage);
   recovered.recover();
   assert(recovered.receive(first) == JournalAckAction::DuplicateAck);
 
-  // Storage failure must never produce an ACK.
   MemoryStorage failing(4);
   failing.failWrite = true;
   V30Journal noAck(failing);
@@ -82,18 +80,16 @@ int main() {
   assert(noAck.receive(incoming) == JournalAckAction::NoAck);
   assert(noAck.count() == 0);
 
-  // Full bounded capacity rejects the 257th distinct message.
   MemoryStorage bounded(kV30JournalMaxRecords);
   V30Journal full(bounded);
   for (size_t i = 0; i < kV30JournalMaxRecords; ++i)
     assert(full.admit(bundle(static_cast<uint8_t>(i))) == JournalAdmission::Durable);
-  assert(full.admit(bundle(0xFE)) == JournalAdmission::Durable); // duplicate, even when full
+  assert(full.admit(bundle(0xFE)) == JournalAdmission::Durable);
   V30JournalBundle extra = bundle(0xFF);
   memset(extra.origin, 0xEE, sizeof(extra.origin));
   memset(extra.messageId, 0xDD, sizeof(extra.messageId));
   assert(full.admit(extra) == JournalAdmission::Rejected);
 
-  // Explicit reduced physical capacity is honoured.
   MemoryStorage small(2);
   V30Journal limited(small);
   assert(limited.capacity() == 2);
