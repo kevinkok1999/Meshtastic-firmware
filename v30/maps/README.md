@@ -30,3 +30,30 @@ This M1 checkpoint is not activated for firmware: it has no native spatial index
 ## Native reader scope
 
 `NanoMapPack` currently validates the bounded container, metadata, CRC32 and name dictionary lookups. It deliberately does not decode zlib geometry or integrate with the LVGL renderer; those remain later M2/M3 gates.
+
+## Read-only install manifest map artifact
+
+The verifier `v30/installer/verify_install_manifest.py` accepts a development
+map image with these fields. All sizes are bytes.
+
+| Field | Required value |
+| --- | --- |
+| artifact `kind` | `"map"` |
+| artifact `offset` | `8192000` (`0x7D0000`) |
+| artifact `size` | `4980736` (`0x4C0000`, 4.75 MiB) |
+| artifact `pack_size` | Exact unpadded `build_nl.py` output length, at most `3670016` |
+| artifact `padding_byte` | Integer `255` (`0xFF`) |
+| artifact `sha256` | SHA256 of the entire padded image |
+| manifest `pack_metadata_size` | Exact little-endian metadata length from pack bytes 6..9, `1..65536` |
+
+Construct the image as the unmodified logical pack followed by `0xFF` bytes
+until its length is exactly `0x4C0000`. The pack begins with `MMN1`,
+little-endian uint16 format version `1`, little-endian uint32 metadata
+length, UTF-8 JSON metadata, compressed payload, and a little-endian CRC32
+of all preceding logical pack bytes. The metadata's integer `version`
+must equal the header version. Padding is outside the logical CRC32.
+
+The verifier checks declared sizes against the file and header, the logical
+CRC32, and every padding byte. It does not write flash or authorize installation.
+Production manifests remain rejected; CRC32 and hashes are not publisher
+signatures. SPIFFS, NVS and other non-allowlisted partition roles remain rejected.
