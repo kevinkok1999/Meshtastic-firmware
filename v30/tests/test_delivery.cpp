@@ -3,36 +3,12 @@
 #include <string.h>
 #include <stdio.h>
 using namespace v30;
-struct MemoryStorage final : V30JournalStorage {
-  V30JournalRecord records[kV30JournalMaxRecords]{};
-  bool present[kV30JournalMaxRecords]{};
-  size_t cap; bool failWrite=false;
-  explicit MemoryStorage(size_t c=kV30JournalMaxRecords):cap(c){}
-  size_t capacity()const override{return cap;}
-  bool read(size_t i,V30JournalRecord&out)override{
-    if(i>=cap||!present[i]) return false;
-    out=records[i]; return true;
-  }
-  bool write(size_t i,const V30JournalRecord&in)override{if(failWrite||i>=cap)return false;records[i]=in;present[i]=true;return true;}
-  bool clear(size_t i)override{if(i>=cap)return false;present[i]=false;return true;}
-  bool flush()override{return !failWrite;}
-  void corrupt(size_t i){if(i<cap&&present[i])records[i].crc32^=1u;}
-};
-static V30JournalBundle bundle(uint8_t n,uint8_t peer=0xA0){V30JournalBundle b{};b.critical=1;memset(b.origin,n,32);memset(b.messageId,n+1,16);memset(b.peer,peer,32);b.payloadLen=3;b.payload[0]='v';b.payload[1]='3';b.payload[2]=n;return b;}
-static V30JournalReceipt receiptFor(const V30JournalBundle&b,uint8_t sender){V30JournalReceipt r{};memset(r.sender,sender,32);memcpy(r.recipient,b.origin,32);memcpy(r.origin,b.origin,32);memcpy(r.messageId,b.messageId,16);return r;}
-int main(){
-  MemoryStorage storage; V30Journal journal(storage); assert(journal.recover().validRecords==0);
-  auto first=bundle(1); assert(journal.admit(first)==JournalAdmission::Durable); assert(journal.receive(first)==JournalAckAction::DuplicateAck); assert(journal.count()==1);
-  assert(journal.markTxAttempt(first)); assert(journal.markTxComplete(first));
-  auto wrong=receiptFor(first,0xB0); assert(journal.applyReceipt(wrong)==JournalReceiptResult::Rejected);
-  auto good=receiptFor(first,0xA0); assert(journal.applyReceipt(good)==JournalReceiptResult::Applied); assert(journal.applyReceipt(good)==JournalReceiptResult::Duplicate);
-  V30Journal rebooted(storage); assert(rebooted.recover().validRecords>=1); assert(rebooted.receive(first)==JournalAckAction::DuplicateAck);
-  storage.corrupt(3); V30Journal recovered(storage); recovered.recover(); assert(recovered.receive(first)==JournalAckAction::DuplicateAck);
-  MemoryStorage failing(4); failing.failWrite=true; V30Journal noAck(failing); auto incoming=bundle(9,0xC0); assert(noAck.receive(incoming)==JournalAckAction::NoAck); assert(noAck.count()==0);
-  MemoryStorage bounded(kV30JournalMaxRecords); V30Journal full(bounded);
-  for(size_t i=0;i<kV30JournalMaxRecords;++i) assert(full.admit(bundle((uint8_t)i))==JournalAdmission::Durable);
-  assert(full.admit(bundle(0xFE))==JournalAdmission::Durable);
-  V30JournalBundle extra=bundle(0xFF);memset(extra.origin,0xEE,32);memset(extra.messageId,0xDD,16);assert(full.admit(extra)==JournalAdmission::Rejected);
-  MemoryStorage small(2);V30Journal limited(small);assert(limited.capacity()==2);assert(limited.admit(bundle(20))==JournalAdmission::Durable);assert(limited.admit(bundle(21))==JournalAdmission::Durable);assert(limited.receive(bundle(22))==JournalAckAction::NoAck);
-  puts("v30 journal tests passed"); return 0;
-}
+struct MemoryStorage final:V30JournalStorage{V30JournalRecord records[kV30JournalMaxRecords]{};bool present[kV30JournalMaxRecords]{};size_t cap;bool failWrite=false;explicit MemoryStorage(size_t c=kV30JournalMaxRecords):cap(c){}size_t capacity()const override{return cap;}bool read(size_t i,V30JournalRecord&o)override{if(i>=cap||!present[i])return false;o=records[i];return true;}bool write(size_t i,const V30JournalRecord&r)override{if(failWrite||i>=cap)return false;records[i]=r;present[i]=true;return true;}bool clear(size_t i)override{if(i>=cap)return false;present[i]=false;return true;}bool flush()override{return !failWrite;}void corrupt(size_t i){if(i<cap&&present[i])records[i].crc32^=1;}};
+static V30JournalBundle bundle(uint8_t n,uint8_t peer=0xA0,JournalDirection d=JournalDirection::Outbound){V30JournalBundle b{};b.critical=1;b.direction=d;b.authenticated=1;memset(b.origin,n,32);memset(b.messageId,n+1,16);memset(b.peer,peer,32);b.payloadLen=3;b.payload[0]='v';b.payload[1]='3';b.payload[2]=n;return b;}
+static V30JournalReceipt receiptFor(const V30JournalBundle&b,uint8_t sender){V30JournalReceipt r{};r.authenticated=1;memset(r.sender,sender,32);memcpy(r.recipient,b.origin,32);memcpy(r.origin,b.origin,32);memcpy(r.messageId,b.messageId,16);return r;}
+int main(){MemoryStorage s;V30Journal j(s);assert(j.recover().validRecords==0);auto first=bundle(1);assert(j.admit(first)==JournalAdmission::Durable);assert(j.markTxAttempt(first));assert(j.markTxComplete(first));auto wrong=receiptFor(first,0xB0);assert(j.applyReceipt(wrong)==JournalReceiptResult::Rejected);auto good=receiptFor(first,0xA0);assert(j.applyReceipt(good)==JournalReceiptResult::Applied);assert(j.applyReceipt(good)==JournalReceiptResult::Duplicate);
+ V30Journal reboot(s);assert(reboot.recover().validRecords>=1);assert(reboot.applyReceipt(good)==JournalReceiptResult::Duplicate);s.corrupt(3);V30Journal recovered(s);recovered.recover();assert(recovered.applyReceipt(good)==JournalReceiptResult::Applied);
+ auto inbound=bundle(9,0xC0,JournalDirection::Inbound);assert(recovered.receive(inbound)==JournalAckAction::AckAfterDurable);assert(recovered.receive(inbound)==JournalAckAction::DuplicateAck);
+ MemoryStorage fail(4);fail.failWrite=true;V30Journal noAck(fail);assert(noAck.receive(bundle(10,0xC0,JournalDirection::Inbound))==JournalAckAction::NoAck);
+ MemoryStorage bounded(kV30JournalMaxRecords);V30Journal full(bounded);for(size_t i=0;i<kV30JournalMaxRecords;++i)assert(full.admit(bundle((uint8_t)i))==JournalAdmission::Durable);assert(full.admit(bundle(0xFE))==JournalAdmission::Durable);auto extra=bundle(0xFF);memset(extra.origin,0xEE,32);memset(extra.messageId,0xDD,16);assert(full.admit(extra)==JournalAdmission::Rejected);assert(!full.markTxAttempt(bundle(0)));V30Journal fullReboot(bounded);assert(fullReboot.recover().validRecords==kV30JournalMaxRecords);assert(fullReboot.admit(bundle(0))==JournalAdmission::Durable);
+ MemoryStorage small(2);V30Journal limited(small);assert(limited.admit(bundle(20))==JournalAdmission::Durable);assert(limited.admit(bundle(21))==JournalAdmission::Durable);assert(limited.receive(bundle(22,0xA0,JournalDirection::Inbound))==JournalAckAction::NoAck);puts("v30 journal tests passed");return 0;}
