@@ -34,6 +34,11 @@ def main() -> None:
     if "MESH_OFFGRIDNL_V30=1" not in block:
         block = once(block, "  -D MESH_OFFGRIDNL_V29=1\n", "  -D MESH_OFFGRIDNL_V29=1\n  -D MESH_OFFGRIDNL_V30=1\n", "V30 build flag")
         pio_path.write_text(pio[:start] + block + pio[end:], encoding="utf-8")
+    core_tag = "https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4"
+    core_pin = "https://github.com/ALLFATHER-BV/meshcomod.git#" + MESHCORE_SHA
+    if core_tag in pio:
+        pio = pio.replace(core_tag, core_pin)
+        pio_path.write_text(pio, encoding="utf-8")
     overlay = here / "overlay"
     for src in overlay.rglob("*"):
         if src.is_file():
@@ -45,15 +50,14 @@ def main() -> None:
     if "V30EmergencyTransport.h" not in mesh_cpp:
         mesh_cpp = once(mesh_cpp, include, include + '#include "helpers/esp32/V30EmergencyTransport.h"\n', "V30 transport include")
     old = """bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {\n  if (!data || len == 0 || len > MAX_PACKET_PAYLOAD) return false;\n  mesh::Packet* pkt = createRawData(data, len);\n  if (!pkt) return false;\n  sendFlood(pkt, 0, floodPathHashSize());\n  return true;\n}\n"""
-    new = """bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {\n#if defined(MESH_OFFGRIDNL_V30)\n  static uint32_t next_attempt = 0;\n  const uint64_t cookie = ++next_attempt;\n  #if !defined(MESH_OFFGRIDNL_V30_EXPERIMENTAL)\n  (void)data; (void)len; (void)cookie;\n  return false;\n#else\n  const auto admission = v30TryEnqueueEmergencyRaw(data, len, cookie, 2);\n  if (admission != TxAdmission::Accepted) return false;\n  v30::V30RawFrame frame{};\n  if (!v30::v30TakeEmergencyRaw(frame)) return false;\n  mesh::Packet* pkt = createRawData(frame.data, frame.len);\n  if (!pkt) return false;\n  // Emergency RAW is direct/zero-hop only. Enqueue is not TX completion; the\n  // dispatcher completion hook must call onV30TxResult(cookie, ...).\n  sendZeroHop(pkt, 0);\n  return true;\n#endif\n#else\n  if (!data || len == 0 || len > MAX_PACKET_PAYLOAD) return false;\n  mesh::Packet* pkt = createRawData(data, len);\n  if (!pkt) return false;\n  sendFlood(pkt, 0, floodPathHashSize());\n  return true;\n#endif\n}\n"""
+    new = """bool MyMesh::v29SendEmergencyRaw(const uint8_t* data, size_t len) {\n#if defined(MESH_OFFGRIDNL_V30) && defined(MESH_OFFGRIDNL_V30_EXPERIMENTAL) && MESH_OFFGRIDNL_V30_EXPERIMENTAL\n  static uint32_t next_attempt = 0;\n  const uint64_t cookie = ++next_attempt;\n  const auto admission = v30TryEnqueueEmergencyRaw(data, len, cookie, 2);\n  if (admission != TxAdmission::Accepted) return false;\n  v30::V30RawFrame frame{};\n  if (!v30::v30TakeEmergencyRaw(frame)) return false;\n  mesh::Packet* pkt = createRawData(frame.data, frame.len);\n  if (!pkt) return false;\n  // Emergency RAW is direct/zero-hop only. Enqueue is not TX completion; the\n  // dispatcher completion hook must call onV30TxResult(cookie, ...).\n  sendZeroHop(pkt, 0);\n  return true;\n#endif\n#else\n  if (!data || len == 0 || len > MAX_PACKET_PAYLOAD) return false;\n  mesh::Packet* pkt = createRawData(data, len);\n  if (!pkt) return false;\n  sendFlood(pkt, 0, floodPathHashSize());\n  return true;\n#endif\n}\n"""
     if "v30TryEnqueueEmergencyRaw" not in mesh_cpp:
         mesh_cpp = once(mesh_cpp, old, new, "V30 emergency sender")
     mesh_cpp_path.write_text(mesh_cpp, encoding="utf-8")
     # The receive hook is additive. V30 magic is terminally owned; unrelated
     # native RAW still reaches the existing V29/serial handler.
     raw_anchor = "void MyMesh::onRawDataRecv(mesh::Packet *packet) {\n"
-    raw_new = """void MyMesh::onRawDataRecv(mesh::Packet *packet) {\n#if defined(MESH_OFFGRIDNL_V30)\n  if (packet) {\n    const auto decision = v30::v30ParseRaw(packet->payload, packet->payload_len,\n                                            packet->isRouteDirect());\n    // Keep the V29 recognizer authoritative for legacy M29 frames; its\n    // invalid-frame path already consumes them. V30-owned magic is terminal.\n    const bool legacy_m29 = packet->payload_len >= 3 &&\n        packet->payload[0] == 'M' && packet->payload[1] == '2' &&\n        packet->payload[2] == '9';\n    if (decision != v30::RawDecision::Unrelated && !legacy_m29) return;\n#endif\n  }\n#endif\n"""
-    if "v30::v30ParseRaw" not in mesh_cpp:
+    raw_new = """void MyMesh::onRawDataRecv(mesh::Packet *packet) {\n#if defined(MESH_OFFGRIDNL_V30) && defined(MESH_OFFGRIDNL_V30_EXPERIMENTAL) && MESH_OFFGRIDNL_V30_EXPERIMENTAL\n  if (packet) {\n    const auto decision = v30::v30ParseRaw(packet->payload, packet->payload_len,\n                                            packet->isRouteDirect());\n    const bool legacy_m29 = packet->payload_len >= 3 &&\n        packet->payload[0] == 'M' && packet->payload[1] == '2' &&\n        packet->payload[2] == '9';\n    if (decision != v30::RawDecision::Unrelated && !legacy_m29) return;\n  }\n#endif\n"""    if "v30::v30ParseRaw" not in mesh_cpp:
         mesh_cpp = once(mesh_cpp, raw_anchor, raw_new, "V30 raw parser gate")
     mesh_cpp_path.write_text(mesh_cpp, encoding="utf-8")
     print("V30 overlay applied: WadaMesh=" + WADAMESH_SHA + " MeshCore=" + MESHCORE_SHA)
