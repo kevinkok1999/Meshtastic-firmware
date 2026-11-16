@@ -45,6 +45,17 @@ TIMEOUT_INSERT = (
     "#endif\n"
     + TIMEOUT_ANCHOR
 )
+SEND_INVALID_ANCHOR = (
+    "    _mgr->free(packet);\n"
+    "  } else {\n"
+    "    if (packet->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {\n"
+)
+SEND_INVALID_INSERT = (
+    "#if defined(MESH_OFFGRIDNL_V30) && MESH_OFFGRIDNL_V30\n"
+    "    onV30TxDropped(packet, 3); // invalid packet before queue\n"
+    "#endif\n"
+    + SEND_INVALID_ANCHOR
+)
 INVALID_ANCHOR = (
     "      _mgr->free(outbound);\n"
     "      outbound = NULL;\n"
@@ -105,6 +116,7 @@ def patch_sources(header: str, source: str) -> tuple[str, str]:
     source = replace_once(source, TIMEOUT_ANCHOR, TIMEOUT_INSERT, "completion timeout")
     source = replace_once(source, START_FAIL_ANCHOR, START_FAIL_INSERT, "completion start failure")
     source = replace_once(source, INVALID_ANCHOR, INVALID_INSERT, "invalid wire length drop")
+    source = replace_once(source, SEND_INVALID_ANCHOR, SEND_INVALID_INSERT, "invalid pre-queue drop")
     source = replace_once(source, ADMISSION_ANCHOR, ADMISSION_INSERT, "pre-start admission")
     return header, source
 
