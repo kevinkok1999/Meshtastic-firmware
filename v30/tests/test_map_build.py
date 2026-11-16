@@ -70,6 +70,12 @@ class MapBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(BuildError, "exceeds budget|budget would remove"):
             build_pack(self.source, tiny, self.root / "tiny.meshmap")
 
+    def test_profile_budget_hard_cap(self):
+        too_large = dict(self.profile)
+        too_large["pack_budget_bytes"] = 3670017
+        with self.assertRaisesRegex(BuildError, "range"):
+            build_pack(self.source, too_large, self.root / "large-budget.meshmap")
+
     def test_profile_must_define_exactly_all_provinces(self):
         bad = dict(self.profile)
         bad["provinces"] = list(PROVINCES[:-1])
