@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Host regression for the opt-in V30 Dispatcher completion hook candidate."""
+from __future__ import annotations
+
+import importlib.util
+import pathlib
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+PATCH = REPO / "v30/extra_scripts/v30_dispatch_patch.py"
+APPLIER = REPO / "v30/apply_v30.py"
+
+HEADER = """#pragma once
+class Packet;
+using DispatcherAction = unsigned;
+class Dispatcher {
+protected:
+  virtual DispatcherAction onRecvPacket(Packet* pkt) = 0;
+};
+"""
+
+SOURCE = """#include "Dispatcher.h"
+void Dispatcher::loop() {
+  if (outbound) {
+    if (_radio->isSendComplete()) {
+      long t = _ms->getMillis() - outbound_start;
+      logTx(outbound, 2 + outbound->getPathByteLen() + outbound->payload_len);
+      _radio->onSendFinished();
+      releasePacket(outbound);
+      outbound = NULL;
+    } else if (millisHasNowPassed(outbound_expiry)) {
+      _radio->onSendFinished();
+      logTxFail(outbound, 2 + outbound->getPathByteLen() + outbound->payload_len);
+      releasePacket(outbound);
+      outbound = NULL;
+    }
+  }
+}
+void Dispatcher::checkSend() {
+  if (!outbound) {
+    bool success = _radio->startSendRaw(outbound_raw, len);
+    if (!success) {
+      logTxFail(outbound, outbound->getRawLength());
+      releasePacket(outbound);
+      outbound = NULL;
+    }
+  }
+}
+"""
+
+def load():
+    spec = importlib.util.spec_from_file_location("v30_dispatch_patch", PATCH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+def main() -> None:
+    module = load()
+    header, source = module.patch_sources(HEADER, SOURCE)
+    assert header.count("onV30TxComplete") == 1
+    assert source.count("onV30TxComplete") == 3
+    assert "onV30TxComplete(outbound, true, static_cast<uint32_t>(t));" in source
+    assert "onV30TxComplete(outbound, false, static_cast<uint32_t>(_ms->getMillis() - outbound_start));" in source
+    assert "onV30TxComplete(outbound, false, 0);" in source
+    try:
+        module.patch_sources(HEADER, SOURCE.replace("bool success = _radio->startSendRaw", "bool started = _radio->startSendRaw"))
+    except module.PatchError:
+        pass
+    else:
+        raise AssertionError("unsupported source shape must fail closed")
+    applier = APPLIER.read_text(encoding="utf-8")
+    assert "v30_dispatch_patch.py" not in applier
+    assert "custom_v30_dispatch_patch" not in applier
+    print("V30 Dispatcher hook candidate tests passed")
+
+if __name__ == "__main__":
+    main()
