@@ -39,8 +39,8 @@ bool validUtf8(const std::string &s) {
       if ((next & 0xc0) != 0x80) return false;
       codepoint = (codepoint << 6) | (next & 0x3f);
     }
-    if ((continuation == 2 && codepoint < 0x800) || (continuation == 3 && codepoint < 0x10000) ||\n        codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
-  }
+    if ((continuation == 2 && codepoint < 0x800) || (continuation == 3 && codepoint < 0x10000) ||
+        codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
   return true;
 }
 
