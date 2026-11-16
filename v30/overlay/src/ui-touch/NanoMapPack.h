@@ -48,6 +48,9 @@ class NanoMapPack {
   PackStatus status_ = PackStatus::TooSmall;
   size_t featureCount_ = 0;
   std::vector<std::string> names_;
+  const uint8_t *data_ = nullptr;
+  size_t size_ = 0;
+  size_t metadataSize_ = 0;
 };
 
 }  // namespace meshtastic::nanomap
