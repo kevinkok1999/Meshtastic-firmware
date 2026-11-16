@@ -10,5 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
-      - run: c++ -std=c++17 -Wall -Wextra -Werror v30/tests/browser_frames/test_term.cpp -o /tmp/v30-term
+      - run: python v30/tests/browser_frames/prepare_term_fixture.py /tmp/term_fixture.inc
+      - run: c++ -std=c++17 -Wall -Wextra -Werror -I /tmp v30/tests/browser_frames/test_term.cpp -o /tmp/v30-term
       - run: /tmp/v30-term
