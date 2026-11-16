@@ -12,6 +12,7 @@ from typing import Any
 FLASH_SIZE = 0x1000000
 BOARD = "lilygo-t-deck-plus"
 CHIP = "ESP32-S3"
+ALLOWED_KINDS = {"bootloader", "partition", "ota_data", "app0", "map"}
 EXPECTED_OFFSETS = {
     "bootloader": 0x000000,
     "partition": 0x008000,
@@ -33,7 +34,7 @@ class ManifestError(ValueError):
 
 
 def _int(value: Any, field: str) -> int:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()) or not isinstance(value, (str, int, float)):
         raise ManifestError(f"{field} must be an integer")
     try:
         return int(value, 0) if isinstance(value, str) else int(value)
@@ -77,6 +78,10 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         raise ManifestError("artifacts must be a non-empty list")
+    mode = manifest.get("install_mode", "initial")
+    if mode not in ("initial", "full-v30"):
+        raise ManifestError("install_mode must be initial or full-v30")
+    safe_mode = manifest.get("safe_mode") is True
     by_kind: dict[str, dict[str, Any]] = {}
     intervals: list[tuple[int, int, str]] = []
     for item in artifacts:
@@ -85,10 +90,18 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
         kind = item.get("kind")
         if not isinstance(kind, str) or kind in by_kind:
             raise ManifestError(f"duplicate or missing artifact kind: {kind!r}")
+        if kind not in ALLOWED_KINDS:
+            raise ManifestError(f"artifact kind is not allowlisted: {kind}")
+        if kind == "app1" and not safe_mode:
+            raise ManifestError("app1 requires explicit safe_mode")
         offset = _int(item.get("offset"), f"{kind}.offset")
         declared_size = _int(item.get("size"), f"{kind}.size")
-        if offset < 0 or declared_size < 0 or offset + declared_size > FLASH_SIZE:
+        if offset <= 0 or declared_size <= 0 or offset + declared_size > FLASH_SIZE:
             raise ManifestError(f"{kind} is outside 16 MiB flash")
+        if kind == "bootloader" and offset >= 0x8000:
+            raise ManifestError("bootloader must remain below partition table at 0x8000")
+        if kind == "partition" and (offset != 0x8000 or declared_size > 0x1000):
+            raise ManifestError("partition table must be at 0x8000 and no larger than 0x1000")
         if kind in EXPECTED_OFFSETS and offset != EXPECTED_OFFSETS[kind]:
             raise ManifestError(f"{kind} offset must be 0x{EXPECTED_OFFSETS[kind]:X}")
         if kind == "ota_data" and declared_size != 0x2000:
@@ -116,9 +129,14 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
                 raise ManifestError(f"{kind} overlaps {other_kind}")
         intervals.append((offset, end, kind))
         by_kind[kind] = item
-    missing = set(EXPECTED_OFFSETS) - set(by_kind)
+    required = {"bootloader", "partition", "ota_data", "app0"}
+    if mode == "full-v30":
+        required.add("map")
+    missing = required - set(by_kind)
     if missing:
         raise ManifestError("missing required artifacts: " + ", ".join(sorted(missing)))
+    if "map" in by_kind and "pack_metadata_size" not in manifest:
+        raise ManifestError("pack_metadata_size is required when a map is present")
     metadata = _int(manifest.get("pack_metadata_size", 0), "pack_metadata_size")
     if metadata < 0 or metadata > MAX_PACK_METADATA:
         raise ManifestError("pack metadata exceeds 3.5 MiB")
