@@ -2,7 +2,7 @@ name: V30 journal storage C++ host tests
 on:
   push:
     branches: [v30-work-journal-storage]
-    paths: ["v30/overlay/src/helpers/esp32/V30Journal*", "v30/tests/test_journal_storage.cpp", ".github/workflows/v30_journal_storage.yml"]
+    paths: ["v30/overlay/src/helpers/esp32/**", "v30/tests/test_journal_storage.cpp", ".github/workflows/v30_journal_storage.yml"]
   pull_request:
     branches: [v30-work-journal-storage]
     paths: ["v30/overlay/src/helpers/esp32/V30Journal*", "v30/tests/test_journal_storage.cpp", ".github/workflows/v30_journal_storage.yml"]
