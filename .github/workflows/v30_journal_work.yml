@@ -1,0 +1,26 @@
+name: V30 journal work
+
+on:
+  push:
+    branches: [v30-work-journal]
+    paths:
+      - 'v30/overlay/src/helpers/esp32/V30Journal.*'
+      - 'v30/tests/test_delivery.cpp'
+      - '.github/workflows/v30_journal_work.yml'
+  pull_request:
+    branches: [v30-work-journal]
+    paths:
+      - 'v30/overlay/src/helpers/esp32/V30Journal.*'
+      - 'v30/tests/test_delivery.cpp'
+      - '.github/workflows/v30_journal_work.yml'
+
+jobs:
+  host-journal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile bounded host suite
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic             v30/overlay/src/helpers/esp32/V30Journal.cpp             v30/tests/test_delivery.cpp             -o /tmp/v30-journal-test
+      - name: Run bounded host suite
+        run: /tmp/v30-journal-test
