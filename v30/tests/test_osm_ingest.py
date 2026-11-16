@@ -34,8 +34,8 @@ class OSMIngestionTests(unittest.TestCase):
         self.assertEqual(sidecar["normalized_sha256"], hashlib.sha256(out.read_bytes()).hexdigest())
     def test_output_is_deterministic(self):
         one, two = self.root / "one.jsonl", self.root / "two.jsonl"
-        args = ("https://example.invalid/osm", "ODbL-1.0", "2026-11-16", "2026-11-17T00:00:00+00:00")
-        MODULE.ingest(self.source, one, *args, boundaries=self.boundaries); MODULE.ingest(self.source, two, *args, boundaries=self.boundaries)
+        args = ("https://example.invalid/osm", "ODbL-1.0", "2026-11-16")
+        MODULE.ingest(self.source, one, *args, boundaries=self.boundaries, retrieved_at="2026-11-17T00:00:00+00:00"); MODULE.ingest(self.source, two, *args, boundaries=self.boundaries, retrieved_at="2026-11-17T00:00:00+00:00")
         self.assertEqual(one.read_bytes(), two.read_bytes())
         self.assertEqual((one.with_suffix(one.suffix + ".provenance.json")).read_bytes(),
                          (two.with_suffix(two.suffix + ".provenance.json")).read_bytes())
