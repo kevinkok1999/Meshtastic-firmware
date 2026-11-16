@@ -5,7 +5,7 @@ on:
     branches: [v30-map-geometry-reader]
     paths:
       - "v30/maps/**"
-      - "v30/overlay/src/ui-touch/NanoMapPack.*"
+      - "v30/overlay/src/ui-touch/**"
       - "v30/tests/test_map_pack.cpp"
       - "v30/tests/test_map_build.py"
       - "v30/tests/generate_reader_fixture.py"
@@ -34,8 +34,28 @@ jobs:
         run: python v30/tests/generate_reader_fixture.py /tmp/reader-fixture.meshmap
       - name: Run Python builder suite
         run: python -m unittest discover -s v30/tests -p "test_map_build.py" -v
+      - name: Compile pinned miniz tinfl
+        run: cc -O2 -c v30/overlay/src/ui-touch/miniz/miniz_tinfl.c -o /tmp/tinfl.o
       - name: Compile geometry reader host test
         run: |
-          c++ -std=c++17 -Wall -Wextra -Werror             v30/overlay/src/ui-touch/NanoMapPack.cpp             v30/tests/test_map_pack.cpp -lz -o /tmp/test_map_pack
+          c++ -std=c++17 -Wall -Wextra -Werror             v30/overlay/src/ui-touch/NanoMapPack.cpp             v30/tests/test_map_pack.cpp /tmp/tinfl.o -lz -o /tmp/test_map_pack
       - name: Run geometry, bounds and hostile body tests
         run: /tmp/test_map_pack /tmp/reader-fixture.meshmap
+
+  esp32s3-module-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install platformio==6.1.18
+      - name: Stage isolated ESP32-S3 compile harness
+        run: |
+          mkdir -p /tmp/nanomap-esp/src
+          cp v30/overlay/src/ui-touch/NanoMapPack.* /tmp/nanomap-esp/src/
+          cp -r v30/overlay/src/ui-touch/miniz /tmp/nanomap-esp/src/
+          cp v30/tests/esp32_geometry_main.cpp /tmp/nanomap-esp/src/main.cpp
+          cp v30/tests/esp32_geometry_platformio.ini /tmp/nanomap-esp/platformio.ini
+      - name: Compile and link ESP32-S3 module
+        run: pio run -d /tmp/nanomap-esp
