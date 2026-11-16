@@ -41,8 +41,7 @@ void onV30TxResult(uint64_t cookie, bool success, uint32_t airtimeUs) {
   if (resultCallback) resultCallback(cookie, success, airtimeUs);
 }
 
-RawDecision v30ParseRaw(const uint8_t* data, size_t len, bool direct,
-                        uint32_t* logicalId, uint32_t* attemptId) {
+RawDecision v30ParseRaw(const uint8_t* data, size_t len, bool direct) {
   if (!data || len < 3) return RawDecision::Unrelated;
   if (data[0] == 'M' && data[1] == '2' && data[2] == '9')
     return RawDecision::Consumed;
@@ -52,8 +51,6 @@ RawDecision v30ParseRaw(const uint8_t* data, size_t len, bool direct,
   // malformed lengths fail closed rather than falling through to native RAW.
   if (data[4] != 1 || len < 13) return RawDecision::Consumed;
   if (!direct) return RawDecision::Consumed;
-  if (logicalId) memcpy(logicalId, data + 5, sizeof(uint32_t));
-  if (attemptId) memcpy(attemptId, data + 9, sizeof(uint32_t));
   return RawDecision::Delivered;
 }
 

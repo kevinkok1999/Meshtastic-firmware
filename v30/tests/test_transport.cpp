@@ -26,16 +26,14 @@ void test_routing() {
   assert(dispatch({Route::Direct, Payload::Group, 0, 0}, delivered) == Dispatch::Deliver);
 }
 void test_magic_and_retry_identity() {
-  uint32_t logical = 0, attempt = 0;
   const uint8_t m30[] = {'M','3','0','E',1,7,0,0,0,1,0,0,0};
-  assert(v30::v30ParseRaw(m30, sizeof(m30), true, &logical, &attempt) == v30::RawDecision::Delivered);
-  assert(logical == 7 && attempt == 1);
+  assert(v30::v30ParseRaw(m30, sizeof(m30), true) == v30::RawDecision::Delivered);
   const uint8_t unknownRaw[] = {'X','X','X','X',1};
-  assert(v30::v30ParseRaw(unknownRaw, sizeof(unknownRaw), true, nullptr, nullptr) == v30::RawDecision::Unrelated);
+  assert(v30::v30ParseRaw(unknownRaw, sizeof(unknownRaw), true) == v30::RawDecision::Unrelated);
   const uint8_t badVersion[] = {'M','3','0','E',2,0,0,0,0,0,0,0,0};
-  assert(v30::v30ParseRaw(badVersion, sizeof(badVersion), true, nullptr, nullptr) == v30::RawDecision::Consumed);
+  assert(v30::v30ParseRaw(badVersion, sizeof(badVersion), true) == v30::RawDecision::Consumed);
   const uint8_t legacy[] = {'M','2','9',0,0};
-  assert(v30::v30ParseRaw(legacy, sizeof(legacy), true, nullptr, nullptr) == v30::RawDecision::Consumed);
+  assert(v30::v30ParseRaw(legacy, sizeof(legacy), true) == v30::RawDecision::Consumed);
 }
 static bool callbackCalled = false;
 void callback(uint64_t, bool, uint32_t) { callbackCalled = true; }

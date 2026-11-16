@@ -10,7 +10,7 @@ TxAdmission v30TryEnqueueEmergencyRaw(const uint8_t*, size_t, uint64_t, uint8_t)
 bool v30TakeEmergencyRaw(V30RawFrame&);
 void v30SetTxResultCallback(V30TxResultCallback);
 void onV30TxResult(uint64_t, bool, uint32_t);
-RawDecision v30ParseRaw(const uint8_t*, size_t, bool, uint32_t*, uint32_t*);
+RawDecision v30ParseRaw(const uint8_t*, size_t, bool);
 }
 using v30::TxAdmission;
 using v30::v30TryEnqueueEmergencyRaw;
