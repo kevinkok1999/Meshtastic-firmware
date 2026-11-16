@@ -101,6 +101,22 @@ int main(int argc, char **argv) {
   assert(places.size() == 1 && places[0].name == "Dorp");
   assert(pack.lookupPlace("N", places));
   assert(places.size() == 1 && places[0].name == "N225");
+  assert(places[0].dictionaryIndex == 2);
+  assert(pack.forEachFeature(3, 50, 7, 54, 19, [&](const auto &record) {
+    assert(record.nameIndex >= 1 && record.nameIndex <= pack.names().size());
+    std::vector<meshtastic::nanomap::PlaceResult> matching;
+    assert(pack.lookupPlace(pack.names()[record.nameIndex - 1], matching));
+    assert(matching.size() == 1 && matching[0].dictionaryIndex == record.nameIndex);
+    return true;
+  }));
+  const std::string emptyMetadata = "{\"features\":0,\"names\":[]}";
+  std::vector<uint8_t> emptyPack = {'M','M','N','1',1,0,0,0,0,0};
+  write32(emptyPack, 6, emptyMetadata.size());
+  emptyPack.insert(emptyPack.end(), emptyMetadata.begin(), emptyMetadata.end());
+  emptyPack.resize(emptyPack.size() + 4);
+  write32(emptyPack, emptyPack.size()-4, crc32(emptyPack.data(), emptyPack.size()-4));
+  NanoMapPack empty;
+  assert(empty.open(emptyPack.data(), emptyPack.size()) == PackStatus::BadMetadata);
   size_t selected = 0;
   assert(pack.forEachFeature(3.99, 50.99, 4.03, 51.03, 19, [&](const auto &record) { (void)record; ++selected; return true; }));
   assert(selected >= 1);
