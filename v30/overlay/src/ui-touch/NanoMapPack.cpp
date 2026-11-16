@@ -129,6 +129,7 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
     if (featureCount_ > kMaxFeatures) return status_ = PackStatus::BadMetadata;
   }
   if (cursor == digitsStart || (cursor >= meta.size() || (meta[cursor] != ',' && meta[cursor] != '}'))) return status_ = PackStatus::BadMetadata;
+  if (featureCount_ == 0) return status_ = PackStatus::BadMetadata;
   if (!parseNames(meta, names_)) return status_ = PackStatus::BadMetadata;
   if (names_.size() > kMaxNames) return status_ = PackStatus::BadMetadata;
   for (const auto &name : names_) {
@@ -313,7 +314,7 @@ bool NanoMapPack::lookupPlace(const std::string &prefix,
   if (status_ != PackStatus::Ok || limit == 0 || limit > kMaxNames) return false;
   for (size_t i = 0; i < names_.size() && out.size() < limit; ++i) {
     if (names_[i].compare(0, prefix.size(), prefix) == 0)
-      out.push_back({names_[i], static_cast<uint16_t>(i)});
+      out.push_back({names_[i], static_cast<uint16_t>(i + 1)});
   }
   return true;
 }
