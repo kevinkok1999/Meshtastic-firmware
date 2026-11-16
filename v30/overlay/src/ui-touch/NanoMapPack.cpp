@@ -22,6 +22,28 @@ uint32_t crc32(const uint8_t *data, size_t size) {
   return crc ^ 0xffffffffu;
 }
 
+bool validUtf8(const std::string &s) {
+  size_t i = 0;
+  while (i < s.size()) {
+    const uint8_t c = static_cast<uint8_t>(s[i++]);
+    size_t continuation = 0;
+    uint32_t codepoint = 0;
+    if (c <= 0x7f) continue;
+    if (c >= 0xc2 && c <= 0xdf) { continuation = 1; codepoint = c & 0x1f; }
+    else if (c >= 0xe0 && c <= 0xef) { continuation = 2; codepoint = c & 0x0f; }
+    else if (c >= 0xf0 && c <= 0xf4) { continuation = 3; codepoint = c & 0x07; }
+    else return false;
+    for (size_t n = 0; n < continuation; ++n) {
+      if (i >= s.size()) return false;
+      const uint8_t next = static_cast<uint8_t>(s[i++]);
+      if ((next & 0xc0) != 0x80) return false;
+      codepoint = (codepoint << 6) | (next & 0x3f);
+    }
+    if (codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
+  }
+  return true;
+}
+
 bool quoted(const std::string &s, size_t &pos, std::string &value) {
   if (pos >= s.size() || s[pos] != '"') return false;
   ++pos;
@@ -98,7 +120,7 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
   if (!parseNames(meta, names_)) return status_ = PackStatus::BadMetadata;
   if (names_.size() > kMaxNames) return status_ = PackStatus::BadMetadata;
   for (const auto &name : names_) {
-    if (name.empty() || name.size() > kMaxNameBytes) return status_ = PackStatus::BadMetadata;
+    if (name.empty() || name.size() > kMaxNameBytes || !validUtf8(name)) return status_ = PackStatus::BadMetadata;
     for (unsigned char ch : name) if (ch < 0x20) return status_ = PackStatus::BadMetadata;
   }
   status_ = PackStatus::Ok;
