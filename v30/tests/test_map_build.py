@@ -17,7 +17,7 @@ class MapBuildTests(unittest.TestCase):
         for index, province in enumerate(PROVINCES):
             self.features.append({
                 "id": f"way/{index}",
-                "kind": "primary" if index % 2 else "place",
+                "kind": kinds[index % len(kinds)],
                 "province": province,
                 "name": "N225" if index % 2 else "Dorp",
                 "zoom_min": 8,
