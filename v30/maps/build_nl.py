@@ -22,6 +22,7 @@ MAX_METADATA_BYTES = 65_536
 MAX_NAMES = 65_535
 MAX_NAME_BYTES = 256
 MAX_FEATURES = 1_000_000
+MAX_DECODED_BODY_BYTES = 4 * 1024 * 1024
 REQUIRED_KINDS = {"boundary", "motorway", "trunk", "primary", "secondary",
                   "tertiary", "local", "water", "place"}
 
@@ -166,7 +167,7 @@ def _read_features(source: Path, profile: dict[str, Any]) -> tuple[list[dict[str
         raise BuildError("source contains conflicting data_date values")
     return features, hashlib.sha256(raw).hexdigest(), next(iter(data_dates), None)
 
-def _encode(features: list[dict[str, Any]], profile: dict[str, Any]) -> tuple[bytes, int, dict[str, int], int, dict[str, int]]:
+def _encode(features: list[dict[str, Any]], profile: dict[str, Any]) -> tuple[bytes, int, dict[str, int], int, dict[str, int], int]:
     names = sorted({f["name"] for f in features if f["name"]})
     name_index = {name: i for i, name in enumerate(names)}
     priorities = profile.get("feature_priorities", {})
@@ -186,7 +187,7 @@ def _encode(features: list[dict[str, Any]], profile: dict[str, Any]) -> tuple[by
         packed += 1
     compressed = zlib.compress(bytes(body), level=9)
     omitted_by_kind: dict[str, int] = {}
-    return compressed, packed, omitted_by_kind, len(names), {k: sum(f["kind"] == k for f in features) for k in REQUIRED_KINDS}
+    return compressed, packed, omitted_by_kind, len(names), {k: sum(f["kind"] == k for f in features) for k in REQUIRED_KINDS}, len(body)
 
 def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_sha: str, data_date: str | None) -> tuple[bytes, int, dict[str, int], int, dict[str, int], list[dict[str, Any]]]:
     priorities = profile.get("feature_priorities", {})
@@ -194,14 +195,14 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
     omitted: dict[str, int] = {}
     budget = int(profile.get("pack_budget_bytes", DEFAULT_BUDGET))
     while True:
-        encoded, packed, _ignored, names_count, roads = _encode(working, profile)
+        encoded, packed, _ignored, names_count, roads, decoded_bytes = _encode(working, profile)
         names = sorted({f["name"] for f in working if f["name"]})
         extent = [min(f["bbox"][0] for f in working), min(f["bbox"][1] for f in working), max(f["bbox"][2] for f in working), max(f["bbox"][3] for f in working)]
         meta = {"version": FORMAT_VERSION, "profile_version": profile.get("profile_version", 1), "source_sha256": source_sha, "data_date": data_date, "provinces": list(PROVINCES), "names": names, "features": packed, "extent": extent, "zoom_inventory": {str(z): sum(1 for f in working if f["zoom_min"] <= z) for z in range(3, 20)}}
         meta_bytes = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         prefix = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
         candidate = prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
-        if len(candidate) <= budget and len(meta_bytes) <= MAX_METADATA_BYTES and names_count <= MAX_NAMES:
+        if len(candidate) <= budget and decoded_bytes <= MAX_DECODED_BODY_BYTES and len(meta_bytes) <= MAX_METADATA_BYTES and names_count <= MAX_NAMES:
             return candidate, packed, omitted, names_count, roads, working
         if len(working) <= 1:
             raise BuildError(f"pack exceeds budget ({len(candidate)} > {budget})")
