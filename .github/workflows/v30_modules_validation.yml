@@ -37,3 +37,5 @@ jobs:
           python v30/tests/browser_frames/prepare_term_fixture.py /tmp/term_fixture.inc
           c++ -std=c++17 -Wall -Wextra -Werror -I /tmp v30/tests/browser_frames/test_term.cpp -o /tmp/v30-term
           /tmp/v30-term
+      - name: Test isolated V30 relay contract
+        run: node --test v30/relay/test_v30_relay.mjs

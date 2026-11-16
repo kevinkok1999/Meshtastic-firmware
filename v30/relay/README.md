@@ -1,0 +1,3 @@
+# V30 relay contract (not deployed)
+
+This in-memory development module tests opaque envelope limits, origin-bound idempotency, cursor paging and an authorization grant contract. Grants MUST be produced by an independent server-side verified authentication/authorization layer, never accepted as client request data. Base64 validity is not proof of encryption. No durable database, signature verification, persistent replay prevention, receipt authenticity, whole-world connection or production endpoint is provided by this file. Records can be admitted again after expiry; production must enforce authenticated immutable message expiry and durable replay semantics. V28 and the website remain untouched.

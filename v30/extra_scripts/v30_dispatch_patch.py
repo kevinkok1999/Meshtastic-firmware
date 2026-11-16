@@ -7,13 +7,22 @@ fail-closed candidate for a later build once the pinned dependency is compiled.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+
+PIN = "edd7ed47f42acf6c64c9fcac551050fdbd531a09"
+HEADER_BLOB = "90d0b237b75669a4fb2b878afb9633642adccf25"
+SOURCE_BLOB = "350671ec0889f259947763a2d33074b36d158e30"
+
+def git_blob_id(data: bytes) -> str:
+    return hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\x00" + data).hexdigest()
+
 
 HEADER_ANCHOR = "  virtual DispatcherAction onRecvPacket(Packet* pkt) = 0;\n"
 HEADER_INSERT = (
     HEADER_ANCHOR
     + "#if defined(MESH_OFFGRIDNL_V30) && MESH_OFFGRIDNL_V30\n"
     + "  // V30 hook: called only after the radio reports completion/failure.\n"
-    + "  virtual void onV30TxComplete(Packet* packet, bool success, uint32_t airtimeMs) { }\n"
+    + "  virtual void onV30TxComplete(Packet*, bool, uint32_t) { }\n"
     + "#endif\n"
 )
 SUCCESS_ANCHOR = (
@@ -69,12 +78,14 @@ def patch_sources(header: str, source: str) -> tuple[str, str]:
 
 
 def locate_dependency(libdeps: Path) -> tuple[Path, Path]:
-    candidates = sorted(libdeps.rglob("Dispatcher.h"))
-    for header in candidates:
+    matching = []
+    for header in sorted(libdeps.rglob("Dispatcher.h")):
         source = header.with_name("Dispatcher.cpp")
-        if source.exists():
-            return header, source
-    raise PatchError("pinned MeshCore Dispatcher.h/.cpp not found")
+        if source.is_file() and git_blob_id(header.read_bytes()) == HEADER_BLOB and git_blob_id(source.read_bytes()) == SOURCE_BLOB:
+            matching.append((header, source))
+    if len(matching) != 1:
+        raise PatchError(f"expected exactly one unmodified pinned MeshCore source pair, got {len(matching)}")
+    return matching[0]
 
 
 def patch_dependency(libdeps: str | Path) -> tuple[Path, Path]:
