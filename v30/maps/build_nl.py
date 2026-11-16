@@ -18,6 +18,10 @@ PROVINCES = (
     "Utrecht", "Zeeland", "Zuid-Holland",
 )
 DEFAULT_BUDGET = 3_670_016
+MAX_METADATA_BYTES = 65_536
+MAX_NAMES = 65_535
+MAX_NAME_BYTES = 256
+MAX_FEATURES = 1_000_000
 REQUIRED_KINDS = {"boundary", "motorway", "trunk", "primary", "secondary",
                   "tertiary", "local", "water", "place"}
 
@@ -138,12 +142,17 @@ def _read_features(source: Path, profile: dict[str, Any]) -> tuple[list[dict[str
             raise BuildError(f"line {line_no}: unknown province {item['province']!r}")
         if "data_date" in item:
             data_dates.add(str(item["data_date"]))
+        name = str(item.get("name", ""))
+        if len(name.encode("utf-8")) > MAX_NAME_BYTES or any(ord(ch) < 0x20 for ch in name):
+            raise BuildError(f"line {line_no}: name exceeds reader limits")
         geometry, bbox = _geometry(item["geometry"], int(profile.get("quantization", 100000)))
         features.append({
             "id": item["id"], "kind": item["kind"], "province": item["province"],
-            "name": str(item.get("name", "")), "zoom_min": int(item.get("zoom_min", 3)),
+            "name": name, "zoom_min": int(item.get("zoom_min", 3)),
             "geometry": geometry, "bbox": bbox,
         })
+    if len(features) > MAX_FEATURES:
+        raise BuildError("source exceeds feature limit")
     if not features:
         raise BuildError("source contains no features")
     missing = sorted(set(PROVINCES) - {f["province"] for f in features})
@@ -185,9 +194,10 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
         names = sorted({f["name"] for f in working if f["name"]})
         extent = [min(f["bbox"][0] for f in working), min(f["bbox"][1] for f in working), max(f["bbox"][2] for f in working), max(f["bbox"][3] for f in working)]
         meta = {"version": FORMAT_VERSION, "profile_version": profile.get("profile_version", 1), "source_sha256": source_sha, "data_date": data_date, "provinces": list(PROVINCES), "names": names, "features": packed, "extent": extent, "zoom_inventory": {str(z): sum(1 for f in working if f["zoom_min"] <= z) for z in range(3, 20)}}
-        meta_bytes = json.dumps(meta, sort_keys=True, separators=(",", ":")).encode()
-        candidate = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
-        if len(candidate) <= budget:
+        meta_bytes = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        prefix = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
+        candidate = prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
+        if len(candidate) <= budget and len(meta_bytes) <= MAX_METADATA_BYTES and names_count <= MAX_NAMES:
             return candidate, packed, omitted, names_count, roads, working
         if len(working) <= 1:
             raise BuildError(f"pack exceeds budget ({len(candidate)} > {budget})")
@@ -195,15 +205,17 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
         candidates = sorted(working, key=lambda f: (int(priorities.get(f["kind"], 0)), f["id"]))
         batch = max(1, min(len(candidates), len(working) // 8))
         removed = 0
+        removed_ids: set[str] = set()
         for candidate in candidates:
             if counts[candidate["province"]] <= 1:
                 continue
-            working.remove(candidate)
+            removed_ids.add(candidate['id'])
             counts[candidate["province"]] -= 1
             omitted[candidate["kind"]] = omitted.get(candidate["kind"], 0) + 1
             removed += 1
             if removed >= batch:
                 break
+        working = [f for f in working if f['id'] not in removed_ids]
         if removed == 0:
             raise BuildError("budget would remove final feature for a province")
 

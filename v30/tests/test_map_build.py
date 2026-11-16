@@ -47,6 +47,35 @@ class MapBuildTests(unittest.TestCase):
         self.assertLessEqual(report1.bytes_written, self.profile["pack_budget_bytes"])
         self.assertEqual(json.loads((first.with_suffix(".meshmap.report.json")).read_text())["data_date"], "2026-11-16")
 
+    def test_diacritic_name_is_utf8_and_deterministic(self):
+        rows = [dict(row) for row in self.features]
+        rows[0]["name"] = "Dorp é"
+        self.source.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in rows) + "\n")
+        report = build_pack(self.source, self.profile, self.root / "utf8.meshmap")
+        self.assertEqual(report.packed_features, 12)
+        self.assertIn("Dorp é", (self.root / "utf8.meshmap").read_bytes().decode("utf-8", "ignore"))
+
+    def test_oversize_name_rejected(self):
+        rows = [dict(row) for row in self.features]
+        rows[0]["name"] = "x" * 257
+        self.source.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+        with self.assertRaisesRegex(BuildError, "name exceeds"):
+            build_pack(self.source, self.profile, self.root / "oversize.meshmap")
+
+    def test_metadata_budget_matches_native_reader(self):
+        rows = list(self.features)
+        for i in range(400):
+            rows.append({"id": f"way/extra-{i}", "kind": "local", "province": PROVINCES[i % 12],
+                         "name": str(i) + "x" * 200, "zoom_min": 15,
+                         "data_date": "2026-11-16", "geometry": [[4.0, 52.0], [4.01, 52.01]]})
+        self.source.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+        out = self.root / "metadata.meshmap"
+        report = build_pack(self.source, self.profile, out)
+        meta_size = struct.unpack_from("<I", out.read_bytes(), 6)[0]
+        self.assertLessEqual(meta_size, 65536)
+        self.assertEqual(report.provinces, PROVINCES)
+        self.assertGreater(report.omitted_features, 0)
+
     def test_missing_province_is_hard_failure(self):
         lines = self.features[:-1]
         self.source.write_text("\n".join(json.dumps(x) for x in lines) + "\n")

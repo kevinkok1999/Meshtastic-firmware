@@ -25,3 +25,8 @@ The pack budget is 3,670,016 bytes (3.5 MiB), matching the M02 candidate limit. 
 For a real build, download the Netherlands PBF from the Geofabrik page or use an eligible PDOK bulk dataset. Keep a sidecar provenance record containing source URL, license, source/data date, retrieval date, exact input SHA256, profile SHA256, builder commit, and output SHA256. Obtain redistribution/attribution approval for each source; keep ODbL attribution and credits in the offline UI. CI intentionally runs only a tiny synthetic fixture. The full licensed-data build is a separately gated workflow job and is never downloaded on ordinary commits.
 
 This M1 checkpoint is not activated for firmware: it has no native spatial index, bounded streaming decoder, or renderer integration yet; those are M2/M3 gates. It is not a production map, coverage guarantee, GPS database, or Google-equivalent map.
+
+
+## Native reader scope
+
+`NanoMapPack` currently validates the bounded container, metadata, CRC32 and name dictionary lookups. It deliberately does not decode zlib geometry or integrate with the LVGL renderer; those remain later M2/M3 gates.
