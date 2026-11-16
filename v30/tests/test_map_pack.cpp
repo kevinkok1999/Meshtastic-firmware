@@ -125,6 +125,33 @@ int main(int argc, char **argv) {
   assert(pack.forEachFeature(3, 50, 7, 54, 19, [&](const auto &) { ++wrappedCount; return true; }));
   assert(wrappedCount == 12 * 4095);
 
+  // Actual output-budget bomb: syntactically valid records, >4MiB decoded.
+  std::vector<uint8_t> bombRecords;
+  for (unsigned i = 0; i < 60; ++i)
+    bombRecords.insert(bombRecords.end(), wrapped.begin(), wrapped.end());
+  auto budgetBomb = replaceBody(bytes, bombRecords);
+  const size_t oldMetadataSize = static_cast<size_t>(budgetBomb[6]) |
+      (static_cast<size_t>(budgetBomb[7]) << 8) |
+      (static_cast<size_t>(budgetBomb[8]) << 16) |
+      (static_cast<size_t>(budgetBomb[9]) << 24);
+  std::string bombMetadata(reinterpret_cast<const char *>(budgetBomb.data()+10), oldMetadataSize);
+  const auto countAt = bombMetadata.find("\"features\":12");
+  assert(countAt != std::string::npos);
+  bombMetadata.replace(countAt, 13, "\"features\":720");
+  std::vector<uint8_t> rebuilt(budgetBomb.begin(), budgetBomb.begin()+10);
+  write32(rebuilt, 6, bombMetadata.size());
+  rebuilt.insert(rebuilt.end(), bombMetadata.begin(), bombMetadata.end());
+  rebuilt.insert(rebuilt.end(), budgetBomb.begin()+10+oldMetadataSize, budgetBomb.end());
+  write32(rebuilt, rebuilt.size()-4, crc32(rebuilt.data(), rebuilt.size()-4));
+  assert(pack.open(rebuilt.data(), rebuilt.size()) == PackStatus::Ok);
+  assert(!pack.forEachFeature(3, 50, 7, 54, 19, [](const auto &) { return false; }));
+  // Independent compressed-stream checksum must still fail after container CRC is renewed.
+  auto badAdler = validWrapped;
+  badAdler[badAdler.size()-5] ^= 1;
+  write32(badAdler, badAdler.size()-4, crc32(badAdler.data(), badAdler.size()-4));
+  assert(pack.open(badAdler.data(), badAdler.size()) == PackStatus::Ok);
+  assert(!pack.forEachFeature(3, 50, 7, 54, 19, [](const auto &) { return false; }));
+
   // Both source endpoints are outside; output must be clipped to viewport edges.
   auto crossing = replaceBody(bytes, crossingBody());
   assert(pack.open(crossing.data(), crossing.size()) == PackStatus::Ok);
