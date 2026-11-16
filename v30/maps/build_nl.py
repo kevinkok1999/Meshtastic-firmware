@@ -77,6 +77,8 @@ def _load_profile(profile: str | Path | dict[str, Any]) -> tuple[dict[str, Any],
     budget = int(obj.get("pack_budget_bytes", DEFAULT_BUDGET))
     if budget <= 0 or budget > DEFAULT_BUDGET:
         raise BuildError(f"pack_budget_bytes must be in range 1..{DEFAULT_BUDGET}")
+    if int(obj.get("quantization", 100000)) != 100000:
+        raise BuildError("reader format requires quantization 100000")
     return obj, raw
 
 def _varuint(value: int) -> bytes:
@@ -109,6 +111,8 @@ def _geometry(points: Iterable[Iterable[Any]], scale: int) -> tuple[bytes, tuple
         previous = current
         extent[0], extent[1] = min(extent[0], lon), min(extent[1], lat)
         extent[2], extent[3] = max(extent[2], lon), max(extent[3], lat)
+        if count >= 4096:
+            raise BuildError("geometry exceeds reader point limit; split source feature")
         count += 1
     if count == 0:
         raise BuildError("geometry cannot be empty")
