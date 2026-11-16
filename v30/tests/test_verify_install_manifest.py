@@ -1,11 +1,17 @@
 import hashlib
 import importlib.util
 import json
+import struct
+import sys
+import zlib
 import tempfile
 import unittest
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location("verify_install_manifest", Path(__file__).parents[1] / "installer" / "verify_install_manifest.py")
+sys.path.insert(0, str(Path(__file__).parents[1] / 'maps'))
+from build_nl import PROVINCES, build_pack
+
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
@@ -67,15 +73,131 @@ class ManifestVerifierTests(unittest.TestCase):
         with self.assertRaises(MODULE.ManifestError):
             MODULE.validate_manifest(self.manifest, self.root)
 
+    def add_map(self, pack=None):
+        if pack is None:
+            source = self.root / "source.jsonl"
+            source.write_text("\n".join(json.dumps({
+                "id": f"place/{i}", "kind": "place", "province": province,
+                "name": f"Dorp {i}", "geometry": [[4 + i / 100, 52]],
+            }) for i, province in enumerate(PROVINCES)) + "\n", encoding="utf-8")
+            out = self.root / "fixture.meshmap"
+            report = build_pack(source, Path(__file__).parents[1] / "maps" / "nl_profile.json", out)
+            pack = out.read_bytes()
+            self.assertEqual(len(pack), report.bytes_written)
+        self.pack = bytes(pack)
+        self.manifest["pack_metadata_size"] = struct.unpack_from("<I", self.pack, 6)[0]
+        artifact = {
+            "kind": "map", "path": "map.bin", "offset": MODULE.MAP_OFFSET,
+            "size": MODULE.MAP_SIZE, "pack_size": len(self.pack), "padding_byte": 255,
+            "sha256": hashlib.sha256(self.pack + b"\xff" * (MODULE.MAP_SIZE - len(self.pack))).hexdigest(),
+        }
+        (self.root / "map.bin").write_bytes(self.pack + b"\xff" * (MODULE.MAP_SIZE - len(self.pack)))
+        self.manifest["artifacts"].append(artifact)
+        return artifact
+
+    def replace_map(self, image):
+        (self.root / "map.bin").write_bytes(image)
+        self.manifest["artifacts"][-1]["sha256"] = hashlib.sha256(image).hexdigest()
+
+    def repack(self, prefix):
+        return prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
+
+    def test_generated_pack_valid_in_full_partition_image(self):
+        self.add_map()
+        self.manifest["install_mode"] = "full-v30"
+        self.assertTrue(MODULE.validate_manifest(self.manifest, self.root))
+        self.assertEqual((self.root / "map.bin").stat().st_size, 0x4C0000)
+
+    def test_metadata_bound_matches_native_reader(self):
+        self.assertEqual(MODULE.MAX_PACK_METADATA, 65536)
+
     def test_map_and_metadata_limits(self):
-        data = b"map" * 100
-        p = self.root / "map.bin"; p.write_bytes(data)
-        self.manifest["artifacts"].append({"kind": "map", "path": p.name, "offset": MODULE.MAP_OFFSET,
-                                           "size": len(data), "sha256": hashlib.sha256(data).hexdigest()})
-        self.manifest["pack_metadata_size"] = MODULE.MAX_PACK_METADATA + 1
-        with self.assertRaises(MODULE.ManifestError):
+        self.add_map()
+        self.manifest["pack_metadata_size"] = 65537
+        with self.assertRaisesRegex(MODULE.ManifestError, "metadata"):
             MODULE.validate_manifest(self.manifest, self.root)
 
+    def test_declared_metadata_must_match_header(self):
+        self.add_map()
+        self.manifest["pack_metadata_size"] += 1
+        with self.assertRaisesRegex(MODULE.ManifestError, "metadata.*mismatch"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_pack_length_required_and_bounded(self):
+        artifact = self.add_map()
+        for value in (0, 13, 0x380001, MODULE.MAP_SIZE):
+            artifact["pack_size"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(MODULE.ManifestError, "pack_size"):
+                MODULE.validate_manifest(self.manifest, self.root)
+        artifact.pop("pack_size")
+        with self.assertRaisesRegex(MODULE.ManifestError, "pack_size"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_pack_length_cannot_include_padding_or_truncate_crc(self):
+        artifact = self.add_map()
+        for delta in (-1, 1):
+            artifact["pack_size"] = len(self.pack) + delta
+            with self.subTest(delta=delta), self.assertRaises(MODULE.ManifestError):
+                MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_map_crc_checked_even_after_artifact_hash_updated(self):
+        self.add_map()
+        image = bytearray((self.root / "map.bin").read_bytes())
+        image[len(self.pack) - 5] ^= 1
+        self.replace_map(image)
+        with self.assertRaisesRegex(MODULE.ManifestError, "CRC32"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_magic_and_version_checked_even_with_valid_crc(self):
+        for offset, value, error in ((0, 0, "magic"), (4, 2, "version")):
+            with self.subTest(offset=offset):
+                self.manifest["artifacts"] = self.manifest["artifacts"][:4]
+                self.add_map()
+                prefix = bytearray(self.pack[:-4])
+                prefix[offset] = value
+                pack = self.repack(prefix)
+                self.replace_map(pack + b"\xff" * (MODULE.MAP_SIZE - len(pack)))
+                with self.assertRaisesRegex(MODULE.ManifestError, error):
+                    MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_metadata_header_cannot_run_beyond_pack(self):
+        self.add_map()
+        prefix = bytearray(self.pack[:-4])
+        struct.pack_into("<I", prefix, 6, len(self.pack))
+        self.manifest["pack_metadata_size"] = len(self.pack)
+        pack = self.repack(prefix)
+        self.replace_map(pack + b"\xff" * (MODULE.MAP_SIZE - len(pack)))
+        with self.assertRaisesRegex(MODULE.ManifestError, "metadata"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_malformed_metadata_rejected_with_valid_crc(self):
+        self.add_map()
+        prefix = bytearray(self.pack[:-4])
+        prefix[10] = ord("!")
+        pack = self.repack(prefix)
+        self.replace_map(pack + b"\xff" * (MODULE.MAP_SIZE - len(pack)))
+        with self.assertRaisesRegex(MODULE.ManifestError, "metadata"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_only_explicit_ff_padding_allowed(self):
+        artifact = self.add_map()
+        for value in (0, "255", None):
+            artifact["padding_byte"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(MODULE.ManifestError, "padding"):
+                MODULE.validate_manifest(self.manifest, self.root)
+        artifact["padding_byte"] = 255
+        image = bytearray((self.root / "map.bin").read_bytes())
+        image[-1] = 0
+        self.replace_map(image)
+        with self.assertRaisesRegex(MODULE.ManifestError, "padding"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_raw_unpadded_pack_is_not_partition_image(self):
+        artifact = self.add_map()
+        artifact["size"] = len(self.pack)
+        self.replace_map(self.pack)
+        with self.assertRaisesRegex(MODULE.ManifestError, "4.75 MiB"):
+            MODULE.validate_manifest(self.manifest, self.root)
 
     def test_rejects_unknown_and_user_partition_roles(self):
         self.manifest["artifacts"][0]["kind"] = "nvs"
