@@ -35,7 +35,7 @@ jobs:
         run: python -m unittest discover -s v30/tests -p 'test_map_build.py' -v
 
   licensed-data-gated:
-    if: github.event_name == 'workflow_dispatch' && inputs.licensed_data == true && secrets.V30_LICENSED_DATA_URL != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.licensed_data == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
