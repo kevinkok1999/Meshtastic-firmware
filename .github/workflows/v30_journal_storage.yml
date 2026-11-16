@@ -1,0 +1,17 @@
+name: V30 journal storage host tests
+on:
+  push:
+    branches: [v30-work-journal-storage]
+    paths: ["v30/overlay/src/v30_journal_storage.py", "v30/tests/test_journal_storage.py", ".github/workflows/v30_journal_storage.yml"]
+  pull_request:
+    branches: [v30-work-journal-storage]
+    paths: ["v30/overlay/src/v30_journal_storage.py", "v30/tests/test_journal_storage.py", ".github/workflows/v30_journal_storage.yml"]
+permissions: {contents: read}
+jobs:
+  journal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: python -m unittest v30/tests/test_journal_storage.py -v
