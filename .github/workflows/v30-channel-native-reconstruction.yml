@@ -3,6 +3,7 @@ on:
   push:
     branches: [v30-work-channel-native]
     paths:
+      - "v27/**"
       - "v28/**"
       - "v29/**"
       - "v30/apply_v30.py"
@@ -23,8 +24,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Reconstruct V28 and V29
+      - name: Reconstruct V27 through V29
         run: |
+          python v27/apply_v27.py wadamesh
           python v28/apply_v28.py wadamesh
           python v29/apply_v29.py wadamesh
       - name: Apply V30 baseline and native channel patch
