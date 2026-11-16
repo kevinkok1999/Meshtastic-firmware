@@ -18,6 +18,10 @@ PROVINCES = (
     "Utrecht", "Zeeland", "Zuid-Holland",
 )
 DEFAULT_BUDGET = 3_670_016
+MAX_METADATA_BYTES = 65_536
+MAX_NAMES = 65_535
+MAX_NAME_BYTES = 256
+MAX_FEATURES = 1_000_000
 REQUIRED_KINDS = {"boundary", "motorway", "trunk", "primary", "secondary",
                   "tertiary", "local", "water", "place"}
 
