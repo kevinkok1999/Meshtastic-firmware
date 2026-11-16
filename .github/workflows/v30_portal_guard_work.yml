@@ -1,0 +1,14 @@
+name: V30 portal parser work
+on:
+  push:
+    branches: [v30-work-portal-guard]
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - run: c++ -std=c++17 -Wall -Wextra -Werror -pedantic v30/tests/test_portal_request.cpp -o /tmp/v30-portal
+      - run: /tmp/v30-portal
