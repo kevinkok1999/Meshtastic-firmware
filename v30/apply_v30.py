@@ -52,7 +52,7 @@ def main() -> None:
     # The receive hook is additive. V30 magic is terminally owned; unrelated
     # native RAW still reaches the existing V29/serial handler.
     raw_anchor = "void MyMesh::onRawDataRecv(mesh::Packet *packet) {\n"
-    raw_new = """void MyMesh::onRawDataRecv(mesh::Packet *packet) {\n#if defined(MESH_OFFGRIDNL_V30)\n  if (packet) {\n    const auto decision = v30::v30ParseRaw(packet->payload, packet->payload_len,\n                                            packet->isRouteDirect(), nullptr, nullptr);\n    if (decision != v30::RawDecision::Unrelated) return;\n  }\n#endif\n"""
+    raw_new = """void MyMesh::onRawDataRecv(mesh::Packet *packet) {\n#if defined(MESH_OFFGRIDNL_V30)\n  if (packet) {\n    const auto decision = v30::v30ParseRaw(packet->payload, packet->payload_len,\n                                            packet->isRouteDirect(), nullptr, nullptr);\n    // Keep the V29 recognizer authoritative for legacy M29 frames; its\n    // invalid-frame path already consumes them. V30-owned magic is terminal.\n    const bool legacy_m29 = packet->payload_len >= 3 &&\n        packet->payload[0] == 'M' && packet->payload[1] == '2' &&\n        packet->payload[2] == '9';\n    if (decision != v30::RawDecision::Unrelated && !legacy_m29) return;\n  }\n#endif\n"""
     if "v30::v30ParseRaw" not in mesh_cpp:
         mesh_cpp = once(mesh_cpp, raw_anchor, raw_new, "V30 raw parser gate")
     mesh_cpp_path.write_text(mesh_cpp, encoding="utf-8")
