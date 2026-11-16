@@ -6,7 +6,7 @@ namespace v30 {
 V30FileJournalStorage::V30FileJournalStorage(const char* p,size_t n):path_(p?p:""),slots_(n),file_(nullptr){}
 V30FileJournalStorage::~V30FileJournalStorage(){if(file_)std::fclose(file_);}
 bool V30FileJournalStorage::ensureOpen() const {
-  if(file_) return true;
+  if(file_) return std::fseek(file_,0,SEEK_END)==0 && std::ftell(file_)==long(slots_*sizeof(V30JournalRecord));
   auto* self=const_cast<V30FileJournalStorage*>(this);
   self->file_=std::fopen(path_.c_str(),"r+b");
   if(!self->file_) return false; // missing is not formatted implicitly
