@@ -21,7 +21,7 @@ const consumer = rawPublic(consumerDevice.publicKey);
 const scope = '11'.repeat(16);
 const message = '01'.repeat(16);
 const body = Buffer.from('opaque').toString('base64');
-const approved = ({scopeId, originId, right}) =>
+const approved = ({scopeId, originId: origin, right}) =>
   scopeId === scope && originId === origin && right === 'push';
 function issuePush(n, ttl = 5000, nonce = n.toString(16).padStart(32, '0'),
                    authorize = approved, key = device.privateKey) {
@@ -49,7 +49,7 @@ function issuePoll(n, nonce = (n + 100).toString(16).padStart(32, '0')) {
 assert.throws(() => authority.issueGrant({
   scopeId: scope, originId: origin, right: 'push', nowMs: 0, ttlMs: 5000, nonce: '00'.repeat(16),
 }), /authorization_required/);
-assert.equal(relay.accept({scopeId: scope, originId, messageId: message,
+assert.equal(relay.accept({scopeId: scope, originId: origin, messageId: message,
   ciphertext: body}, issuePush(0), 0).accepted, true);
 
 assert.throws(() => issuePush(1, 5000, '01'.repeat(16), approved,
@@ -62,7 +62,7 @@ const pg = issuePoll(20);
 const page = relay.poll({scopeId: scope, consumerOriginId: consumer,
   nowMs: 20, authorizationGrant: pg});
 assert.equal(page.items.length, 1);
-assert.throws(() => relay.accept({scopeId: scope, originId,
+assert.throws(() => relay.accept({scopeId: scope, originId: origin,
   messageId: '02'.repeat(16), ciphertext: body}, issuePush(10, 1000), 1010),
   /grant_expired_or_invalid/);
 assert.throws(() => relay.poll({scopeId: '22'.repeat(16),
