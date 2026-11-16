@@ -36,7 +36,7 @@ bool quoted(const std::string &s, size_t &pos, std::string &value) {
 }
 
 bool parseNames(const std::string &meta, std::vector<std::string> &names) {
-  const std::string key = ""names":[";
+  const std::string key = "\\\"names\\":[";
   size_t pos = meta.find(key);
   if (pos == std::string::npos) return false;
   pos += key.size();
@@ -77,7 +77,7 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
   std::string meta(reinterpret_cast<const char *>(data + 10), metadataSize);
   if (meta.empty() || meta.front() != '{' || meta.back() != '}')
     return status_ = PackStatus::BadMetadata;
-  const std::string featureKey = ""features":";
+  const std::string featureKey = "\\\"features\\":";
   const size_t featurePos = meta.find(featureKey);
   if (featurePos == std::string::npos) return status_ = PackStatus::BadMetadata;
   size_t cursor = featurePos + featureKey.size();
