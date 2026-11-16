@@ -14,7 +14,7 @@ def main(path):
                      "name": "N225" if i % 2 else "Dorp", "zoom_min": 8,
                      "geometry": [[4.0 + i / 100, 51.0 + i / 100], [4.01 + i / 100, 51.01 + i / 100]]})
     source.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n")
-    build_pack(source, root / "../maps/nl_profile.json", path)
+    build_pack(source, Path(__file__).resolve().parents[1] / "maps" / "nl_profile.json", path)
 
 if __name__ == "__main__":
     main(sys.argv[1])
