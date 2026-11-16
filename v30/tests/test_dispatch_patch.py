@@ -54,6 +54,14 @@ void Dispatcher::checkSend() {
     }
   }
 }
+void Dispatcher::sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis) {
+  if (!Packet::isValidPathLen(packet->path_len) || packet->payload_len > MAX_PACKET_PAYLOAD) {
+    _mgr->free(packet);
+  } else {
+    if (packet->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
+    }
+  }
+}
 """
 
 def load():
@@ -71,7 +79,7 @@ def main() -> None:
     assert header.count("onV30TxAdmission") == 1
     assert header.count("onV30TxDropped") == 1
     assert source.count("onV30TxAdmission") == 1
-    assert source.count("onV30TxDropped") == 2
+    assert source.count("onV30TxDropped") == 3
     assert "onV30TxComplete(outbound, true, static_cast<uint32_t>(t));" in source
     assert "onV30TxComplete(outbound, false, static_cast<uint32_t>(_ms->getMillis() - outbound_start));" in source
     assert "onV30TxComplete(outbound, false, 0);" in source
@@ -99,7 +107,7 @@ def main() -> None:
         assert hp.read_text().count("onV30TxAdmission") == 1
         assert hp.read_text().count("onV30TxDropped") == 1
         assert sp.read_text().count("onV30TxAdmission") == 1
-        assert sp.read_text().count("onV30TxDropped") == 2
+        assert sp.read_text().count("onV30TxDropped") == 3
         try:
             module.patch_dependency(root)
         except module.PatchError:
