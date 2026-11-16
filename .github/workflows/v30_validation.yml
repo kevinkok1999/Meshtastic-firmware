@@ -117,6 +117,7 @@ jobs:
           test "$(grep -F -c "onV30TxDropped" "$header")" -eq 1
           test "$(grep -F -c "onV30TxAdmission(outbound" "$source")" -eq 1
           test "$(grep -F -c "onV30TxDropped(outbound" "$source")" -eq 2
+          test "$(grep -F -c "onV30TxDropped(packet" "$source")" -eq 1
           printf "header=%s\\nsource=%s\\n" "$header" "$source"
       - name: Guard DEV app headroom
         run: |
