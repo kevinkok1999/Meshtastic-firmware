@@ -27,7 +27,14 @@ jobs:
       - name: Reconstruct V27 through V29
         run: |
           python v11/apply_v11.py wadamesh
+          python v12/apply_v12.py wadamesh
+          python v13/apply_v13.py wadamesh
+          python v15/apply_v15.py wadamesh
+          python v16/apply_v16.py wadamesh
+          python v17/apply_v17.py wadamesh
+          python v18/apply_v18.py wadamesh
           python v19/apply_v19.py wadamesh
+          python v26/apply_v26.py wadamesh
           python v27/apply_v27.py wadamesh
           python v28/apply_v28.py wadamesh
           python v29/apply_v29.py wadamesh
