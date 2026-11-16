@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { once } from 'node:events';
+import { request } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -61,9 +62,10 @@ try {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).accepted, true);
   assert.equal((await post(url, '/v30/push', push)).status, 400);
+  const rejectedGrant = grant(alice, 'push');
   const malformed = {...envelope, plaintext: 'must not cross relay'};
   response = await post(url, '/v30/push', signed(alice, '/v30/push',
-    {envelope: malformed, authorizationGrant: grant(alice, 'push')}));
+    {envelope: malformed, authorizationGrant: rejectedGrant}));
   assert.equal(response.status, 400);
   response = await post(url, '/v30/push', signed(bob, '/v30/push',
     {envelope, authorizationGrant: grant(alice, 'push')}));
@@ -71,8 +73,23 @@ try {
   response = await fetch(url + '/v30/push', {method: 'POST',
     headers: {'Content-Type': 'application/json'}, body: 'x'.repeat(17000)});
   assert.equal(response.status, 413);
+  // Absolute body deadline also bounds a client that never ends its body.
+  const began = Date.now();
+  await new Promise((resolve, reject) => {
+    const slow = request(url + '/v30/push', {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked'}});
+    slow.on('error', () => resolve());
+    slow.on('response', response => { response.resume(); resolve(); });
+    slow.write('{');
+    const watchdog = setTimeout(() => {slow.destroy(); reject(Error('body_deadline_failed'));}, 8000);
+    watchdog.unref();
+    slow.on('close', () => clearTimeout(watchdog));
+  });
+  assert.ok(Date.now() - began < 7500);
   await stop();
   url = await start();
+  assert.equal((await post(url, '/v30/push', signed(alice, '/v30/push',
+    {envelope, authorizationGrant: rejectedGrant}))).status, 400);
   assert.equal((await post(url, '/v30/push', push)).status, 400); // persisted nonce replay
   const poll = signed(bob, '/v30/poll', {scopeId: scope, consumerOriginId: origin(bob),
     authorizationGrant: grant(bob, 'poll')});

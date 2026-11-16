@@ -117,23 +117,28 @@ export async function createV30RelayService({issuerPublicKey, storage,
     }
     if (pending >= 16 || poisoned) { req.resume(); return send(503, {error: 'unavailable'}); }
     ++pending;
+    const bodyDeadline = setTimeout(() => req.destroy(), 5000);
+    bodyDeadline.unref();
     try {
       const body = await readBody(req);
+      clearTimeout(bodyDeadline);
       shape(body, req.url);
       const operation = queue.then(async () => {
         if (poisoned) throw Error('storage_unavailable');
         const nowMs = now();
-        let result;
+        let result, rejected;
         try {
           result = req.url === '/v30/push'
             ? adapter.accept(body.envelope, body.authorizationGrant, nowMs)
             : adapter.poll({...body, nowMs});
         } catch (error) {
-          // No uncommitted state is allowed to continue serving.
-          throw error;
+          rejected = error;
         }
+        // Verification may consume a grant nonce before core validation fails.
+        // Commit that denial too; otherwise restart could resurrect that nonce.
         try { await storage.save(exportState(core, authority)); }
         catch { poisoned = true; throw Error('storage_unavailable'); }
+        if (rejected) throw rejected;
         return result;
       });
       queue = operation.catch(() => {});
@@ -144,7 +149,7 @@ export async function createV30RelayService({issuerPublicKey, storage,
       send(code === 'storage_unavailable' ? 503 : code === 'body_too_large' ? 413 : 400,
         {error: code === 'body_too_large' ? code : code === 'storage_unavailable'
           ? code : 'request_rejected'});
-    } finally { --pending; }
+    } finally { clearTimeout(bodyDeadline); --pending; }
   });
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;
