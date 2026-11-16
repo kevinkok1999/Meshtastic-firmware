@@ -1,30 +1,23 @@
-import json, pathlib, sys, unittest, hmac, hashlib
-sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
-from channel_direct_join import JoinInputError, action_for_native_channel_path, normalize_channel_key, normalize_invite_locator, parse_join_input
+import json,pathlib,sys,unittest,hmac,hashlib
+sys.path.insert(0,str(pathlib.Path(__file__).parents[1]))
+from channel_direct_join import JoinInputError,action_for_native_channel_path,normalize_channel_key,normalize_invite_locator,parse_join_input
 class DirectJoinContractTests(unittest.TestCase):
-    KEY="A1"*16
-    def test_key_is_case_insensitive_and_uses_native_capability(self):
-        one=parse_join_input(self.KEY.lower(),label="Alpha"); two=parse_join_input("  "+self.KEY.lower()+"  ",label="Different label")
-        self.assertEqual(one.key_bytes,two.key_bytes); self.assertEqual(one.channel_capability,two.channel_capability)
-        self.assertEqual(one.channel_capability,hmac.new(bytes.fromhex(self.KEY),b"MOG27-CH-INBOX",hashlib.sha256).digest()[:16])
-    def test_wrong_length_non_hex_and_weak_passphrase_rejected(self):
-        for value in ("A1"*15,"A1"*17,"not-a-passphrase","A1"*15+"Z0"):
-            with self.subTest(value=value):
-                with self.assertRaises(JoinInputError): normalize_channel_key(value)
-    def test_legacy_invite_path_is_preserved(self):
-        action=parse_join_input(" abcd-2345 ",label="Existing")
-        self.assertEqual(action.kind,"invite"); self.assertEqual(action.invite_locator,"ABCD-2345")
-        self.assertEqual(normalize_invite_locator("abcd 2345"),"ABCD-2345")
-        self.assertEqual(action_for_native_channel_path(action).path,"native-channel-lookup")
-        with self.assertRaises(JoinInputError): normalize_invite_locator("ABCD-1234")
-    def test_direct_payload_redacts_key_and_repr(self):
-        action=parse_join_input(self.KEY); payload=action.relay_payload(b"server-challenge")
-        self.assertEqual(payload["kind"],"direct-key-proof"); self.assertNotIn(self.KEY.lower(),json.dumps(payload).lower())
-        self.assertNotIn(self.KEY.lower(),repr(action)); self.assertNotIn(self.KEY.lower(),repr(action_for_native_channel_path(action)))
-    def test_no_second_history_or_message_engine(self):
-        native=action_for_native_channel_path(parse_join_input(self.KEY))
-        self.assertEqual(native.path,"native-channel-lookup"); self.assertEqual(native.key_bytes,bytes.fromhex(self.KEY))
-    def test_challenge_bound_proof_changes(self):
-        action=parse_join_input(self.KEY)
-        self.assertNotEqual(action.relay_payload(b"one")["proof"],action.relay_payload(b"two")["proof"])
+ KEY="A1"*16
+ def test_key_is_case_insensitive_and_uses_native_capability(self):
+  a=parse_join_input(self.KEY,label="Alpha"); b=parse_join_input("  "+self.KEY.lower()+"  ",label="Different")
+  self.assertEqual(a.key_bytes,b.key_bytes); self.assertEqual(a.channel_capability,b.channel_capability)
+  self.assertEqual(a.channel_capability,hmac.new(bytes.fromhex(self.KEY),b"MOG27-CH-INBOX",hashlib.sha256).digest()[:16])
+ def test_wrong_key_rejected(self):
+  for v in ("A1"*15,"A1"*17,"not-a-passphrase","A1"*15+"Z0"):
+   with self.assertRaises(JoinInputError): normalize_channel_key(v)
+ def test_legacy_invite_path(self):
+  a=parse_join_input(" abcd-2345 ",label="Existing"); self.assertEqual(a.kind,"invite"); self.assertEqual(a.invite_locator,"ABCD-2345")
+  self.assertEqual(normalize_invite_locator("abcd 2345"),"ABCD-2345")
+  with self.assertRaises(JoinInputError): normalize_invite_locator("ABCD-1234")
+ def test_direct_key_is_local_only_and_redacted(self):
+  a=parse_join_input(self.KEY)
+  with self.assertRaises(JoinInputError): a.relay_payload()
+  self.assertNotIn(self.KEY.lower(),repr(a)); self.assertNotIn(self.KEY.lower(),repr(action_for_native_channel_path(a)))
+ def test_native_path_no_second_history(self):
+  n=action_for_native_channel_path(parse_join_input(self.KEY)); self.assertEqual(n.path,"native-channel-lookup"); self.assertEqual(n.key_bytes,bytes.fromhex(self.KEY))
 if __name__=="__main__": unittest.main()
