@@ -43,5 +43,18 @@ class OSMIngestionTests(unittest.TestCase):
         empty = self.root / "empty.osm"; empty.write_text("<osm version='0.6'></osm>")
         with self.assertRaises(MODULE.IngestError):
             MODULE.ingest(empty, self.root / "bad.jsonl", "x", "ODbL-1.0", "2026-11-16", self.boundaries)
+    def test_missing_tag_way_uses_boundary(self):
+        changed = self.source.read_text().replace('<tag k="province" v="Drenthe"/>', '')
+        self.source.write_text(changed)
+        out = self.root / "boundary.jsonl"
+        MODULE.ingest(self.source, out, "x", "ODbL-1.0", "2026-11-16", self.boundaries)
+        rows = [json.loads(line) for line in out.read_text().splitlines()]
+        self.assertEqual(len(rows), 12)
+
+    def test_missing_way_reference_is_hard_failure(self):
+        changed = self.source.read_text().replace('<nd ref="2"/>', '<nd ref="999"/>', 1)
+        self.source.write_text(changed)
+        with self.assertRaisesRegex(MODULE.IngestError, "missing node reference"):
+            MODULE.ingest(self.source, self.root / "bad.jsonl", "x", "ODbL-1.0", "2026-11-16", self.boundaries)
 if __name__ == "__main__":
     unittest.main()
