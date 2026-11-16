@@ -1,17 +1,16 @@
-name: V30 journal storage host tests
+name: V30 journal storage C++ host tests
 on:
   push:
     branches: [v30-work-journal-storage]
-    paths: ["v30/overlay/src/v30_journal_storage.py", "v30/tests/test_journal_storage.py", ".github/workflows/v30_journal_storage.yml"]
+    paths: ["v30/overlay/src/helpers/esp32/V30Journal*", "v30/tests/test_journal_storage.cpp", ".github/workflows/v30_journal_storage.yml"]
   pull_request:
     branches: [v30-work-journal-storage]
-    paths: ["v30/overlay/src/v30_journal_storage.py", "v30/tests/test_journal_storage.py", ".github/workflows/v30_journal_storage.yml"]
+    paths: ["v30/overlay/src/helpers/esp32/V30Journal*", "v30/tests/test_journal_storage.cpp", ".github/workflows/v30_journal_storage.yml"]
 permissions: {contents: read}
 jobs:
   journal:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.11"}
-      - run: python -m unittest v30/tests/test_journal_storage.py -v
+      - run: g++ -std=c++17 -Wall -Wextra -Werror -I. v30/overlay/src/helpers/esp32/V30Journal.cpp v30/overlay/src/helpers/esp32/V30FileJournalStorage.cpp v30/tests/test_journal_storage.cpp -o journal_test
+      - run: ./journal_test /tmp/v30-journal.bin
