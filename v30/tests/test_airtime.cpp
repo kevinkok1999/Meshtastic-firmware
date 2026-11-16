@@ -35,6 +35,16 @@ static void inFlightAndPacketBoundary() {
   assert(g.usedUs(V30AirtimeGovernor::kWindowUs + 10 +
                   V30AirtimeGovernor::kWindowUs) == 0);
 }
+static void unresolvedReservationSurvivesWindowAndDelayedCompletion() {
+  auto g = trusted();
+  assert(g.mayTransmit(0, 10, 5));
+  assert(!g.mayTransmit(V30AirtimeGovernor::kWindowUs + 1, 1, 5));
+  const uint64_t delayed = V30AirtimeGovernor::kWindowUs * 2;
+  g.recordAttempt(delayed, 10, 5);
+  assert(!g.faulted());
+  assert(g.usedUs(delayed + V30AirtimeGovernor::kWindowUs - 1) == 10);
+  assert(g.usedUs(delayed + V30AirtimeGovernor::kWindowUs) == 0);
+}
 static void duplicateAndUnknownCompletionFailClosed() {
   auto g = trusted();
   assert(g.mayTransmit(0, 100, 4));
@@ -57,6 +67,7 @@ int main() {
   coldStart();
   capAndBands();
   inFlightAndPacketBoundary();
+  unresolvedReservationSurvivesWindowAndDelayedCompletion();
   duplicateAndUnknownCompletionFailClosed();
   restoreValidation();
 }

@@ -13,6 +13,8 @@ uint64_t V30AirtimeGovernor::saturatingAdd(uint64_t a, uint64_t b) {
 }
 
 bool V30AirtimeGovernor::liveAt(const Entry& entry, uint64_t nowUs) {
+  if (entry.reserved)
+    return true;  // unresolved physical TX must never age out of the ledger
   return nowUs < saturatingAdd(entry.endUs, kWindowUs);
 }
 
@@ -106,7 +108,8 @@ void V30AirtimeGovernor::recordAttempt(uint64_t nowUs,
   const bool overshot = actualOrConservativeUs > e.durationUs;
   const uint64_t charge = overshot ? actualOrConservativeUs : e.durationUs;
   e.durationUs = charge > kBudgetUs ? kBudgetUs : charge;
-  e.endUs = saturatingAdd(e.startUs, e.durationUs);
+  const uint64_t measuredEnd = saturatingAdd(e.startUs, e.durationUs);
+  e.endUs = measuredEnd > nowUs ? measuredEnd : nowUs;
   e.reserved = false;
   if (overshot)
     faulted_ = true;
@@ -118,14 +121,18 @@ bool V30AirtimeGovernor::restoreLedger(const Snapshot& snapshot,
     return false;
   uint64_t total = 0;
   uint64_t previousStart = 0;
+  size_t reservedCount = 0;
   for (size_t i = 0; i < snapshot.count; ++i) {
     const Entry& e = snapshot.entries[i];
+    const uint64_t minimumEnd = saturatingAdd(e.startUs, e.durationUs);
     if (e.durationUs == 0 || e.durationUs > kBudgetUs ||
-        e.endUs < e.startUs ||
+        e.endUs < minimumEnd ||
         (snapshot.clockInitialized && e.startUs > snapshot.lastNowUs) ||
         (i != 0 && e.startUs < previousStart))
       return false;
     total = saturatingAdd(total, e.durationUs);
+    if (e.reserved && ++reservedCount > 1)
+      return false;
     previousStart = e.startUs;
   }
   if (total > kBudgetUs)
