@@ -12,7 +12,7 @@ from typing import Any
 FLASH_SIZE = 0x1000000
 BOARD = "lilygo-t-deck-plus"
 CHIP = "ESP32-S3"
-ALLOWED_KINDS = {"bootloader", "partition", "ota_data", "app0", "map"}
+ALLOWED_KINDS = {"bootloader", "partition", "ota_data", "app0", "app1", "map"}
 EXPECTED_OFFSETS = {
     "bootloader": 0x000000,
     "partition": 0x008000,
@@ -96,7 +96,7 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
             raise ManifestError("app1 requires explicit safe_mode")
         offset = _int(item.get("offset"), f"{kind}.offset")
         declared_size = _int(item.get("size"), f"{kind}.size")
-        if offset <= 0 or declared_size <= 0 or offset + declared_size > FLASH_SIZE:
+        if offset < 0 or declared_size <= 0 or offset + declared_size > FLASH_SIZE:
             raise ManifestError(f"{kind} is outside 16 MiB flash")
         if kind == "bootloader" and offset >= 0x8000:
             raise ManifestError("bootloader must remain below partition table at 0x8000")
