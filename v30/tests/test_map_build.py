@@ -1,4 +1,5 @@
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ class MapBuildTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.profile = json.loads((Path(__file__).parents[1] / "maps" / "nl_profile.json").read_text())
         self.features = []
+        kinds = ["boundary", "motorway", "trunk", "primary", "secondary", "tertiary", "local", "water", "place"]
         for index, province in enumerate(PROVINCES):
             self.features.append({
                 "id": f"way/{index}",
