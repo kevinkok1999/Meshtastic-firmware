@@ -1,0 +1,26 @@
+name: V30 G4 relay core
+
+on:
+  push:
+    branches: [v30-relay-g4]
+    paths:
+      - "v30/relay/**"
+      - ".github/workflows/v30_g4_relay.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  node-relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run standalone relay contract
+        run: node v30/relay/test_v30_relay.mjs
