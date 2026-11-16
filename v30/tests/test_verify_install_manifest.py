@@ -15,7 +15,7 @@ class ManifestVerifierTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.files = {}
-        for kind in ("bootloader", "partition", "ota_data", "app0", "app1"):
+        for kind in ("bootloader", "partition", "ota_data", "app0"):
             data = ((kind.encode() * 32)[:128] if kind != "ota_data" else bytes([0]) * 0x2000)
             path = self.root / f"{kind}.bin"
             path.write_bytes(data)
@@ -61,8 +61,9 @@ class ManifestVerifierTests(unittest.TestCase):
         with self.assertRaises(MODULE.ManifestError):
             MODULE.validate_manifest(self.manifest, self.root)
 
-    def test_production_requires_independent_signature(self):
+    def test_rejects_untrusted_production_even_with_self_asserted_signature(self):
         self.manifest["production"] = True
+        self.manifest["signature_verified"] = True
         with self.assertRaises(MODULE.ManifestError):
             MODULE.validate_manifest(self.manifest, self.root)
 
@@ -75,6 +76,23 @@ class ManifestVerifierTests(unittest.TestCase):
         with self.assertRaises(MODULE.ManifestError):
             MODULE.validate_manifest(self.manifest, self.root)
 
+
+    def test_rejects_unknown_and_user_partition_roles(self):
+        self.manifest["artifacts"][0]["kind"] = "nvs"
+        with self.assertRaises(MODULE.ManifestError):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_app1_requires_explicit_safe_mode(self):
+        p = self.root / "app1.bin"; p.write_bytes(b"app1")
+        self.manifest["artifacts"].append({"kind": "app1", "path": p.name, "offset": MODULE.EXPECTED_OFFSETS["app1"],
+                                           "size": 4, "sha256": hashlib.sha256(b"app1").hexdigest()})
+        with self.assertRaises(MODULE.ManifestError):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_full_v30_requires_map_and_explicit_metadata(self):
+        self.manifest["install_mode"] = "full-v30"
+        with self.assertRaises(MODULE.ManifestError):
+            MODULE.validate_manifest(self.manifest, self.root)
 
 if __name__ == "__main__":
     unittest.main()
