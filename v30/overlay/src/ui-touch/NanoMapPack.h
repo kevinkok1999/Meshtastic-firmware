@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace meshtastic::nanomap {
 
@@ -14,6 +15,16 @@ enum class PackStatus : uint8_t {
   MetadataOutOfBounds,
   BadChecksum,
   BadMetadata,
+  GeometryCorrupt,
+  GeometryTooLarge,
+};
+
+struct FeatureRecord {
+  uint16_t nameIndex;
+  uint8_t provinceIndex;
+  uint8_t zoomMin;
+  std::string kind;
+  std::vector<std::pair<int32_t, int32_t>> geometry;
 };
 
 struct PlaceResult {
@@ -30,6 +41,8 @@ class NanoMapPack {
   bool lookupPlace(const std::string &prefix, std::vector<PlaceResult> &out,
                    size_t limit = 16) const;
   const std::vector<std::string> &names() const { return names_; }
+  bool forEachFeature(double minLon, double minLat, double maxLon, double maxLat,
+                      uint8_t maxZoom, const std::function<bool(const FeatureRecord &)> &callback) const;
 
  private:
   PackStatus status_ = PackStatus::TooSmall;
