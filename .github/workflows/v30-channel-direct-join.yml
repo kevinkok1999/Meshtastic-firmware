@@ -1,0 +1,35 @@
+name: v30-channel-direct-join
+
+on:
+  push:
+    branches: [v30-work-channel]
+    paths:
+      - "v30/channel_direct_join.py"
+      - "v30/apply_channel_v30.py"
+      - "v30/tests/test_channel_direct_join.py"
+      - ".github/workflows/v30-channel-direct-join.yml"
+  pull_request:
+    branches: [v30-work-channel]
+    paths:
+      - "v30/**"
+      - ".github/workflows/v30-channel-direct-join.yml"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Host contract tests
+        run: python -m unittest discover -s v30/tests -p "test_channel_direct_join.py" -v
+      - name: Patch script syntax check
+        run: python -m py_compile v30/apply_channel_v30.py
+      - name: Pinned V30 patch guard
+        run: |
+          test "$(git rev-parse HEAD)" != ""
+          test -f v30/apply_v30.py
+          test -f v28/apply_v28.py
+          git diff --exit-code -- v28/apply_v28.py v30/apply_v30.py
