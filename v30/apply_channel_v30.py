@@ -66,13 +66,16 @@ def main():
   }
 #endif
 '''
-    if "v30_direct_join::parseKey" not in src: src=once(src,anchor,direct+anchor,"V30 direct-key submit")
-    max_old='lv_textarea_set_max_length(s_addch_secret_ta, 10);'
-    if src.count(max_old)!=1: fail("V30 join max-length anchor missing or duplicated")
-    src=src.replace(max_old,'lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
-    placeholder_old='taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));'
-    if src.count(placeholder_old)!=1: fail("V30 join placeholder anchor missing or duplicated")
-    src=src.replace(placeholder_old,placeholder_old+'\\n    lv_textarea_set_password_mode(s_addch_secret_ta, true);',1)
+    if "v30_direct_join::parseKey" not in src:
+        src=once(src,anchor,direct+anchor,"V30 direct-key submit")
+        max_old='lv_textarea_set_max_length(s_addch_secret_ta, 10);'
+        if src.count(max_old)!=1: fail("V30 join max-length anchor missing or duplicated")
+        src=src.replace(max_old,'lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
+        placeholder_old='taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));'
+        if src.count(placeholder_old)!=1: fail("V30 join placeholder anchor missing or duplicated")
+        src=src.replace(placeholder_old,placeholder_old+'\\n    lv_textarea_set_password_mode(s_addch_secret_ta, true);',1)
+    elif 'lv_textarea_set_max_length(s_addch_secret_ta, 32);' not in src or 'lv_textarea_set_password_mode(s_addch_secret_ta, true);' not in src:
+        fail("V30 direct-key patch is incomplete")
     ui.write_text(src,encoding="utf-8")
     print("V30 native direct-key join installed; browser WebSocket remains invite-only.")
 if __name__=="__main__": main()
