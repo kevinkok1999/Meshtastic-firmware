@@ -39,7 +39,7 @@ bool validUtf8(const std::string &s) {
       if ((next & 0xc0) != 0x80) return false;
       codepoint = (codepoint << 6) | (next & 0x3f);
     }
-    if (codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
+    if ((continuation == 2 && codepoint < 0x800) || (continuation == 3 && codepoint < 0x10000) ||\n        codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
   }
   return true;
 }
@@ -131,7 +131,7 @@ bool NanoMapPack::lookupPlace(const std::string &prefix,
                               std::vector<PlaceResult> &out,
                               size_t limit) const {
   out.clear();
-  if (status_ != PackStatus::Ok || limit == 0) return false;
+  if (status_ != PackStatus::Ok || limit == 0 || limit > kMaxNames) return false;
   for (size_t i = 0; i < names_.size() && out.size() < limit; ++i) {
     if (names_[i].compare(0, prefix.size(), prefix) == 0)
       out.push_back({names_[i], static_cast<uint16_t>(i)});
