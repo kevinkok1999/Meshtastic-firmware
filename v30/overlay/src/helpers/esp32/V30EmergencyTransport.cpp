@@ -3,6 +3,7 @@
 
 namespace {
 constexpr size_t kQueueCapacity = 8;
+constexpr size_t kMaxRawPayload = 184;
 v30::V30RawFrame queue[kQueueCapacity];
 size_t queueCount = 0;
 v30::V30TxResultCallback resultCallback = nullptr;
@@ -12,7 +13,7 @@ namespace v30 {
 
 TxAdmission v30TryEnqueueEmergencyRaw(const uint8_t* data, size_t len,
                                        uint64_t cookie, uint8_t priority) {
-  if (!data || len == 0 || len > sizeof(V30RawFrame::data) || priority == 0)
+  if (!data || len == 0 || len > kMaxRawPayload || priority == 0)
     return TxAdmission::NoPool;
   if (queueCount != 0) return TxAdmission::Busy;
   if (queueCount >= kQueueCapacity) return TxAdmission::NoPool;
