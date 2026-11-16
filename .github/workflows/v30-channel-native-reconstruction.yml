@@ -26,6 +26,7 @@ jobs:
           python-version: "3.11"
       - name: Reconstruct V27 through V29
         run: |
+          python v11/apply_v11.py wadamesh
           python v27/apply_v27.py wadamesh
           python v28/apply_v28.py wadamesh
           python v29/apply_v29.py wadamesh
