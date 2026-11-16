@@ -113,6 +113,7 @@ def _geometry(points: Iterable[Iterable[Any]], scale: int) -> tuple[bytes, tuple
 def _read_features(source: Path, profile: dict[str, Any]) -> tuple[list[dict[str, Any]], str, str | None]:
     raw = source.read_bytes()
     features: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     data_dates: set[str] = set()
     for line_no, line in enumerate(raw.splitlines(), 1):
         if not line.strip():
@@ -128,6 +129,9 @@ def _read_features(source: Path, profile: dict[str, Any]) -> tuple[list[dict[str
                 raise BuildError(f"line {line_no}: missing {field}")
         if not isinstance(item["id"], str) or not item["id"]:
             raise BuildError(f"line {line_no}: id must be non-empty string")
+        if item["id"] in seen_ids:
+            raise BuildError("line %d: duplicate feature id %r" % (line_no, item["id"]))
+        seen_ids.add(item["id"])
         if item["kind"] not in REQUIRED_KINDS:
             raise BuildError(f"line {line_no}: unsupported kind {item['kind']!r}")
         if item["province"] not in PROVINCES:
@@ -172,42 +176,38 @@ def _encode(features: list[dict[str, Any]], profile: dict[str, Any]) -> tuple[by
     return compressed, packed, omitted_by_kind, len(names), {k: sum(f["kind"] == k for f in features) for k in REQUIRED_KINDS}
 
 def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_sha: str, data_date: str | None) -> tuple[bytes, int, dict[str, int], int, dict[str, int], list[dict[str, Any]]]:
-    # Drop the lowest-priority records one at a time only if the budget demands it.
     priorities = profile.get("feature_priorities", {})
     working = list(features)
     omitted: dict[str, int] = {}
     budget = int(profile.get("pack_budget_bytes", DEFAULT_BUDGET))
     while True:
-        encoded, packed, ignored, names, roads = _encode(working, profile)
-        meta = {
-            "version": FORMAT_VERSION, "profile_version": profile.get("profile_version", 1),
-            "source_sha256": source_sha, "data_date": data_date,
-            "provinces": list(PROVINCES), "names": names, "features": packed,
-        }
+        encoded, packed, _ignored, names_count, roads = _encode(working, profile)
+        names = sorted({f["name"] for f in working if f["name"]})
+        extent = [min(f["bbox"][0] for f in working), min(f["bbox"][1] for f in working), max(f["bbox"][2] for f in working), max(f["bbox"][3] for f in working)]
+        meta = {"version": FORMAT_VERSION, "profile_version": profile.get("profile_version", 1), "source_sha256": source_sha, "data_date": data_date, "provinces": list(PROVINCES), "names": names, "features": packed, "extent": extent, "zoom_inventory": {str(z): sum(1 for f in working if f["zoom_min"] <= z) for z in range(3, 20)}}
         meta_bytes = json.dumps(meta, sort_keys=True, separators=(",", ":")).encode()
         candidate = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
         if len(candidate) <= budget:
-            return candidate, packed, omitted, names, roads
+            return candidate, packed, omitted, names_count, roads, working
         if len(working) <= 1:
             raise BuildError(f"pack exceeds budget ({len(candidate)} > {budget})")
         lowest = min(working, key=lambda f: (int(priorities.get(f["kind"], 0)), f["id"]))
         working.remove(lowest)
         omitted[lowest["kind"]] = omitted.get(lowest["kind"], 0) + 1
-        # Never omit the last feature of a province: missing province must fail, not silently degrade.
         if not any(f["province"] == lowest["province"] for f in working):
-            raise BuildError(f"budget would remove final feature for province {lowest['province']}")
+            raise BuildError("budget would remove final feature for province " + lowest["province"])
 
 def build_pack(source_path: str | Path, profile: str | Path | dict[str, Any], out_path: str | Path) -> BuildReport:
     source = Path(source_path)
     profile_obj, profile_raw = _load_profile(profile)
     features, source_sha, data_date = _read_features(source, profile_obj)
-    pack, packed, omitted, names, roads = _pack_bytes(features, profile_obj, source_sha, data_date)
+    pack, packed, omitted, names, roads, retained = _pack_bytes(features, profile_obj, source_sha, data_date)
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(pack)
     extent = (
-        min(f["bbox"][0] for f in features), min(f["bbox"][1] for f in features),
-        max(f["bbox"][2] for f in features), max(f["bbox"][3] for f in features),
+        min(f["bbox"][0] for f in retained), min(f["bbox"][1] for f in retained),
+        max(f["bbox"][2] for f in retained), max(f["bbox"][3] for f in retained),
     )
     zoom_inventory = {str(z): sum(1 for f in retained if f["zoom_min"] <= z) for z in range(3, 20)}
     report = BuildReport(
