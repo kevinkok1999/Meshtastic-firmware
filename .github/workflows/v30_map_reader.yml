@@ -39,3 +39,5 @@ jobs:
 # M1 bounds verification
 
 # builder checks fixed
+
+# utf8 guard fixed
