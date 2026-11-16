@@ -54,7 +54,7 @@ class MapBuildTests(unittest.TestCase):
     def test_invalid_coordinate_is_hard_failure(self):
         bad = dict(self.features[0])
         bad["geometry"] = [[181.0, 52.0]]
-        self.source.write_text("\n".join(json.dumps(x) for x in self.features[:-1] + [bad]) + "\n")
+        self.source.write_text("\n".join(json.dumps(x) for x in [bad] + self.features[1:]) + "\n")
         with self.assertRaisesRegex(BuildError, "invalid coordinate"):
             build_pack(self.source, self.profile, self.root / "bad.meshmap")
 
