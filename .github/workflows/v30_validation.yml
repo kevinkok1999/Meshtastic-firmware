@@ -106,9 +106,12 @@ jobs:
           pio run -e LilyGo_TDeck_companion_radio_touch
       - name: Assert embedded Dispatcher hook was applied
         run: |
-          matches=$(grep -R -F -l "onV30TxComplete" upstream-wadamesh/.pio/libdeps || true)
-          test "$(printf "%s\\n" "$matches" | sed '/^$/d' | wc -l)" -ge 2
-          printf "%s\\n" "$matches"
+          header=$(grep -R -F -l "virtual void onV30TxComplete" upstream-wadamesh/.pio/libdeps | head -n1)
+          source=$(grep -R -F -l "onV30TxComplete(outbound" upstream-wadamesh/.pio/libdeps | head -n1)
+          test -n "$header" && test -n "$source"
+          test "$(grep -F -c "onV30TxComplete" "$header")" -eq 1
+          test "$(grep -F -c "onV30TxComplete(outbound" "$source")" -eq 3
+          printf "header=%s\\nsource=%s\\n" "$header" "$source"
       - name: Guard DEV app headroom
         run: |
           test -f upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin
