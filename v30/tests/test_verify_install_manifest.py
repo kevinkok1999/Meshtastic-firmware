@@ -16,7 +16,7 @@ class ManifestVerifierTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.files = {}
         for kind in ("bootloader", "partition", "ota_data", "app0", "app1"):
-            data = (kind.encode() * 32)[:128]
+            data = ((kind.encode() * 32)[:128] if kind != "ota_data" else b"\\x00" * MODULE.OTA_DATA_SIZE)
             path = self.root / f"{kind}.bin"
             path.write_bytes(data)
             self.files[kind] = path
