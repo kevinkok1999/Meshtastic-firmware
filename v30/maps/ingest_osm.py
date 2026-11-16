@@ -47,7 +47,7 @@ def _tags(element: ET.Element) -> dict[str, str]:
 
 def parse_osm_xml(source: Path) -> list[dict[str, Any]]:
     nodes: dict[str, tuple[float, float, dict[str, str]]] = {}
-    ways: list[ET.Element] = []
+    ways: list[tuple[str, dict[str, str], list[str]]] = []
     for event, element in ET.iterparse(source, events=("end",)):
         if element.tag == "node":
             try:
@@ -56,7 +56,7 @@ def parse_osm_xml(source: Path) -> list[dict[str, Any]]:
                 raise IngestError("node has invalid coordinates") from None
             nodes[element.attrib["id"]] = (lon, lat, _tags(element))
         elif element.tag == "way":
-            ways.append(element)
+            ways.append((element.attrib.get("id", ""), _tags(element), [n.attrib.get("ref", "") for n in element.findall("nd")]))
         element.clear()
     features: list[dict[str, Any]] = []
     for node_id, (lon, lat, tags) in sorted(nodes.items()):
@@ -66,14 +66,12 @@ def parse_osm_xml(source: Path) -> list[dict[str, Any]]:
             features.append({"id": f"node/{node_id}", "kind": kind, "province": province,
                              "name": " ".join(tags.get("name", "").split()), "zoom_min": 8,
                              "geometry": [[lon, lat]]})
-    for way in sorted(ways, key=lambda x: x.attrib.get("id", "")):
-        tags = _tags(way)
+    for way_id, tags, refs in sorted(ways, key=lambda x: x[0]):
         kind, province = _kind(tags), _province(tags)
-        refs = [n.attrib.get("ref") for n in way.findall("nd")]
         if not kind or not province or not refs or any(ref not in nodes for ref in refs):
             continue
         geometry = [[nodes[ref][0], nodes[ref][1]] for ref in refs]
-        features.append({"id": f"way/{way.attrib['id']}", "kind": kind, "province": province,
+        features.append({"id": f"way/{way_id}", "kind": kind, "province": province,
                          "name": " ".join(tags.get("name", "").split()),
                          "zoom_min": 8 if kind in ("local", "place") else 5,
                          "geometry": geometry})
