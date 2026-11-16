@@ -1,52 +1,41 @@
-"""V30 direct private-channel join contract.
-
-This module is a side-effect-free adapter for the existing native channel
-store/lookup/history path. It accepts either the legacy XXXX-XXXX locator or
-the full 128-bit channel secret. The secret never appears in relay payloads,
-URLs, logs, or invite strings.
-"""
+"""V30 direct private-channel join contract."""
 from __future__ import annotations
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import hmac
 import re
 from typing import Literal
 
-_KEY_HEX_LEN = 32
-_KEY_BYTES = 16
 _INVITE_RE = re.compile(r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
 _HEX_RE = re.compile(r"^[0-9a-fA-F]{32}$")
-_CAPABILITY_DOMAIN = b"MeshOffGridNL/V30/channel-capability/v1"
+# Exact V28 native derivation: HMAC-SHA256(secret, "MOG27-CH-INBOX"), first 16 bytes.
+_NATIVE_CAPABILITY_DOMAIN = b"MOG27-CH-INBOX"
 _PROOF_DOMAIN = b"MeshOffGridNL/V30/direct-join-proof/v1"
 
 
 class JoinInputError(ValueError):
-    """Raised when a channel join input is malformed or unsafe."""
+    pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class JoinAction:
     """Intent consumed by the existing native lookup/channel-history path."""
-
     kind: Literal["direct_key", "invite"]
     label: str = "Private"
-    key_bytes: bytes | None = None
+    key_bytes: bytes | None = field(default=None, repr=False)
     invite_locator: str | None = None
+
+    def __repr__(self) -> str:
+        return f"JoinAction(kind={self.kind!r}, label={self.label!r}, invite_locator={self.invite_locator!r})"
 
     @property
     def channel_capability(self) -> bytes | None:
         if self.key_bytes is None:
             return None
-        return hmac.new(self.key_bytes, _CAPABILITY_DOMAIN, hashlib.sha256).digest()
+        return hmac.new(self.key_bytes, _NATIVE_CAPABILITY_DOMAIN, hashlib.sha256).digest()[:16]
 
     def relay_payload(self, challenge: bytes | bytearray | memoryview) -> dict[str, str | int]:
-        """Return the only payload allowed to leave the device.
-
-        The full key is deliberately absent. The relay receives a
-        challenge-bound proof or the legacy invite locator and must still use
-        the existing signed/authenticated request path.
-        """
+        """Return a redacted payload; the existing relay/auth path owns transport."""
         if self.kind == "invite":
             assert self.invite_locator is not None
             return {"kind": "invite", "locator": self.invite_locator}
@@ -55,14 +44,22 @@ class JoinAction:
         if not challenge or len(challenge) > 128:
             raise JoinInputError("challenge must be 1..128 bytes")
         assert self.key_bytes is not None
-        proof = hmac.new(
-            self.key_bytes, _PROOF_DOMAIN + bytes(challenge), hashlib.sha256
-        ).hexdigest()
+        proof = hmac.new(self.key_bytes, _PROOF_DOMAIN + bytes(challenge), hashlib.sha256).hexdigest()
         return {"kind": "direct-key-proof", "proof": proof, "key_bits": 128}
 
 
+@dataclass(frozen=True, repr=False)
+class NativeChannelRequest:
+    path: Literal["native-channel-lookup"] = "native-channel-lookup"
+    capability: bytes | None = field(default=None, repr=False)
+    key_bytes: bytes | None = field(default=None, repr=False)
+    locator: str | None = None
+
+    def __repr__(self) -> str:
+        return f"NativeChannelRequest(path={self.path!r}, locator={self.locator!r})"
+
+
 def normalize_channel_key(value: str) -> str:
-    """Normalize a full existing key without accepting weaker passphrases."""
     if not isinstance(value, str):
         raise TypeError("channel key must be text")
     candidate = value.strip()
@@ -85,7 +82,6 @@ def normalize_invite_locator(value: str) -> str:
 
 
 def parse_join_input(value: str, *, label: str = "Private") -> JoinAction:
-    """Parse direct-key input or preserve the V28 short invite path."""
     if not isinstance(label, str):
         raise TypeError("label must be text")
     clean_label = label.strip() or "Private"
@@ -106,20 +102,14 @@ def parse_direct_key(value: str) -> JoinAction:
     return action
 
 
-def action_for_native_channel_path(action: JoinAction) -> dict[str, object]:
-    """Describe the existing native path without creating a second history."""
+def action_for_native_channel_path(action: JoinAction) -> NativeChannelRequest:
     if action.kind == "invite":
-        return {"path": "native-channel-lookup", "locator": action.invite_locator}
+        return NativeChannelRequest(locator=action.invite_locator)
     assert action.key_bytes is not None
-    return {
-        "path": "native-channel-lookup",
-        "channel_capability": action.channel_capability,
-        "key_bytes": action.key_bytes,
-    }
+    return NativeChannelRequest(capability=action.channel_capability, key_bytes=action.key_bytes)
 
 
 def contains_secret(text: str, action: JoinAction) -> bool:
-    """Test helper for redacted diagnostics; callers should log only False."""
     if action.key_bytes is None:
         return False
     return action.key_bytes.hex() in text.lower()
