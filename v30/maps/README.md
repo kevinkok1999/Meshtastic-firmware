@@ -29,7 +29,7 @@ This M1 checkpoint is not activated for firmware: it has no native spatial index
 
 ## Native reader scope
 
-`NanoMapPack` currently validates the bounded container, metadata, CRC32 and name dictionary lookups. It deliberately does not decode zlib geometry or integrate with the LVGL renderer; those remain later M2/M3 gates.
+`NanoMapPack` validates the bounded container, metadata, CRC32, name lookups and streaming geometry records. LVGL integration and device scheduling remain later M2/M3 gates.
 
 ## Streaming geometry checkpoint
 
