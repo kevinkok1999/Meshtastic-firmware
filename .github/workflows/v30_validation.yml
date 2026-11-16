@@ -79,11 +79,18 @@ jobs:
           block = text[start:end]
           if "custom_v30_dispatch_patch" in block:
               raise SystemExit("hook already staged")
-          block = (
-              "extra_scripts = pre:v30_dispatch_patch.py\n"
-              "custom_v30_dispatch_patch = 1\n"
-              + block
-          )
+          lines = block.splitlines(keepends=True)
+          for i, line in enumerate(lines):
+              if line.startswith("extra_scripts = "):
+                  if "pre:v30_dispatch_patch.py" in line:
+                      raise SystemExit("hook already staged")
+                  lines[i] = line.rstrip("\\n") + ", pre:v30_dispatch_patch.py\\n"
+                  break
+          else:
+              raise SystemExit("T-Deck extra_scripts option missing")
+          block = "".join(lines)
+          section_end = block.find("\\n", block.find("]")) + 1
+          block = block[:section_end] + "custom_v30_dispatch_patch = 1\\n" + block[section_end:]
           p.write_text(text[:start] + block + text[end:], encoding="utf-8")
           PY
       - name: Build DEV firmware with hook only
