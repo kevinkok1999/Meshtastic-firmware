@@ -1,0 +1,40 @@
+{
+  "profile_version": 1,
+  "country": "NL",
+  "pack_budget_bytes": 3670016,
+  "cache_budget_bytes": 524288,
+  "quantization": 100000,
+  "extent": [3.2, 50.7, 7.3, 53.7],
+  "provinces": [
+    "Drenthe", "Flevoland", "Friesland", "Gelderland", "Groningen",
+    "Limburg", "Noord-Brabant", "Noord-Holland", "Overijssel",
+    "Utrecht", "Zeeland", "Zuid-Holland"
+  ],
+  "feature_priorities": {
+    "boundary": 100,
+    "motorway": 90,
+    "trunk": 80,
+    "primary": 70,
+    "secondary": 60,
+    "tertiary": 50,
+    "local": 20,
+    "water": 30,
+    "place": 40
+  },
+  "source_workflow": {
+    "osm": {
+      "url": "https://download.geofabrik.de/europe/netherlands.html",
+      "license": "ODbL-1.0",
+      "method": "download licensed PBF extract, record URL, retrieval date, SHA256, and replication/source date"
+    },
+    "pdok": {
+      "url": "https://www.pdok.nl/",
+      "license": "source-specific PDOK terms",
+      "method": "use only bulk/open datasets whose terms permit redistribution; retain dataset name, version, date, URL and SHA256"
+    },
+    "prohibited": [
+      "public tile-server scraping",
+      "Google Maps or proprietary basemap redistribution"
+    ]
+  }
+}
