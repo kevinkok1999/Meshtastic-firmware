@@ -52,6 +52,28 @@ def main() -> None:
     if apply.count("pio_path.write_text") != 1:
         raise AssertionError("platformio.ini must be written once after all edits")
 
+    # Execute the applier against a minimal V29-shaped checkout to catch
+    # stale-buffer overwrites and verify that the overlay is copied.
+    with tempfile.TemporaryDirectory(prefix="v30-applier-") as td:
+        upstream = pathlib.Path(td) / "upstream"
+        (upstream / "src").mkdir(parents=True)
+        (upstream / "platformio.ini").write_text(
+            "[env:LilyGo_TDeck_companion_radio_touch]\n"
+            "  -D MESH_OFFGRIDNL_V29=1\n"
+            "lib_deps = https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4\n"
+            "[env:LilyGo_TDeck_Pro_companion_radio_touch]\n",
+            encoding="utf-8",
+        )
+        for name in ("MyMesh.h", "MyMesh.cpp", "main.cpp"):
+            (upstream / "src" / name).write_text("// fixture\n", encoding="utf-8")
+        subprocess.run(["python", str(APPLIER), str(upstream)], cwd=REPO, check=True)
+        pio = (upstream / "platformio.ini").read_text(encoding="utf-8")
+        require(pio, "MESH_OFFGRIDNL_V29=1")
+        require(pio, "MESH_OFFGRIDNL_V30=1")
+        require(pio, MESHCORE_SHA)
+        if not (upstream / "src/helpers/esp32/V30EmergencyTransport.h").exists():
+            raise AssertionError("V30 overlay helper was not copied")
+
     with tempfile.TemporaryDirectory(prefix="v30-transport-") as td:
         exe = pathlib.Path(td) / "transport"
         subprocess.run(
