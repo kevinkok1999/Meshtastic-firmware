@@ -142,12 +142,17 @@ def _read_features(source: Path, profile: dict[str, Any]) -> tuple[list[dict[str
             raise BuildError(f"line {line_no}: unknown province {item['province']!r}")
         if "data_date" in item:
             data_dates.add(str(item["data_date"]))
+        name = str(item.get("name", ""))
+        if len(name.encode("utf-8")) > MAX_NAME_BYTES or any(ord(ch) < 0x20 for ch in name):
+            raise BuildError(f"line {line_no}: name exceeds reader limits")
         geometry, bbox = _geometry(item["geometry"], int(profile.get("quantization", 100000)))
         features.append({
             "id": item["id"], "kind": item["kind"], "province": item["province"],
             "name": name, "zoom_min": int(item.get("zoom_min", 3)),
             "geometry": geometry, "bbox": bbox,
         })
+    if len(features) > MAX_FEATURES:
+        raise BuildError("source exceeds feature limit")
     if not features:
         raise BuildError("source contains no features")
     missing = sorted(set(PROVINCES) - {f["province"] for f in features})
