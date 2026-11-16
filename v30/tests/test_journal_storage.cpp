@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cstring>
 int main(int argc,char**argv){
- const char* path=argc>1?argv[1]:"journal.bin"; std::remove(path);
+ const char* path=argc>1?argv[1]:"journal.bin"; std::remove(path); std::FILE* init=std::fopen(path,"wb"); assert(init); std::fseek(init,long(4*sizeof(v30::V30JournalRecord))-1,SEEK_SET); std::fputc(0,init); std::fclose(init);
  v30::V30FileJournalStorage storage(path,4); v30::V30Journal journal(storage);
  auto rec=journal.recover(); assert(rec.validRecords==0&&!rec.degraded);
  v30::V30JournalBundle b{}; b.critical=1;b.direction=v30::JournalDirection::Outbound;b.authenticated=1;b.payloadLen=3;
