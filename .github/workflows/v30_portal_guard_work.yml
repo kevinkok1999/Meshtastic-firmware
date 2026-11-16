@@ -12,3 +12,5 @@ jobs:
         with: {persist-credentials: false}
       - run: c++ -std=c++17 -Wall -Wextra -Werror -pedantic v30/tests/test_portal_request.cpp -o /tmp/v30-portal
       - run: /tmp/v30-portal
+      - run: c++ -std=c++11 -Wall -Wextra -Werror -pedantic v30/tests/test_portal_approval.cpp -o /tmp/v30-approval
+      - run: /tmp/v30-approval
