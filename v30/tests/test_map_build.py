@@ -62,6 +62,20 @@ class MapBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(BuildError, "name exceeds"):
             build_pack(self.source, self.profile, self.root / "oversize.meshmap")
 
+    def test_metadata_budget_matches_native_reader(self):
+        rows = list(self.features)
+        for i in range(400):
+            rows.append({"id": f"way/extra-{i}", "kind": "local", "province": PROVINCES[i % 12],
+                         "name": str(i) + "x" * 200, "zoom_min": 15,
+                         "data_date": "2026-11-16", "geometry": [[4.0, 52.0], [4.01, 52.01]]})
+        self.source.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+        out = self.root / "metadata.meshmap"
+        report = build_pack(self.source, self.profile, out)
+        meta_size = struct.unpack_from("<I", out.read_bytes(), 6)[0]
+        self.assertLessEqual(meta_size, 65536)
+        self.assertEqual(report.provinces, PROVINCES)
+        self.assertGreater(report.omitted_features, 0)
+
     def test_missing_province_is_hard_failure(self):
         lines = self.features[:-1]
         self.source.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
