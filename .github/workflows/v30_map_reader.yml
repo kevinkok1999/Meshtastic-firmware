@@ -30,6 +30,8 @@ jobs:
           python-version: "3.12"
       - name: Generate fixture with M1 builder
         run: python v30/tests/generate_reader_fixture.py /tmp/reader-fixture.meshmap
+      - name: Run Python builder suite
+        run: python -m unittest discover -s v30/tests -p "test_map_build.py" -v
       - name: Compile native reader host test
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror             v30/overlay/src/ui-touch/NanoMapPack.cpp             v30/tests/test_map_pack.cpp             -o /tmp/test_map_pack
