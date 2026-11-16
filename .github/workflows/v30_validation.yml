@@ -2,15 +2,15 @@ name: V30 F1 transport validation
 
 on:
   push:
-    branches: [v30-pro-meshmap-nano]
+    branches: [v30-f1-dispatch-hook]
     paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   pull_request:
-    branches: [v30-pro-meshmap-nano]
+    branches: [v30-f1-dispatch-hook]
     paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   workflow_dispatch:
 
 concurrency:
-  group: meshoffgridnl-v30-validation
+  group: meshoffgridnl-v30-dispatch-hook
   cancel-in-progress: false
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
         with: {python-version: "3.12"}
       - name: Run F1 transport corpus
         run: python v30/tests/test_transport.py
-      - name: Verify opt-in Dispatcher completion hook candidate
+      - name: Verify pinned Dispatcher hook candidate
         run: python v30/tests/test_dispatch_patch.py
       - name: Assert immutable dependency pins
         run: |
@@ -39,7 +39,7 @@ jobs:
           /tmp/v30-transport
 
   v29-to-v30-build:
-    name: Pinned V11-V29 baseline then gated V30 compile
+    name: Pinned V11-V29 baseline with opt-in hook compile
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     steps:
@@ -65,13 +65,34 @@ jobs:
           python v29/tests/test_resilience_model.py upstream-wadamesh
       - name: Apply gated V30 overlay
         run: python v30/apply_v30.py upstream-wadamesh
-      - name: Build DEV firmware only
+      - name: Stage opt-in pinned Dispatcher hook
+        run: |
+          cp v30/extra_scripts/v30_dispatch_patch.py upstream-wadamesh/v30_dispatch_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("upstream-wadamesh/platformio.ini")
+          text = p.read_text(encoding="utf-8")
+          start = text.find("[env:LilyGo_TDeck_companion_radio_touch]")
+          end = text.find("[env:LilyGo_TDeck_Pro_companion_radio_touch]", start)
+          if start < 0 or end < 0:
+              raise SystemExit("T-Deck environment missing")
+          block = text[start:end]
+          if "custom_v30_dispatch_patch" in block:
+              raise SystemExit("hook already staged")
+          block = (
+              "extra_scripts = pre:v30_dispatch_patch.py\n"
+              "custom_v30_dispatch_patch = 1\n"
+              + block
+          )
+          p.write_text(text[:start] + block + text[end:], encoding="utf-8")
+          PY
+      - name: Build DEV firmware with hook only
         working-directory: upstream-wadamesh
         env:
           PLATFORMIO_BUILD_FLAGS: >-
             -DMESH_OFFGRIDNL_V30_EXPERIMENTAL=0
-            -DFIRMWARE_RELEASE_TAG='"v30-f1-dev"'
-            -DFIRMWARE_VERSION='"MeshOffGridNL V30 F1 DEV"'
+            -DFIRMWARE_RELEASE_TAG='"v30-f1-hook"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V30 F1 HOOK"'
         run: |
           python -m pip install --upgrade pip
           pip install "platformio==6.2.0" --no-build-isolation
