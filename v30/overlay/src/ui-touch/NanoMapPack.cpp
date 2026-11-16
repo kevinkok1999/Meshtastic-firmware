@@ -230,7 +230,7 @@ bool NanoMapPack::forEachFeature(
         kindBytes == 0 || kindBytes > 32 || kindBytes > decoded.size() - pos) return false;
     record.kind.assign(reinterpret_cast<const char *>(decoded.data() + pos), kindBytes);
     pos += kindBytes;
-    if (record.nameIndex >= names_.size()) return false;
+    if (record.nameIndex > names_.size()) return false;
     if (record.zoomMin <= maxZoom && intersects && !callback(record)) return true;
   }
   return pos == decoded.size();
