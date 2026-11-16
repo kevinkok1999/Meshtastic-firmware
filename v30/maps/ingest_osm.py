@@ -57,7 +57,8 @@ def parse_osm_xml(source: Path) -> list[dict[str, Any]]:
             nodes[element.attrib["id"]] = (lon, lat, _tags(element))
         elif element.tag == "way":
             ways.append((element.attrib.get("id", ""), _tags(element), [n.attrib.get("ref", "") for n in element.findall("nd")]))
-        element.clear()
+        if element.tag in ("node", "way"):
+            element.clear()
     features: list[dict[str, Any]] = []
     for node_id, (lon, lat, tags) in sorted(nodes.items()):
         kind = _kind(tags)
