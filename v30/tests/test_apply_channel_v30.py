@@ -13,6 +13,12 @@ class ChannelPatchTests(unittest.TestCase):
   self.assertEqual(a.returncode,0,a.stderr); self.assertEqual(b.returncode,0,b.stderr)
   header=(root/"src/helpers/esp32/V30DirectChannelJoin.h").read_text(); ui=(root/"src/ui-touch/UITask.cpp").read_text()
   self.assertIn("parseKey",header); self.assertIn("v30_direct_join::parseKey",ui); self.assertIn("32-hex key",ui); self.assertIn("lv_textarea_set_password_mode",ui); self.assertEqual((root/"src/MyMesh.cpp").read_text(),"// native channel path\n")
+ def test_pinned_v28_source_contains_join_contract(self):
+  pinned=ROOT.parent/"v28"/"apply_v28.py"; text=pinned.read_text(encoding="utf-8")
+  self.assertIn("static void joinPrivateChannelSubmitCb",text)
+  self.assertIn('lv_textarea_set_max_length(s_addch_secret_ta, 10);',text)
+  self.assertIn('taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));',text)
+  self.assertIn('v11_global_bridge.requestChannelJoin(code)',text)
  def test_patch_rejects_unpinned_checkout(self):
   r=self.run_patch(self.make_checkout(False)); self.assertNotEqual(r.returncode,0); self.assertIn("MESH_OFFGRIDNL_V30=1 required",r.stderr)
 if __name__=="__main__": unittest.main()
