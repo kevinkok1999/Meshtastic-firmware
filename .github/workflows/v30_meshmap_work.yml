@@ -1,0 +1,53 @@
+name: V30 MeshMap M1
+
+on:
+  push:
+    branches: [v30-work-meshmap]
+    paths:
+      - "v30/maps/**"
+      - "v30/tests/test_map_build.py"
+      - ".github/workflows/v30_meshmap_work.yml"
+  pull_request:
+    paths:
+      - "v30/maps/**"
+      - "v30/tests/test_map_build.py"
+      - ".github/workflows/v30_meshmap_work.yml"
+  workflow_dispatch:
+    inputs:
+      licensed_data:
+        description: "Run the separately gated licensed-data build (requires repository secret)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run deterministic M1 tests
+        run: python -m unittest discover -s v30/tests -p 'test_map_build.py' -v
+
+  licensed-data-gated:
+    if: github.event_name == 'workflow_dispatch' && inputs.licensed_data == true && secrets.V30_LICENSED_DATA_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download explicitly authorized licensed extract
+        env:
+          LICENSED_DATA_URL: ${{ secrets.V30_LICENSED_DATA_URL }}
+        run: |
+          test -n "$LICENSED_DATA_URL"
+          curl --fail --location --retry 3 --output nl-source.jsonl "$LICENSED_DATA_URL"
+          sha256sum nl-source.jsonl
+      - name: Build candidate pack (no release/publish)
+        run: python v30/maps/build_nl.py nl-source.jsonl v30/maps/nl_profile.json nl-candidate.meshmap
