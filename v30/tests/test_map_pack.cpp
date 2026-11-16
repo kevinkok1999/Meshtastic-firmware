@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
   assert(pack.lookupPlace("N", places));
   assert(places.size() == 1 && places[0].name == "N225");
   size_t selected = 0;
-  assert(pack.forEachFeature(3.99, 50.99, 4.03, 51.03, 19, [&](const auto &record) { ++selected; return true; }));
+  assert(pack.forEachFeature(3.99, 50.99, 4.03, 51.03, 19, [&](const auto &record) { (void)record; ++selected; return true; }));
   assert(selected >= 1);
 
   std::vector<uint8_t> body = inflateBody(bytes);
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
   body[0] = 0x80;  // unterminated varint
   auto malformed = replaceBody(bytes, body);
   assert(pack.open(malformed.data(), malformed.size()) == PackStatus::Ok);
-  assert(!pack.forEachFeature(3.0, 50.0, 6.0, 53.0, 19, [&](const auto &) { return true; }));
+  assert(!pack.forEachFeature(3.0, 50.0, 6.0, 53.0, 19, [&](const auto &record) { (void)record; return true; }));
   std::vector<uint8_t> bombBody(4 * 1024 * 1024 + 1, 0);
   auto bomb = replaceBody(bytes, bombBody);
   assert(pack.open(bomb.data(), bomb.size()) == PackStatus::Ok);
