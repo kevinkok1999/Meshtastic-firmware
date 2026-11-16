@@ -76,6 +76,25 @@ class MapBuildTests(unittest.TestCase):
         self.assertEqual(report.provinces, PROVINCES)
         self.assertGreater(report.omitted_features, 0)
 
+    def test_compressible_decoded_body_is_pruned_to_reader_budget(self):
+        import zlib
+        from build_nl import _pack_bytes, MAX_DECODED_BODY_BYTES
+        # A genuine geometry record: canonical 4096 count + zero deltas.
+        geometry = b"\x80\x20" + b"\0\0" * 4096
+        features = [
+            {"id": f"test/{i:04}", "kind": "local", "province": PROVINCES[i % 12],
+             "name": "Dorp", "zoom_min": 8, "geometry": geometry,
+             "bbox": (0.0, 0.0, 0.0, 0.0)}
+            for i in range(600)
+        ]
+        packed, count, omitted, _, _, retained = _pack_bytes(features, self.profile, "0"*64, None)
+        metadata_size = struct.unpack("<I", packed[6:10])[0]
+        decoded = zlib.decompress(packed[10+metadata_size:-4])
+        self.assertLessEqual(len(decoded), MAX_DECODED_BODY_BYTES)
+        self.assertLess(count, 600)
+        self.assertGreater(sum(omitted.values()), 0)
+        self.assertEqual({f["province"] for f in retained}, set(PROVINCES))
+
     def test_missing_province_is_hard_failure(self):
         lines = self.features[:-1]
         self.source.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
