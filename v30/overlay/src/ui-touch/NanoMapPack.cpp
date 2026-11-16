@@ -6,6 +6,11 @@ namespace meshtastic::nanomap {
 namespace {
 constexpr uint8_t kMagic[4] = {'M', 'M', 'N', '1'};
 constexpr uint16_t kVersion = 1;
+constexpr size_t kMaxPackBytes = 3670016;
+constexpr size_t kMaxMetadataBytes = 65536;
+constexpr size_t kMaxNames = 65535;
+constexpr size_t kMaxNameBytes = 256;
+constexpr size_t kMaxFeatures = 1000000;
 
 uint32_t crc32(const uint8_t *data, size_t size) {
   uint32_t crc = 0xffffffffu;
@@ -45,6 +50,7 @@ bool parseNames(const std::string &meta, std::vector<std::string> &names) {
   while (true) {
     std::string value;
     if (!quoted(meta, pos, value)) return false;
+    if (value.empty() || value.size() > kMaxNameBytes) return false;
     names.push_back(value);
     if (pos >= meta.size()) return false;
     if (meta[pos] == ']') return true;
@@ -58,6 +64,7 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
   featureCount_ = 0;
   status_ = PackStatus::TooSmall;
   if (data == nullptr || size < 14) return status_;
+  if (size > kMaxPackBytes) return status_ = PackStatus::MetadataOutOfBounds;
   if (std::memcmp(data, kMagic, sizeof(kMagic)) != 0)
     return status_ = PackStatus::BadMagic;
   const uint16_t version = static_cast<uint16_t>(data[4]) |
@@ -68,7 +75,7 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
       (static_cast<uint32_t>(data[8]) << 16) |
       (static_cast<uint32_t>(data[9]) << 24);
   const size_t footer = size - 4;
-  if (metadataSize > footer - 10) return status_ = PackStatus::MetadataOutOfBounds;
+  if (metadataSize > kMaxMetadataBytes || metadataSize > footer - 10) return status_ = PackStatus::MetadataOutOfBounds;
   const uint32_t expected = static_cast<uint32_t>(data[footer]) |
       (static_cast<uint32_t>(data[footer + 1]) << 8) |
       (static_cast<uint32_t>(data[footer + 2]) << 16) |
@@ -81,10 +88,19 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
   const size_t featurePos = meta.find(featureKey);
   if (featurePos == std::string::npos) return status_ = PackStatus::BadMetadata;
   size_t cursor = featurePos + featureKey.size();
+  const size_t digitsStart = cursor;
   while (cursor < meta.size() && meta[cursor] >= '0' && meta[cursor] <= '9') {
+    if (featureCount_ > (kMaxFeatures / 10)) return status_ = PackStatus::BadMetadata;
     featureCount_ = featureCount_ * 10 + static_cast<size_t>(meta[cursor++] - '0');
+    if (featureCount_ > kMaxFeatures) return status_ = PackStatus::BadMetadata;
   }
+  if (cursor == digitsStart || (cursor >= meta.size() || (meta[cursor] != ',' && meta[cursor] != '}'))) return status_ = PackStatus::BadMetadata;
   if (!parseNames(meta, names_)) return status_ = PackStatus::BadMetadata;
+  if (names_.size() > kMaxNames) return status_ = PackStatus::BadMetadata;
+  for (const auto &name : names_) {
+    if (name.empty() || name.size() > kMaxNameBytes) return status_ = PackStatus::BadMetadata;
+    for (unsigned char ch : name) if (ch < 0x20) return status_ = PackStatus::BadMetadata;
+  }
   status_ = PackStatus::Ok;
   return status_;
 }
