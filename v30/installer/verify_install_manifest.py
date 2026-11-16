@@ -15,9 +15,9 @@ CHIP = "ESP32-S3"
 EXPECTED_OFFSETS = {
     "bootloader": 0x000000,
     "partition": 0x008000,
-    "ota_data": 0x00D000,
+    "ota_data": 0x00E000,
     "app0": 0x010000,
-    "app1": 0x400000,
+    "app1": 0x3F0000,
 }
 APP_PARTITION_SIZE = 0x3E0000
 APP_HEADROOM = 0x40000
@@ -91,10 +91,10 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
             raise ManifestError(f"{kind} is outside 16 MiB flash")
         if kind in EXPECTED_OFFSETS and offset != EXPECTED_OFFSETS[kind]:
             raise ManifestError(f"{kind} offset must be 0x{EXPECTED_OFFSETS[kind]:X}")
-        if kind in ("app0", "app1") and declared_size > APP_PARTITION_SIZE - APP_HEADROOM:
+        if kind == "ota_data" and declared_size != 0x2000:\n            raise ManifestError("ota_data must be exactly 8192 bytes at 0xE000")\n        if kind in ("app0", "app1") and declared_size > APP_PARTITION_SIZE - APP_HEADROOM:
             raise ManifestError(f"{kind} exceeds application size minus 256 KiB headroom")
         if kind == "map":
-            if offset != MAP_OFFSET or declared_size > MAP_SIZE:
+            if offset != MAP_OFFSET or declared_size != MAP_SIZE:
                 raise ManifestError("map must fit the 0x7D0000..0xC8FFFF 4.75 MiB partition")
         if kind == "spiffs" and (offset != SPIFFS_OFFSET or declared_size > SPIFFS_SIZE):
             raise ManifestError("spiffs must fit the preserved 0xC90000 partition")
