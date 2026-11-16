@@ -21,7 +21,8 @@ class V30JournalStorage:
         if not self.path.exists(): raise JournalMissing(str(self.path))
         data=self.path.read_bytes(); pos=0; records=[]
         while pos<len(data):
-            if len(data)-pos<HEADER.size: raise JournalPartial("truncated record header")
+            if len(data)-pos<HEADER.size:
+                raise JournalPartial("truncated record header") if data[pos:pos+4] == MAGIC else JournalCorrupt("invalid journal prefix")
             magic,version,seq,length=HEADER.unpack_from(data,pos)
             if magic!=MAGIC or version!=VERSION or length>self.max_bytes: raise JournalCorrupt("invalid record header")
             end=pos+HEADER.size+length+4
