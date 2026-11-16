@@ -36,12 +36,12 @@ def main():
     const char* raw = lv_textarea_get_text(s_addch_secret_ta);
     char compact[33] = {}; size_t n = 0; bool overflow = false;
     for (const char* p = raw; *p; ++p) {
-      if (*p == ' ' || *p == '\\\\t' || *p == '\\\\r' || *p == '\\\\n') continue;
+      if (*p == ' ' || *p == '\\t' || *p == '\\r' || *p == '\\n') continue;
       if (n >= sizeof(compact)-1) { overflow = true; continue; }
       compact[n++] = *p;
     }
     uint8_t secret[16] = {};
-    if (overflow) { memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Input is too long.")); return; }
+    if (overflow) { memset(secret, 0, sizeof(secret)); memset(compact, 0, sizeof(compact)); setAddChannelError(TR("Input is too long.")); return; }
     if (v30_direct_join::parseKey(compact, n, secret)) {
       int slot = -1; char existing_name[32] = {};
 #ifdef MAX_GROUP_CHANNELS
@@ -53,13 +53,13 @@ def main():
       }
 #endif
       if (slot < 0) slot = the_mesh.findFirstEmptyChannelSlot();
-      if (slot < 0) { memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Channel table is full.")); return; }
+      if (slot < 0) { memset(secret, 0, sizeof(secret)); memset(compact, 0, sizeof(compact)); setAddChannelError(TR("Channel table is full.")); return; }
       const char* entered = s_addch_name_ta ? lv_textarea_get_text(s_addch_name_ta) : nullptr;
       const char* label = existing_name[0] ? existing_name : ((entered && entered[0]) ? entered : "Private");
       if (!the_mesh.uiAddOrUpdateChannel(slot, label, secret)) {
-        memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Failed to save channel.")); return;
+        memset(secret, 0, sizeof(secret)); memset(compact, 0, sizeof(compact)); setAddChannelError(TR("Failed to save channel.")); return;
       }
-      memset(secret, 0, sizeof(secret)); closeSettingsModal();
+      memset(secret, 0, sizeof(secret)); memset(compact, 0, sizeof(compact)); closeSettingsModal();
       if (g_lv.task) g_lv.task->showAlert(TR("Private channel saved; open it from Channels"), 1800);
       return;
     }
@@ -67,7 +67,12 @@ def main():
 #endif
 '''
     if "v30_direct_join::parseKey" not in src: src=once(src,anchor,direct+anchor,"V30 direct-key submit")
-    src=src.replace('lv_textarea_set_max_length(s_addch_secret_ta, 10);','lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
-    src=src.replace('TR("XXXX-XXXX")','TR("XXXX-XXXX or 32-hex key")',1); ui.write_text(src,encoding="utf-8")
+    max_old='lv_textarea_set_max_length(s_addch_secret_ta, 10);'
+    if src.count(max_old)!=1: fail("V30 join max-length anchor missing or duplicated")
+    src=src.replace(max_old,'lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
+    placeholder_old='taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));'
+    if src.count(placeholder_old)!=1: fail("V30 join placeholder anchor missing or duplicated")
+    src=src.replace(placeholder_old,placeholder_old+'\\n    lv_textarea_set_password_mode(s_addch_secret_ta, true);',1)
+    ui.write_text(src,encoding="utf-8")
     print("V30 native direct-key join installed; browser WebSocket remains invite-only.")
 if __name__=="__main__": main()
