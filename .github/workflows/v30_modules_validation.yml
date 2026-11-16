@@ -16,3 +16,5 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_envelope_layout.cpp v30/overlay/src/helpers/esp32/V30EnvelopeLayout.cpp -o /tmp/v30-envelope
           /tmp/v30-envelope
+      - name: Test MeshMap Nano development pack
+        run: python -m unittest discover -s v30/tests -p test_map_build.py -v
