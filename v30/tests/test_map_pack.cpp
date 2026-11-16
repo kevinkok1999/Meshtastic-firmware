@@ -61,6 +61,34 @@ static std::vector<uint8_t> readFile(const char *path) {
   return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), {});
 }
 
+
+static void varuint(std::vector<uint8_t> &out, uint32_t value) {
+  while (value >= 128) { out.push_back(static_cast<uint8_t>(value | 128)); value >>= 7; }
+  out.push_back(static_cast<uint8_t>(value));
+}
+static void delta(std::vector<uint8_t> &out, int32_t value) {
+  const uint32_t zig = value >= 0 ? static_cast<uint32_t>(value) * 2 :
+      static_cast<uint32_t>(-static_cast<int64_t>(value) * 2 - 1);
+  varuint(out, zig);
+}
+static std::vector<uint8_t> crossingBody(const std::string &kind = "primary",
+                                        uint32_t province = 0, uint32_t zoom = 8,
+                                        int32_t latitude = 5100000) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; i < 12; ++i) {
+    varuint(out, 1); varuint(out, province); varuint(out, zoom);
+    std::vector<uint8_t> geometry;
+    varuint(geometry, 2);
+    delta(geometry, 300000); delta(geometry, latitude);
+    delta(geometry, 300000); delta(geometry, 0);
+    varuint(out, geometry.size());
+    out.insert(out.end(), geometry.begin(), geometry.end());
+    varuint(out, kind.size());
+    out.insert(out.end(), kind.begin(), kind.end());
+  }
+  return out;
+}
+
 int main(int argc, char **argv) {
   assert(argc == 2);
   std::vector<uint8_t> bytes = readFile(argv[1]);
@@ -76,6 +104,39 @@ int main(int argc, char **argv) {
   size_t selected = 0;
   assert(pack.forEachFeature(3.99, 50.99, 4.03, 51.03, 19, [&](const auto &record) { (void)record; ++selected; return true; }));
   assert(selected >= 1);
+
+
+  // Both source endpoints are outside; output must be clipped to viewport edges.
+  auto crossing = replaceBody(bytes, crossingBody());
+  assert(pack.open(crossing.data(), crossing.size()) == PackStatus::Ok);
+  size_t crossingCount = 0;
+  assert(pack.forEachFeature(4.0, 50.9, 5.0, 51.1, 19, [&](const auto &record) {
+    assert(record.geometry.size() == 2);
+    assert(record.geometry[0].first == 400000 && record.geometry[1].first == 500000);
+    ++crossingCount;
+    return true;
+  }));
+  assert(crossingCount == 12);
+  for (const auto &bad : {crossingBody("invalid"), crossingBody("primary", 12),
+                          crossingBody("primary", 0, 2),
+                          crossingBody("primary", 0, 8, 9100000)}) {
+    auto invalid = replaceBody(bytes, bad);
+    assert(pack.open(invalid.data(), invalid.size()) == PackStatus::Ok);
+    assert(!pack.forEachFeature(3, 50, 7, 54, 19, [](const auto &) { return true; }));
+  }
+  // Canonical varints and trailing streams must be rejected with recomputed container CRC.
+  auto badVarint = crossingBody();
+  badVarint.erase(badVarint.begin());
+  badVarint.insert(badVarint.begin(), {0x81, 0x80, 0x80, 0x80, 0x10});
+  auto hostile = replaceBody(bytes, badVarint);
+  assert(pack.open(hostile.data(), hostile.size()) == PackStatus::Ok);
+  assert(!pack.forEachFeature(3, 50, 7, 54, 19, [](const auto &) { return true; }));
+  // Records spanning >32 KiB exercise wraparound in tinfl's fixed dictionary.
+  auto largeBody = crossingBody();
+  largeBody.insert(largeBody.end(), 40000, 0);
+  hostile = replaceBody(bytes, largeBody);
+  assert(pack.open(hostile.data(), hostile.size()) == PackStatus::Ok);
+  assert(!pack.forEachFeature(3, 50, 7, 54, 19, [](const auto &) { return true; }));
 
   std::vector<uint8_t> body = inflateBody(bytes);
   assert(!body.empty());
