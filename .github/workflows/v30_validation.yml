@@ -104,6 +104,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install "platformio==6.2.0" --no-build-isolation
           pio run -e LilyGo_TDeck_companion_radio_touch
+      - name: Assert embedded Dispatcher hook was applied
+        run: |
+          matches=$(grep -R -F -l "onV30TxComplete" upstream-wadamesh/.pio/libdeps || true)
+          test "$(printf "%s\\n" "$matches" | sed '/^$/d' | wc -l)" -ge 2
+          printf "%s\\n" "$matches"
       - name: Guard DEV app headroom
         run: |
           test -f upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin
