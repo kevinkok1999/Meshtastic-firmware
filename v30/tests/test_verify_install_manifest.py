@@ -192,6 +192,26 @@ class ManifestVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ManifestError, "padding"):
             MODULE.validate_manifest(self.manifest, self.root)
 
+    def test_actual_metadata_above_reader_limit_rejected(self):
+        meta = b'{"version":1,"names":[],"features":0,"extra":"' + b"x" * 65536 + b'"}'
+        prefix = b"MMN1" + struct.pack("<HI", 1, len(meta)) + meta + zlib.compress(b"")
+        self.add_map(self.repack(prefix))
+        with self.assertRaisesRegex(MODULE.ManifestError, "metadata"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_metadata_version_must_match_binary_header(self):
+        meta = b'{"version":2,"names":[],"features":0}'
+        prefix = b"MMN1" + struct.pack("<HI", 1, len(meta)) + meta + zlib.compress(b"")
+        self.add_map(self.repack(prefix))
+        with self.assertRaisesRegex(MODULE.ManifestError, "metadata version"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_map_cannot_move_into_preserved_partition(self):
+        artifact = self.add_map()
+        artifact["offset"] = MODULE.SPIFFS_OFFSET
+        with self.assertRaises(MODULE.ManifestError):
+            MODULE.validate_manifest(self.manifest, self.root)
+
     def test_raw_unpadded_pack_is_not_partition_image(self):
         artifact = self.add_map()
         artifact["size"] = len(self.pack)
@@ -200,9 +220,10 @@ class ManifestVerifierTests(unittest.TestCase):
             MODULE.validate_manifest(self.manifest, self.root)
 
     def test_rejects_unknown_and_user_partition_roles(self):
-        self.manifest["artifacts"][0]["kind"] = "nvs"
-        with self.assertRaises(MODULE.ManifestError):
-            MODULE.validate_manifest(self.manifest, self.root)
+        for kind in ("nvs", "spiffs", "identity", "user"):
+            self.manifest["artifacts"][0]["kind"] = kind
+            with self.subTest(kind=kind), self.assertRaisesRegex(MODULE.ManifestError, "allowlisted"):
+                MODULE.validate_manifest(self.manifest, self.root)
 
     def test_app1_requires_explicit_safe_mode(self):
         p = self.root / "app1.bin"; p.write_bytes(b"app1")
