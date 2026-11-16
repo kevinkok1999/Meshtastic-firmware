@@ -1,52 +1,67 @@
 #!/usr/bin/env python3
-"""Install/check the V30 direct-join adapter without touching V28 or apply_v30.py."""
+"""V30-gated native direct-key join adapter; browser WS remains unchanged."""
 from __future__ import annotations
-import pathlib
-import sys
+import pathlib, sys
 
 HEADER = """#pragma once
 #if defined(MESH_OFFGRIDNL_V30)
 #include <stddef.h>
 #include <stdint.h>
 namespace v30_direct_join {
-static inline bool hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
-static inline uint8_t nibble(char c) { if (c >= '0' && c <= '9') return (uint8_t)(c-'0'); if (c >= 'a' && c <= 'f') return (uint8_t)(c-'a'+10); return (uint8_t)(c-'A'+10); }
-static inline bool parseKey(const char* text, size_t len, uint8_t out[16]) {
-  if (!text || !out || len != 32) return false;
-  for (size_t i=0;i<32;++i) if (!hex(text[i])) return false;
-  for (size_t i=0;i<16;++i) out[i]=(uint8_t)((nibble(text[i*2])<<4)|nibble(text[i*2+1]));
-  return true;
-}
-static inline bool inviteChar(char c) {
-  return c == 'A'||c == 'B'||c == 'C'||c == 'D'||c == 'E'||c == 'F'||c == 'G'||c == 'H' ||
-         (c >= 'J' && c <= 'N') || (c >= 'P' && c <= 'Z') || (c >= '2' && c <= '9');
-}
-static inline bool parseInvite(const char* text, size_t len) {
-  if (!text || len != 9 || text[4] != '-') return false;
-  for (size_t i=0;i<9;++i) if (i != 4 && !inviteChar(text[i])) return false;
-  return true;
-}
+static inline bool hex(char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F');}
+static inline uint8_t nibble(char c){if(c>='0'&&c<='9')return(uint8_t)(c-'0');if(c>='a'&&c<='f')return(uint8_t)(c-'a'+10);return(uint8_t)(c-'A'+10);}
+static inline bool parseKey(const char*t,size_t n,uint8_t out[16]){if(!t||!out||n!=32)return false;for(size_t i=0;i<32;++i)if(!hex(t[i]))return false;for(size_t i=0;i<16;++i)out[i]=(uint8_t)((nibble(t[i*2])<<4)|nibble(t[i*2+1]));return true;}
 } // namespace v30_direct_join
 #endif
 """
 
-def fail(message: str) -> None:
-    raise SystemExit("V30 channel patch failed: " + message)
+def fail(msg): raise SystemExit("V30 channel patch failed: "+msg)
+def once(text, old, new, label):
+    if text.count(old)!=1: fail(f"{label}: expected one anchor")
+    return text.replace(old,new,1)
 
-def main() -> None:
-    if len(sys.argv) != 2: fail("usage: apply_channel_v30.py <V30-patched WadaMesh checkout>")
-    root = pathlib.Path(sys.argv[1]).resolve()
-    pio, mesh = root / "platformio.ini", root / "src/MyMesh.cpp"
-    if not pio.exists() or not mesh.exists(): fail("expected platformio.ini and src/MyMesh.cpp")
-    text = pio.read_text(encoding="utf-8")
-    start = text.find("[env:LilyGo_TDeck_companion_radio_touch]")
-    end = text.find("[env:LilyGo_TDeck_Pro_companion_radio_touch]", start)
-    if start < 0 or end < 0: fail("T-Deck environment missing")
+def main():
+    if len(sys.argv)!=2: fail("usage: apply_channel_v30.py <V30-patched WadaMesh checkout>")
+    root=pathlib.Path(sys.argv[1]).resolve()
+    pio, mesh, ui = root/"platformio.ini", root/"src/MyMesh.cpp", root/"src/ui-touch/UITask.cpp"
+    if not pio.exists() or not mesh.exists() or not ui.exists(): fail("missing V30 checkout files")
+    text=pio.read_text(encoding="utf-8"); start=text.find("[env:LilyGo_TDeck_companion_radio_touch]"); end=text.find("[env:LilyGo_TDeck_Pro_companion_radio_touch]",start)
+    if start<0 or end<0: fail("T-Deck environment missing")
     if "MESH_OFFGRIDNL_V30=1" not in text[start:end]: fail("MESH_OFFGRIDNL_V30=1 required; apply V30 baseline first")
-    target = root / "src/helpers/esp32/V30DirectChannelJoin.h"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and target.read_text(encoding="utf-8") != HEADER: fail("refusing to overwrite a different V30 direct-join header")
-    target.write_text(HEADER, encoding="utf-8")
-    print("V30 direct-join adapter installed; existing native lookup/history remains the integration path.")
+    target=root/"src/helpers/esp32/V30DirectChannelJoin.h"; target.parent.mkdir(parents=True,exist_ok=True)
+    if target.exists() and target.read_text(encoding="utf-8")!=HEADER: fail("refusing to overwrite a different V30 header")
+    target.write_text(HEADER,encoding="utf-8")
+    src=ui.read_text(encoding="utf-8")
+    src=once(src,'#include "../MyMesh.h"\n','#include "../MyMesh.h"\n#if defined(MESH_OFFGRIDNL_V30)\n#include "../helpers/esp32/V30DirectChannelJoin.h"\n#endif\n',"V30 UI include") if "V30DirectChannelJoin.h" not in src else src
+    anchor='''#if defined(MESH_OFFGRIDNL_V28)
+  const char* code = lv_textarea_get_text(s_addch_secret_ta);
+'''
+    direct='''#if defined(MESH_OFFGRIDNL_V30)
+  {
+    const char* raw = lv_textarea_get_text(s_addch_secret_ta);
+    char compact[33] = {}; size_t n = 0;
+    for (const char* p = raw; *p && n < sizeof(compact)-1; ++p)
+      if (*p != ' ' && *p != '\\t' && *p != '\\r' && *p != '\\n') compact[n++] = *p;
+    uint8_t secret[16] = {};
+    if (v30_direct_join::parseKey(compact, n, secret)) {
+      const int slot = the_mesh.findFirstEmptyChannelSlot();
+      if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
+      const char* label = (s_addch_name_ta && lv_textarea_get_text(s_addch_name_ta)[0])
+          ? lv_textarea_get_text(s_addch_name_ta) : "Private";
+      if (!the_mesh.uiAddOrUpdateChannel(slot, label, secret)) {
+        memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Failed to save channel.")); return;
+      }
+      memset(secret, 0, sizeof(secret)); closeSettingsModal();
+      if (g_lv.task) g_lv.task->showAlert(TR("Private channel joined"), 1600);
+      return;
+    }
+  }
+#endif
+'''
+    if "v30_direct_join::parseKey" not in src: src=once(src,anchor,direct+anchor,"V30 direct-key submit")
+    src=src.replace('lv_textarea_set_max_length(s_addch_secret_ta, 10);','lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
+    src=src.replace('TR("XXXX-XXXX")','TR("XXXX-XXXX or 32-hex key")',1)
+    ui.write_text(src,encoding="utf-8")
+    print("V30 native direct-key join installed; browser WebSocket remains invite-only.")
 
-if __name__ == "__main__": main()
+if __name__=="__main__": main()
