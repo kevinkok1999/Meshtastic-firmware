@@ -145,7 +145,7 @@ def _read_features(source: Path, profile: dict[str, Any]) -> tuple[list[dict[str
         geometry, bbox = _geometry(item["geometry"], int(profile.get("quantization", 100000)))
         features.append({
             "id": item["id"], "kind": item["kind"], "province": item["province"],
-            "name": str(item.get("name", "")), "zoom_min": int(item.get("zoom_min", 3)),
+            "name": name, "zoom_min": int(item.get("zoom_min", 3)),
             "geometry": geometry, "bbox": bbox,
         })
     if not features:
@@ -189,7 +189,7 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
         names = sorted({f["name"] for f in working if f["name"]})
         extent = [min(f["bbox"][0] for f in working), min(f["bbox"][1] for f in working), max(f["bbox"][2] for f in working), max(f["bbox"][3] for f in working)]
         meta = {"version": FORMAT_VERSION, "profile_version": profile.get("profile_version", 1), "source_sha256": source_sha, "data_date": data_date, "provinces": list(PROVINCES), "names": names, "features": packed, "extent": extent, "zoom_inventory": {str(z): sum(1 for f in working if f["zoom_min"] <= z) for z in range(3, 20)}}
-        meta_bytes = json.dumps(meta, sort_keys=True, separators=(",", ":")).encode()
+        meta_bytes = json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         prefix = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
         candidate = prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
         if len(candidate) <= budget:
