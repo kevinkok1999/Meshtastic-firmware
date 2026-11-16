@@ -1,0 +1,26 @@
+name: V30 R1 airtime governor
+
+on:
+  push:
+    branches: [v30-work-airtime]
+    paths:
+      - "v30/overlay/src/helpers/esp32/V30AirtimeGovernor.*"
+      - "v30/tests/test_airtime.cpp"
+      - ".github/workflows/v30_r1_airtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  host-airtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Compile and run strict host tests
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror             -I v30/overlay/src/helpers/esp32             v30/tests/test_airtime.cpp             v30/overlay/src/helpers/esp32/V30AirtimeGovernor.cpp             -o /tmp/v30-r1-airtime
+          /tmp/v30-r1-airtime
