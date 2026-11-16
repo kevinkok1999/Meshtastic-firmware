@@ -186,7 +186,8 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
         extent = [min(f["bbox"][0] for f in working), min(f["bbox"][1] for f in working), max(f["bbox"][2] for f in working), max(f["bbox"][3] for f in working)]
         meta = {"version": FORMAT_VERSION, "profile_version": profile.get("profile_version", 1), "source_sha256": source_sha, "data_date": data_date, "provinces": list(PROVINCES), "names": names, "features": packed, "extent": extent, "zoom_inventory": {str(z): sum(1 for f in working if f["zoom_min"] <= z) for z in range(3, 20)}}
         meta_bytes = json.dumps(meta, sort_keys=True, separators=(",", ":")).encode()
-        prefix = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded\n        candidate = prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
+        prefix = MAGIC + struct.pack("<HI", FORMAT_VERSION, len(meta_bytes)) + meta_bytes + encoded
+        candidate = prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
         if len(candidate) <= budget:
             return candidate, packed, omitted, names_count, roads, working
         if len(working) <= 1:
