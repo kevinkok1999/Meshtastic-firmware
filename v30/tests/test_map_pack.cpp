@@ -4,6 +4,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include <zlib.h>
 
 using meshtastic::nanomap::NanoMapPack;
 using meshtastic::nanomap::PackStatus;
@@ -20,6 +21,39 @@ static uint32_t crc32(const uint8_t *data, size_t size) {
 
 static void write32(std::vector<uint8_t> &bytes, size_t at, uint32_t value) {
   for (size_t i = 0; i < 4; ++i) bytes[at + i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+
+static std::vector<uint8_t> replaceBody(const std::vector<uint8_t> &pack,
+                                        const std::vector<uint8_t> &body) {
+  const size_t metaSize = static_cast<size_t>(pack[6]) |
+      (static_cast<size_t>(pack[7]) << 8) | (static_cast<size_t>(pack[8]) << 16) |
+      (static_cast<size_t>(pack[9]) << 24);
+  const size_t prefixSize = 10 + metaSize;
+  uLong bound = compressBound(static_cast<uLong>(body.size()));
+  std::vector<uint8_t> compressed(bound);
+  uLong compressedSize = bound;
+  assert(compress2(compressed.data(), &compressedSize, body.data(),
+                   static_cast<uLong>(body.size()), Z_BEST_COMPRESSION) == Z_OK);
+  compressed.resize(compressedSize);
+  std::vector<uint8_t> result(pack.begin(), pack.begin() + prefixSize);
+  result.insert(result.end(), compressed.begin(), compressed.end());
+  result.resize(result.size() + 4);
+  write32(result, result.size() - 4, crc32(result.data(), result.size() - 4));
+  return result;
+}
+
+static std::vector<uint8_t> inflateBody(const std::vector<uint8_t> &pack) {
+  const size_t metaSize = static_cast<size_t>(pack[6]) |
+      (static_cast<size_t>(pack[7]) << 8) | (static_cast<size_t>(pack[8]) << 16) |
+      (static_cast<size_t>(pack[9]) << 24);
+  const size_t offset = 10 + metaSize;
+  std::vector<uint8_t> body(1024 * 1024);
+  uLongf size = static_cast<uLongf>(body.size());
+  assert(uncompress(body.data(), &size, pack.data() + offset,
+                    static_cast<uLong>(pack.size() - 4 - offset)) == Z_OK);
+  body.resize(size);
+  return body;
 }
 
 static std::vector<uint8_t> readFile(const char *path) {
@@ -39,6 +73,20 @@ int main(int argc, char **argv) {
   assert(places.size() == 1 && places[0].name == "Dorp");
   assert(pack.lookupPlace("N", places));
   assert(places.size() == 1 && places[0].name == "N225");
+  size_t selected = 0;
+  assert(pack.forEachFeature(3.99, 50.99, 4.03, 51.03, 19, [&](const auto &record) { ++selected; return true; }));
+  assert(selected >= 1);
+
+  std::vector<uint8_t> body = inflateBody(bytes);
+  assert(!body.empty());
+  body[0] = 0x80;  // unterminated varint
+  auto malformed = replaceBody(bytes, body);
+  assert(pack.open(malformed.data(), malformed.size()) == PackStatus::Ok);
+  assert(!pack.forEachFeature(3.0, 50.0, 6.0, 53.0, 19, [&](const auto &) { return true; }));
+  std::vector<uint8_t> bombBody(4 * 1024 * 1024 + 1, 0);
+  auto bomb = replaceBody(bytes, bombBody);
+  assert(pack.open(bomb.data(), bomb.size()) == PackStatus::Ok);
+  assert(!pack.forEachFeature(3.0, 50.0, 6.0, 53.0, 19, [&](const auto &) { return true; }));
 
   std::vector<uint8_t> corrupt = bytes;
   corrupt.back() ^= 0x01;
