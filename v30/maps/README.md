@@ -30,3 +30,23 @@ This M1 checkpoint is not activated for firmware: it has no native spatial index
 ## Native reader scope
 
 `NanoMapPack` currently validates the bounded container, metadata, CRC32 and name dictionary lookups. It deliberately does not decode zlib geometry or integrate with the LVGL renderer; those remain later M2/M3 gates.
+
+## Streaming geometry checkpoint
+
+The geometry branch uses MIT-licensed miniz 3.0.2 tinfl pinned to
+`293d4db1b7d0ffee9756d035b9ac6f7431ef8492`. The cursor retains a fixed
+32 KiB dictionary plus decompressor state; it never retains the entire decoded
+body. A query retains one record of at most 4096 quantized points and emits
+clipped two-point segments (one-point place features remain points). Name IDs
+are one-based with zero meaning unnamed. Coordinates use fixed 100000 units
+per degree. Producer inputs with longer features must be split upstream.
+
+The caller must keep the original pack buffer alive and immutable after open.
+Container CRC is accidental-corruption detection, not asset authentication.
+Queries validate zlib Adler checksum, exact record count and trailing bytes;
+return false means any delivered candidate segments must be discarded. Stopping
+the callback suppresses further delivery while validation continues. Maximum
+decoded work is 4 MiB per query. This synchronous host/embedded module still
+needs cooperative scheduling, real map coverage, signed-asset verification,
+full firmware integration and hardware/RF concurrency tests. The standalone
+ESP32-S3 compile harness is not a complete T-Deck firmware build or HIL test.
