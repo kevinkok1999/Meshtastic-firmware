@@ -54,3 +54,5 @@ jobs:
           /tmp/v30-approval
       - name: Test signed relay device authorization
         run: node --test v30/relay/test_v30_grant_adapter.mjs
+      - name: Test actual relay HTTP two-client and restart contract
+        run: node --test v30/relay/test_v30_http.mjs
