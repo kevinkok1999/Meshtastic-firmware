@@ -1,0 +1,42 @@
+name: v30-channel-native-reconstruction
+on:
+  push:
+    branches: [v30-work-channel-native]
+    paths:
+      - "v28/**"
+      - "v29/**"
+      - "v30/apply_v30.py"
+      - "v30/apply_channel_v30.py"
+      - "v30/overlay/**"
+      - ".github/workflows/v30-channel-native-reconstruction.yml"
+  workflow_dispatch:
+jobs:
+  reconstruct-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned WadaMesh source
+        run: |
+          git clone https://github.com/ALLFATHER-BV/wadamesh.git wadamesh
+          git -C wadamesh checkout 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Reconstruct V28 and V29
+        run: |
+          python v28/apply_v28.py wadamesh
+          python v29/apply_v29.py wadamesh
+      - name: Apply V30 baseline and native channel patch
+        run: |
+          python v30/apply_v30.py wadamesh
+          python v30/apply_channel_v30.py wadamesh
+      - name: Verify native patch markers
+        run: |
+          grep -F "V30DirectChannelJoin.h" wadamesh/src/ui-touch/UITask.cpp
+          grep -F "v30_direct_join::parseKey" wadamesh/src/ui-touch/UITask.cpp
+          grep -F "MESH_OFFGRIDNL_V30=1" wadamesh/platformio.ini
+      - name: Build patched T-Deck firmware
+        run: |
+          python -m pip install --upgrade platformio
+          platformio run -d wadamesh -e LilyGo_TDeck_companion_radio_touch
