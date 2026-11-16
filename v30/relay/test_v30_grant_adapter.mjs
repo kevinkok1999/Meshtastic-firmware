@@ -47,7 +47,7 @@ function issuePoll(n, nonce = (n + 100).toString(16).padStart(32, '0')) {
 }
 
 assert.throws(() => authority.issueGrant({
-  scopeId: scope, originId, right: 'push', nowMs: 0, ttlMs: 5000, nonce: '00'.repeat(16),
+  scopeId: scope, originId: origin, right: 'push', nowMs: 0, ttlMs: 5000, nonce: '00'.repeat(16),
 }), /authorization_required/);
 assert.equal(relay.accept({scopeId: scope, originId, messageId: message,
   ciphertext: body}, issuePush(0), 0).accepted, true);
