@@ -1,0 +1,18 @@
+name: V30 installer map validation
+on:
+  push:
+    branches: [v30-work-installer-map]
+    paths: ["v30/**", ".github/workflows/v30_installer_map_work.yml"]
+permissions:
+  contents: read
+jobs:
+  installer-map:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Test read-only installer and native-compatible map generation
+        run: |
+          python -m unittest discover -s v30/tests -p test_verify_install_manifest.py -v
+          python -m unittest discover -s v30/tests -p test_map_build.py -v
