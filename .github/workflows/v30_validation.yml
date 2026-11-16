@@ -11,7 +11,7 @@ on:
 
 concurrency:
   group: meshoffgridnl-v30-dispatch-hook
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -37,6 +37,8 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_transport.cpp v30/overlay/src/helpers/esp32/V30EmergencyTransport.cpp -o /tmp/v30-transport
           /tmp/v30-transport
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic v30/tests/test_tx_binding.cpp -o /tmp/v30-tx-binding
+          /tmp/v30-tx-binding
 
   v29-to-v30-build:
     name: Pinned V11-V29 baseline with opt-in hook compile
@@ -111,6 +113,10 @@ jobs:
           test -n "$header" && test -n "$source"
           test "$(grep -F -c "onV30TxComplete" "$header")" -eq 1
           test "$(grep -F -c "onV30TxComplete(outbound" "$source")" -eq 3
+          test "$(grep -F -c "onV30TxAdmission" "$header")" -eq 1
+          test "$(grep -F -c "onV30TxDropped" "$header")" -eq 1
+          test "$(grep -F -c "onV30TxAdmission(outbound" "$source")" -eq 1
+          test "$(grep -F -c "onV30TxDropped(outbound" "$source")" -eq 2
           printf "header=%s\\nsource=%s\\n" "$header" "$source"
       - name: Guard DEV app headroom
         run: |
