@@ -1,0 +1,20 @@
+name: v30-channel-native-join
+on:
+  push:
+    branches: [v30-work-channel-native]
+    paths: ["v30/apply_channel_v30.py","v30/tests/test_apply_channel_v30.py"]
+  pull_request:
+    branches: [v30-work-channel-native]
+    paths: ["v30/**"]
+  workflow_dispatch:
+jobs:
+  native-join:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Run exact V28 anchor reconstruction tests
+        run: python -m unittest discover -s v30/tests -p test_apply_channel_v30.py -v
+      - name: Syntax check
+        run: python -m py_compile v30/apply_channel_v30.py

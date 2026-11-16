@@ -1,38 +1,33 @@
 #!/usr/bin/env python3
-"""V30-gated native direct-key join adapter; browser WS remains unchanged."""
+"""V30-gated native direct-key channel join; browser WS remains invite-only."""
 from __future__ import annotations
-import pathlib, sys
-
-HEADER = """#pragma once
+import pathlib,sys
+HEADER="""#pragma once
 #if defined(MESH_OFFGRIDNL_V30)
 #include <stddef.h>
 #include <stdint.h>
 namespace v30_direct_join {
-static inline bool hex(char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F');}
+static inline bool hex(char c){return(c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F');}
 static inline uint8_t nibble(char c){if(c>='0'&&c<='9')return(uint8_t)(c-'0');if(c>='a'&&c<='f')return(uint8_t)(c-'a'+10);return(uint8_t)(c-'A'+10);}
 static inline bool parseKey(const char*t,size_t n,uint8_t out[16]){if(!t||!out||n!=32)return false;for(size_t i=0;i<32;++i)if(!hex(t[i]))return false;for(size_t i=0;i<16;++i)out[i]=(uint8_t)((nibble(t[i*2])<<4)|nibble(t[i*2+1]));return true;}
 } // namespace v30_direct_join
 #endif
 """
-
-def fail(msg): raise SystemExit("V30 channel patch failed: "+msg)
-def once(text, old, new, label):
-    if text.count(old)!=1: fail(f"{label}: expected one anchor")
-    return text.replace(old,new,1)
-
+def fail(m): raise SystemExit("V30 channel patch failed: "+m)
+def once(t,o,n,l):
+    if t.count(o)!=1: fail(l+": expected one anchor")
+    return t.replace(o,n,1)
 def main():
     if len(sys.argv)!=2: fail("usage: apply_channel_v30.py <V30-patched WadaMesh checkout>")
-    root=pathlib.Path(sys.argv[1]).resolve()
-    pio, mesh, ui = root/"platformio.ini", root/"src/MyMesh.cpp", root/"src/ui-touch/UITask.cpp"
+    root=pathlib.Path(sys.argv[1]).resolve(); pio=root/"platformio.ini"; mesh=root/"src/MyMesh.cpp"; ui=root/"src/ui-touch/UITask.cpp"
     if not pio.exists() or not mesh.exists() or not ui.exists(): fail("missing V30 checkout files")
     text=pio.read_text(encoding="utf-8"); start=text.find("[env:LilyGo_TDeck_companion_radio_touch]"); end=text.find("[env:LilyGo_TDeck_Pro_companion_radio_touch]",start)
     if start<0 or end<0: fail("T-Deck environment missing")
     if "MESH_OFFGRIDNL_V30=1" not in text[start:end]: fail("MESH_OFFGRIDNL_V30=1 required; apply V30 baseline first")
     target=root/"src/helpers/esp32/V30DirectChannelJoin.h"; target.parent.mkdir(parents=True,exist_ok=True)
     if target.exists() and target.read_text(encoding="utf-8")!=HEADER: fail("refusing to overwrite a different V30 header")
-    target.write_text(HEADER,encoding="utf-8")
-    src=ui.read_text(encoding="utf-8")
-    src=once(src,'#include "../MyMesh.h"\n','#include "../MyMesh.h"\n#if defined(MESH_OFFGRIDNL_V30)\n#include "../helpers/esp32/V30DirectChannelJoin.h"\n#endif\n',"V30 UI include") if "V30DirectChannelJoin.h" not in src else src
+    target.write_text(HEADER,encoding="utf-8"); src=ui.read_text(encoding="utf-8")
+    if "V30DirectChannelJoin.h" not in src: src=once(src,'#include "../MyMesh.h"\n','#include "../MyMesh.h"\n#if defined(MESH_OFFGRIDNL_V30)\n#include "../helpers/esp32/V30DirectChannelJoin.h"\n#endif\n',"V30 UI include")
     anchor='''#if defined(MESH_OFFGRIDNL_V28)
   const char* code = lv_textarea_get_text(s_addch_secret_ta);
 '''
@@ -46,13 +41,13 @@ def main():
     if (v30_direct_join::parseKey(compact, n, secret)) {
       const int slot = the_mesh.findFirstEmptyChannelSlot();
       if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
-      const char* label = (s_addch_name_ta && lv_textarea_get_text(s_addch_name_ta)[0])
-          ? lv_textarea_get_text(s_addch_name_ta) : "Private";
+      const char* entered = s_addch_name_ta ? lv_textarea_get_text(s_addch_name_ta) : nullptr;
+      const char* label = (entered && entered[0]) ? entered : "Private";
       if (!the_mesh.uiAddOrUpdateChannel(slot, label, secret)) {
         memset(secret, 0, sizeof(secret)); setAddChannelError(TR("Failed to save channel.")); return;
       }
       memset(secret, 0, sizeof(secret)); closeSettingsModal();
-      if (g_lv.task) g_lv.task->showAlert(TR("Private channel joined"), 1600);
+      if (g_lv.task) g_lv.task->showAlert(TR("Private channel saved; open it from Channels"), 1800);
       return;
     }
   }
@@ -60,8 +55,6 @@ def main():
 '''
     if "v30_direct_join::parseKey" not in src: src=once(src,anchor,direct+anchor,"V30 direct-key submit")
     src=src.replace('lv_textarea_set_max_length(s_addch_secret_ta, 10);','lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
-    src=src.replace('TR("XXXX-XXXX")','TR("XXXX-XXXX or 32-hex key")',1)
-    ui.write_text(src,encoding="utf-8")
+    src=src.replace('TR("XXXX-XXXX")','TR("XXXX-XXXX or 32-hex key")',1); ui.write_text(src,encoding="utf-8")
     print("V30 native direct-key join installed; browser WebSocket remains invite-only.")
-
 if __name__=="__main__": main()
