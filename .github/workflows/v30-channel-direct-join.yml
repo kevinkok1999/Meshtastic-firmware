@@ -6,7 +6,7 @@ on:
     paths:
       - "v30/channel_direct_join.py"
       - "v30/apply_channel_v30.py"
-      - "v30/tests/test_channel_direct_join.py"
+      - "v30/tests/test_*.py"
       - ".github/workflows/v30-channel-direct-join.yml"
   pull_request:
     branches: [v30-work-channel]
@@ -23,8 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Host contract tests
-        run: python -m unittest discover -s v30/tests -p "test_channel_direct_join.py" -v
+      - name: Host contract and patch tests
+        run: python -m unittest discover -s v30/tests -p "test_*.py" -v
       - name: Patch script syntax check
         run: python -m py_compile v30/apply_channel_v30.py
       - name: Pinned V30 patch guard
