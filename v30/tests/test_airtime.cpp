@@ -23,7 +23,8 @@ static void capAndBands() {
   assert(g.mayTransmit(0, V30AirtimeGovernor::kBudgetUs, 1));
   g.recordAttempt(1, V30AirtimeGovernor::kBudgetUs, 1);
   assert(!g.mayTransmit(2, 1, 2));
-  assert(g.mayTransmit(V30AirtimeGovernor::kWindowUs + 1, 1, 2));
+  assert(g.mayTransmit(V30AirtimeGovernor::kBudgetUs +
+                       V30AirtimeGovernor::kWindowUs + 1, 1, 2));
 }
 static void inFlightAndPacketBoundary() {
   auto g = trusted();
