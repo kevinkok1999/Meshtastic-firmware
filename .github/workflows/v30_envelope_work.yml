@@ -1,0 +1,15 @@
+name: V30 envelope work tests
+on:
+  push:
+    branches: [v30-work-envelope]
+permissions:
+  contents: read
+jobs:
+  envelope:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_envelope_layout.cpp v30/overlay/src/helpers/esp32/V30EnvelopeLayout.cpp -o /tmp/v30-envelope
+          /tmp/v30-envelope
