@@ -35,3 +35,5 @@ jobs:
           c++ -std=c++17 -Wall -Wextra -Werror             v30/overlay/src/ui-touch/NanoMapPack.cpp             v30/tests/test_map_pack.cpp             -o /tmp/test_map_pack
       - name: Run bounds, checksum and lookup tests
         run: /tmp/test_map_pack /tmp/reader-fixture.meshmap
+
+# M1 bounds verification
