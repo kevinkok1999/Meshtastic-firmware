@@ -2,17 +2,11 @@ name: V30 F1 transport validation
 
 on:
   push:
-    branches:
-      - v30-pro-meshmap-nano
-    paths:
-      - "v30/**"
-      - ".github/workflows/v30_validation.yml"
+    branches: [v30-pro-meshmap-nano]
+    paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   pull_request:
-    branches:
-      - v30-pro-meshmap-nano
-    paths:
-      - "v30/**"
-      - ".github/workflows/v30_validation.yml"
+    branches: [v30-pro-meshmap-nano]
+    paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -28,19 +22,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          fetch-depth: 1
+        with: {persist-credentials: false, fetch-depth: 1}
       - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Run F1 red-green transport corpus
+        with: {python-version: "3.12"}
+      - name: Run F1 transport corpus
         run: python v30/tests/test_transport.py
       - name: Assert immutable dependency pins
         run: |
           grep -F 'WADAMESH_SHA = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"' v30/apply_v30.py
           grep -F 'MESHCORE_SHA = "edd7ed47f42acf6c64c9fcac551050fdbd531a09"' v30/apply_v30.py
-      - name: Build host fixture with exact warnings
+      - name: Compile host adapter with exact warnings
         run: |
-          c++ -std=c++17 -Wall -Wextra -Werror v30/tests/test_transport.cpp -o /tmp/v30-transport
+          c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_transport.cpp v30/overlay/src/helpers/esp32/V30EmergencyTransport.cpp -o /tmp/v30-transport
           /tmp/v30-transport
