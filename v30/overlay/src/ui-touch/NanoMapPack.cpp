@@ -41,7 +41,7 @@ bool validUtf8(const std::string &s) {
     }
     if ((continuation == 2 && codepoint < 0x800) || (continuation == 3 && codepoint < 0x10000) ||
         codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
-  return true;
+  }\n  return true;
 }
 
 bool quoted(const std::string &s, size_t &pos, std::string &value) {
