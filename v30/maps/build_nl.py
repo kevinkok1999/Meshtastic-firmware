@@ -71,8 +71,8 @@ def _load_profile(profile: str | Path | dict[str, Any]) -> tuple[dict[str, Any],
     if tuple(obj.get("provinces", ())) != PROVINCES:
         raise BuildError("profile must define exactly the 12 European Netherlands provinces")
     budget = int(obj.get("pack_budget_bytes", DEFAULT_BUDGET))
-    if budget <= 0:
-        raise BuildError("pack_budget_bytes must be positive")
+    if budget <= 0 or budget > DEFAULT_BUDGET:
+        raise BuildError(f"pack_budget_bytes must be in range 1..{DEFAULT_BUDGET}")
     return obj, raw
 
 def _varuint(value: int) -> bytes:
@@ -191,11 +191,21 @@ def _pack_bytes(features: list[dict[str, Any]], profile: dict[str, Any], source_
             return candidate, packed, omitted, names_count, roads, working
         if len(working) <= 1:
             raise BuildError(f"pack exceeds budget ({len(candidate)} > {budget})")
-        lowest = min(working, key=lambda f: (int(priorities.get(f["kind"], 0)), f["id"]))
-        working.remove(lowest)
-        omitted[lowest["kind"]] = omitted.get(lowest["kind"], 0) + 1
-        if not any(f["province"] == lowest["province"] for f in working):
-            raise BuildError("budget would remove final feature for province " + lowest["province"])
+        counts = {province: sum(f["province"] == province for f in working) for province in PROVINCES}
+        candidates = sorted(working, key=lambda f: (int(priorities.get(f["kind"], 0)), f["id"]))
+        batch = max(1, min(len(candidates), len(working) // 8))
+        removed = 0
+        for candidate in candidates:
+            if counts[candidate["province"]] <= 1:
+                continue
+            working.remove(candidate)
+            counts[candidate["province"]] -= 1
+            omitted[candidate["kind"]] = omitted.get(candidate["kind"], 0) + 1
+            removed += 1
+            if removed >= batch:
+                break
+        if removed == 0:
+            raise BuildError("budget would remove final feature for a province")
 
 def build_pack(source_path: str | Path, profile: str | Path | dict[str, Any], out_path: str | Path) -> BuildReport:
     source = Path(source_path)
