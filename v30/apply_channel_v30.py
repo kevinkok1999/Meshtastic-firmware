@@ -73,7 +73,7 @@ def main():
         src=src.replace(max_old,'lv_textarea_set_max_length(s_addch_secret_ta, 32);',1)
         placeholder_old='taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));'
         if src.count(placeholder_old)!=1: fail("V30 join placeholder anchor missing or duplicated")
-        src=src.replace(placeholder_old,'taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX or 32-hex key"));\\n    lv_textarea_set_password_mode(s_addch_secret_ta, true);',1)
+        src=src.replace(placeholder_old,'taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX or 32-hex key"));\n    lv_textarea_set_password_mode(s_addch_secret_ta, true);',1)
     elif 'lv_textarea_set_max_length(s_addch_secret_ta, 32);' not in src or '32-hex key' not in src or 'lv_textarea_set_password_mode(s_addch_secret_ta, true);' not in src:
         fail("V30 direct-key patch is incomplete")
     ui.write_text(src,encoding="utf-8")
