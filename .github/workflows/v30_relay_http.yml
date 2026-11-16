@@ -1,0 +1,19 @@
+name: V30 relay HTTP candidate
+on:
+  push:
+    branches: [v30-relay-http-candidate]
+    paths: ["v30/relay/**", ".github/workflows/v30_relay_http.yml"]
+permissions:
+  contents: read
+jobs:
+  relay-http:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false, fetch-depth: 1}
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - run: node v30/relay/test_v30_http.mjs
+      - run: node v30/relay/test_v30_grant_adapter.mjs
+      - run: node v30/relay/test_v30_relay.mjs
