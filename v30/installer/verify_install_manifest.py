@@ -91,7 +91,9 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
             raise ManifestError(f"{kind} is outside 16 MiB flash")
         if kind in EXPECTED_OFFSETS and offset != EXPECTED_OFFSETS[kind]:
             raise ManifestError(f"{kind} offset must be 0x{EXPECTED_OFFSETS[kind]:X}")
-        if kind == "ota_data" and declared_size != 0x2000:\n            raise ManifestError("ota_data must be exactly 8192 bytes at 0xE000")\n        if kind in ("app0", "app1") and declared_size > APP_PARTITION_SIZE - APP_HEADROOM:
+        if kind == "ota_data" and declared_size != 0x2000:
+            raise ManifestError("ota_data must be exactly 8192 bytes at 0xE000")
+        if kind in ("app0", "app1") and declared_size > APP_PARTITION_SIZE - APP_HEADROOM:
             raise ManifestError(f"{kind} exceeds application size minus 256 KiB headroom")
         if kind == "map":
             if offset != MAP_OFFSET or declared_size != MAP_SIZE:
