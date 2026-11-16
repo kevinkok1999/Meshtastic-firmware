@@ -28,7 +28,7 @@ class ManifestVerifierTests(unittest.TestCase):
                 {"kind": kind, "path": path.name, "offset": offset,
                  "size": path.stat().st_size,
                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-                for kind, offset in MODULE.EXPECTED_OFFSETS.items()
+                for kind, offset in ((k, MODULE.EXPECTED_OFFSETS[k]) for k in ("bootloader", "partition", "ota_data", "app0"))
                 for path in [self.files[kind]]
             ],
         }
