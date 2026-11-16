@@ -4,6 +4,7 @@ from __future__ import annotations
 import pathlib
 import shutil
 import sys
+from apply_browser_framing_v30 import apply_browser_framing
 
 WADAMESH_SHA = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
 MESHCORE_SHA = "edd7ed47f42acf6c64c9fcac551050fdbd531a09"
@@ -59,6 +60,8 @@ def main() -> None:
 
     if CORE_TAG in pio:
         pio = pio.replace(CORE_TAG, CORE_PIN)
+    # Patch the V30 checkout only, never the historical V28/V29 sources.
+    apply_browser_framing(root)
     pio_path.write_text(pio, encoding="utf-8")
 
     overlay = here / "overlay"

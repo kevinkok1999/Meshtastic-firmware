@@ -66,7 +66,11 @@ def main() -> None:
         )
         for name in ("MyMesh.h", "MyMesh.cpp", "main.cpp"):
             (upstream / "src" / name).write_text("// fixture\n", encoding="utf-8")
+        ws = upstream / "src/helpers/esp32/WebSocketCompanionServer.cpp"
+        ws.parent.mkdir(parents=True)
+        ws.write_text((REPO / "v30/tests/browser_frames/term_fixture.inc").read_text())
         subprocess.run(["python", str(APPLIER), str(upstream)], cwd=REPO, check=True)
+        require(ws.read_text(), "V30: no fragmented/reserved/unknown application frames.")
         pio = (upstream / "platformio.ini").read_text(encoding="utf-8")
         require(pio, "MESH_OFFGRIDNL_V29=1")
         require(pio, "MESH_OFFGRIDNL_V30=1")

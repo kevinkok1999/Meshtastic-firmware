@@ -32,3 +32,8 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -pedantic v30/overlay/src/helpers/esp32/V30Journal.cpp v30/tests/test_delivery.cpp -o /tmp/v30-journal
           /tmp/v30-journal
+      - name: Test V30 browser WebSocket framing
+        run: |
+          python v30/tests/browser_frames/prepare_term_fixture.py /tmp/term_fixture.inc
+          c++ -std=c++17 -Wall -Wextra -Werror -I /tmp v30/tests/browser_frames/test_term.cpp -o /tmp/v30-term
+          /tmp/v30-term
