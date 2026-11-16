@@ -22,6 +22,8 @@ HEADER_INSERT = (
     HEADER_ANCHOR
     + "#if defined(MESH_OFFGRIDNL_V30) && MESH_OFFGRIDNL_V30\n"
     + "  // V30 hook: called only after the radio reports completion/failure.\n"
+    + "  virtual bool onV30TxAdmission(Packet*, uint32_t) { return true; }\n"
+    + "  virtual void onV30TxDropped(Packet*, uint8_t) { }\n"
     + "  virtual void onV30TxComplete(Packet*, bool, uint32_t) { }\n"
     + "#endif\n"
 )
@@ -42,6 +44,34 @@ TIMEOUT_INSERT = (
     "      onV30TxComplete(outbound, false, static_cast<uint32_t>(_ms->getMillis() - outbound_start));\n"
     "#endif\n"
     + TIMEOUT_ANCHOR
+)
+INVALID_ANCHOR = (
+    "      _mgr->free(outbound);\n"
+    "      outbound = NULL;\n"
+    "    } else {\n"
+)
+INVALID_INSERT = (
+    "#if defined(MESH_OFFGRIDNL_V30) && MESH_OFFGRIDNL_V30\n"
+    "      onV30TxDropped(outbound, 1); // invalid wire length\n"
+    "#endif\n"
+    + INVALID_ANCHOR
+)
+ADMISSION_ANCHOR = (
+    "      uint32_t max_airtime = _radio->getEstAirtimeFor(len)*3/2;\n"
+    "      outbound_start = _ms->getMillis();\n"
+)
+ADMISSION_INSERT = (
+    "      uint32_t max_airtime = _radio->getEstAirtimeFor(len)*3/2;\n"
+    "#if defined(MESH_OFFGRIDNL_V30) && MESH_OFFGRIDNL_V30\n"
+    "      if (!onV30TxAdmission(outbound, max_airtime)) {\n"
+    "        onV30TxDropped(outbound, 2); // admission denied\n"
+    "        releasePacket(outbound);\n"
+    "        outbound = NULL;\n"
+    "        outbound_raw_len = 0;\n"
+    "        return;\n"
+    "      }\n"
+    "#endif\n"
+    "      outbound_start = _ms->getMillis();\n"
 )
 START_FAIL_ANCHOR = (
     "        logTxFail(outbound, outbound->getRawLength());\n"
@@ -74,6 +104,8 @@ def patch_sources(header: str, source: str) -> tuple[str, str]:
     source = replace_once(source, SUCCESS_ANCHOR, SUCCESS_INSERT, "completion success")
     source = replace_once(source, TIMEOUT_ANCHOR, TIMEOUT_INSERT, "completion timeout")
     source = replace_once(source, START_FAIL_ANCHOR, START_FAIL_INSERT, "completion start failure")
+    source = replace_once(source, INVALID_ANCHOR, INVALID_INSERT, "invalid wire length drop")
+    source = replace_once(source, ADMISSION_ANCHOR, ADMISSION_INSERT, "pre-start admission")
     return header, source
 
 
