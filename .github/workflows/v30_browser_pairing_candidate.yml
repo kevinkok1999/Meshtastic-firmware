@@ -1,0 +1,43 @@
+name: V30 browser pairing candidate
+on:
+  push:
+    branches: [v30-browser-pairing-candidate]
+    paths: ['v30/**', '.github/workflows/v30_browser_pairing_candidate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Strict parser and lifecycle
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/browser_auth/test_session.cpp -o /tmp/v30-browser-test
+          /tmp/v30-browser-test
+  browser-pinned-dev:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Reconstruct pinned baseline
+        run: |
+          git clone --no-checkout https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          git -C upstream-wadamesh fetch --depth 1 origin 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          git -C upstream-wadamesh checkout --detach 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          for patch in v11 v12 v13 v15 v16 v17 v18 v19 v26 v27 v28 v29 v30; do
+            python "$patch/apply_$patch.py" upstream-wadamesh
+          done
+      - name: Test and apply opt-in guard
+        run: |
+          python v30/tests/browser_auth/test_candidate.py upstream-wadamesh
+          python v30/apply_browser_pairing_candidate.py upstream-wadamesh
+      - name: Compile DEV only
+        working-directory: upstream-wadamesh
+        run: |
+          pip install 'platformio==6.2.0' --no-build-isolation
+          pio run -e LilyGo_TDeck_companion_radio_touch
