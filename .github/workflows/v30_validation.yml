@@ -2,15 +2,15 @@ name: V30 F1 transport validation
 
 on:
   push:
-    branches: [v30-work-dispatch-idempotence]
+    branches: [v30-work-radio-bridge]
     paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   pull_request:
-    branches: [v30-work-dispatch-idempotence]
+    branches: [v30-work-radio-bridge]
     paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   workflow_dispatch:
 
 concurrency:
-  group: meshoffgridnl-v30-dispatch-repeat-build
+  group: meshoffgridnl-v30-radio-bridge
   cancel-in-progress: true
 
 permissions:
@@ -37,7 +37,7 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_transport.cpp v30/overlay/src/helpers/esp32/V30EmergencyTransport.cpp -o /tmp/v30-transport
           /tmp/v30-transport
-          c++ -std=c++17 -Wall -Wextra -Werror -pedantic v30/tests/test_tx_binding.cpp -o /tmp/v30-tx-binding
+          c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I v30/overlay/src/helpers/esp32 v30/tests/test_tx_binding.cpp v30/overlay/src/helpers/esp32/V30RadioAdmissionBridge.cpp v30/overlay/src/helpers/esp32/V30AirtimeGovernor.cpp -o /tmp/v30-tx-binding
           /tmp/v30-tx-binding
 
   v29-to-v30-build:
@@ -121,6 +121,11 @@ jobs:
           test "$(grep -F -c "onV30TxDropped(outbound" "$source")" -eq 2
           test "$(grep -F -c "onV30TxDropped(packet" "$source")" -eq 1
           printf "header=%s\\nsource=%s\\n" "$header" "$source"
+      - name: Verify dormant bridge compiled for actual T-Deck
+        run: |
+          object=$(find upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch -name V30RadioAdmissionBridge.cpp.o -print -quit)
+          test -n "$object"
+          test -f "$object"
       - name: Guard DEV app headroom
         run: |
           test -f upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin

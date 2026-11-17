@@ -1,10 +1,11 @@
 #pragma once
 #include <stdint.h>
+#include "V30RadioAdmissionBridge.h"
 
 namespace v30 {
 
-// DEV-only identity contract. No radio, clock, persistence or regulatory policy
-// is implemented here. The caller must reserve airtime before admit().
+// DEV-only local identity binding. Only the actual shared bridge's live
+// reservation may authorize admission. It never implies recipient delivery.
 struct V30TxSettlement {
   uint64_t cookie;
   uint32_t conservativeMs;
@@ -13,39 +14,47 @@ struct V30TxSettlement {
 
 class V30TxBinding {
 public:
-  bool bind(const void* packet, uint64_t cookie) {
-    if (!packet || cookie == 0 || packet_) return false;
-    packet_ = packet;
+  V30TxBinding() = default;
+  V30TxBinding(const V30TxBinding&) = delete;
+  V30TxBinding& operator=(const V30TxBinding&) = delete;
+  bool bind(V30PacketLease lease, uint64_t cookie, const V30PacketLifecycle& life) {
+    if (!life.isAllocated(lease) || cookie == 0 || lease_.valid()) return false;
+    lease_ = lease;
     cookie_ = cookie;
     return true;
   }
 
-  bool admit(const void* packet, uint32_t reservationMs, bool reserved) {
-    if (packet != packet_ || !packet_ || admitted_ || !reserved || reservationMs == 0)
-      return false;
+  bool admit(V30PacketLease lease, const V30RadioAdmissionBridge& bridge) {
+    if (!lease_.valid() || lease != lease_ || admitted_) return false;
+    const uint32_t reservationMs = bridge.reservationMs(lease);
+    if (!reservationMs) return false;
     reservationMs_ = reservationMs;
     admitted_ = true;
     return true;
   }
 
-  bool settle(const void* packet, bool success, uint32_t elapsedMs,
+  bool settle(V30PacketLease lease, bool success, uint32_t elapsedMs,
+              uint64_t nowUs, V30RadioAdmissionBridge& bridge,
               V30TxSettlement& out) {
-    if (!packet_ || packet != packet_ || !admitted_) return false;
+    if (!lease_.valid() || lease != lease_ || !admitted_) return false;
+    if (!bridge.complete(lease, elapsedMs, nowUs)) return false;
     out = V30TxSettlement{cookie_, elapsedMs > reservationMs_ ? elapsedMs : reservationMs_, success};
     clear();
     return true;
   }
 
-  bool drop(const void* packet, uint64_t& cookie) {
-    if (!packet_ || packet != packet_ || admitted_) return false;
+  // Exact-token drop is valid before admission even if the manager already
+  // returned the slot to the pool. A reused slot's new token never matches.
+  bool drop(V30PacketLease lease, uint64_t& cookie) {
+    if (!lease_.valid() || lease != lease_ || admitted_) return false;
     cookie = cookie_;
     clear();
     return true;
   }
 
 private:
-  void clear() { packet_ = nullptr; cookie_ = 0; reservationMs_ = 0; admitted_ = false; }
-  const void* packet_ = nullptr;
+  void clear() { lease_ = {}; cookie_ = 0; reservationMs_ = 0; admitted_ = false; }
+  V30PacketLease lease_{};
   uint64_t cookie_ = 0;
   uint32_t reservationMs_ = 0;
   bool admitted_ = false;
