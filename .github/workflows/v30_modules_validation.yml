@@ -41,10 +41,11 @@ jobs:
         run: node --test v30/relay/test_v30_relay.mjs
       - name: Test OSM source ingestion and province assignment
         run: python -m unittest discover -s v30/tests -p test_osm_ingest.py -v
-      - name: Test native MeshMap metadata and place lookups
+      - name: Test native MeshMap metadata, search and streaming geometry
         run: |
           python v30/tests/generate_reader_fixture.py /tmp/reader-fixture.meshmap
-          c++ -std=c++17 -Wall -Wextra -Werror v30/overlay/src/ui-touch/NanoMapPack.cpp v30/tests/test_map_pack.cpp -o /tmp/test_map_pack
+          cc -O2 -c v30/overlay/src/ui-touch/miniz/miniz_tinfl.c -o /tmp/tinfl.o
+          c++ -std=c++17 -Wall -Wextra -Werror v30/overlay/src/ui-touch/NanoMapPack.cpp v30/tests/test_map_pack.cpp /tmp/tinfl.o -lz -o /tmp/test_map_pack
           /tmp/test_map_pack /tmp/reader-fixture.meshmap
       - name: Test bounded portal request and approval contract
         run: |

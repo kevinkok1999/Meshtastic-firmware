@@ -1,6 +1,11 @@
 #include "NanoMapPack.h"
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include "miniz/miniz_tinfl.h"
+#include <cmath>
+#include <memory>
+#include <new>
 
 namespace meshtastic::nanomap {
 namespace {
@@ -88,6 +93,9 @@ bool parseNames(const std::string &meta, std::vector<std::string> &names) {
 PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
   names_.clear();
   featureCount_ = 0;
+  data_ = nullptr;
+  size_ = 0;
+  metadataSize_ = 0;
   status_ = PackStatus::TooSmall;
   if (data == nullptr || size < 14) return status_;
   if (size > kMaxPackBytes) return status_ = PackStatus::MetadataOutOfBounds;
@@ -121,14 +129,182 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
     if (featureCount_ > kMaxFeatures) return status_ = PackStatus::BadMetadata;
   }
   if (cursor == digitsStart || (cursor >= meta.size() || (meta[cursor] != ',' && meta[cursor] != '}'))) return status_ = PackStatus::BadMetadata;
+  if (featureCount_ == 0) return status_ = PackStatus::BadMetadata;
   if (!parseNames(meta, names_)) return status_ = PackStatus::BadMetadata;
   if (names_.size() > kMaxNames) return status_ = PackStatus::BadMetadata;
   for (const auto &name : names_) {
     if (name.empty() || name.size() > kMaxNameBytes || !validUtf8(name)) return status_ = PackStatus::BadMetadata;
     for (unsigned char ch : name) if (ch < 0x20) return status_ = PackStatus::BadMetadata;
   }
+  data_ = data;
+  size_ = size;
+  metadataSize_ = metadataSize;
   status_ = PackStatus::Ok;
   return status_;
+}
+
+
+namespace {
+constexpr size_t kMaxDecodedBody = 4 * 1024 * 1024;
+constexpr size_t kMaxGeometryPoints = 4096;
+// Bounded 32 KiB dictionary plus tinfl state. No full decoded body is retained.
+class InflateCursor {
+ public:
+  InflateCursor(const uint8_t *data, size_t size) : input_(data), inputSize_(size) {
+    tinfl_init(&state_);
+  }
+  bool byte(uint8_t &value) {
+    if (read_ == available_ && !refill()) return false;
+    if (total_ >= kMaxDecodedBody) return false;
+    value = dictionary_[base_ + read_++];
+    ++total_;
+    return true;
+  }
+  size_t position() const { return total_; }
+  bool finish() {
+    uint8_t extra = 0;
+    if (byte(extra)) return false;
+    return !failed_ && done_ && inputOffset_ == inputSize_ && read_ == available_;
+  }
+ private:
+  bool refill() {
+    if (failed_ || done_) return false;
+    size_t consumed = inputSize_ - inputOffset_;
+    size_t produced = TINFL_LZ_DICT_SIZE - writeOffset_;
+    base_ = writeOffset_;
+    const tinfl_status status = tinfl_decompress(
+        &state_, input_ + inputOffset_, &consumed, dictionary_,
+        dictionary_ + writeOffset_, &produced, TINFL_FLAG_PARSE_ZLIB_HEADER);
+    inputOffset_ += consumed;
+    available_ = produced;
+    read_ = 0;
+    writeOffset_ = (writeOffset_ + produced) % TINFL_LZ_DICT_SIZE;
+    done_ = status == TINFL_STATUS_DONE;
+    failed_ = status < TINFL_STATUS_DONE ||
+        (!done_ && status != TINFL_STATUS_HAS_MORE_OUTPUT) ||
+        total_ + produced > kMaxDecodedBody;
+    return !failed_ && produced != 0;
+  }
+  tinfl_decompressor state_{};
+  uint8_t dictionary_[TINFL_LZ_DICT_SIZE]{};
+  const uint8_t *input_;
+  size_t inputSize_, inputOffset_ = 0, writeOffset_ = 0;
+  size_t base_ = 0, read_ = 0, available_ = 0, total_ = 0;
+  bool failed_ = false, done_ = false;
+};
+
+bool varuint(InflateCursor &cursor, uint32_t &value, size_t end = kMaxDecodedBody) {
+  value = 0;
+  for (unsigned i = 0; i < 5; ++i) {
+    uint8_t byte = 0;
+    if (cursor.position() >= end || !cursor.byte(byte)) return false;
+    if (i == 4 && (byte & 0xf0)) return false;
+    value |= static_cast<uint32_t>(byte & 0x7f) << (i * 7);
+    if (!(byte & 0x80)) return i == 0 || (byte & 0x7f) != 0; // canonical encoding
+  }
+  return false;
+}
+int64_t unzigzag(uint32_t value) {
+  return (value & 1) ? -static_cast<int64_t>(value >> 1) - 1 : static_cast<int64_t>(value >> 1);
+}
+bool allowedKind(const std::string &kind) {
+  static const char *kinds[] = {"boundary", "motorway", "trunk", "primary", "secondary",
+                                "tertiary", "local", "water", "place"};
+  for (const auto *candidate : kinds) if (kind == candidate) return true;
+  return false;
+}
+// Liang-Barsky clipping, including segments with both endpoints outside viewport.
+bool clip(double &x0, double &y0, double &x1, double &y1,
+          double xmin, double ymin, double xmax, double ymax) {
+  const double dx = x1 - x0, dy = y1 - y0;
+  const double p[] = {-dx, dx, -dy, dy};
+  const double q[] = {x0 - xmin, xmax - x0, y0 - ymin, ymax - y0};
+  double lo = 0, hi = 1;
+  for (unsigned i = 0; i < 4; ++i) {
+    if (p[i] == 0) { if (q[i] < 0) return false; continue; }
+    const double t = q[i] / p[i];
+    if (p[i] < 0) lo = std::max(lo, t); else hi = std::min(hi, t);
+    if (lo > hi) return false;
+  }
+  x1 = x0 + hi * dx; y1 = y0 + hi * dy;
+  x0 += lo * dx; y0 += lo * dy;
+  return true;
+}
+} // namespace
+
+bool NanoMapPack::forEachFeature(
+    double minLon, double minLat, double maxLon, double maxLat, uint8_t maxZoom,
+    const std::function<bool(const FeatureRecord &)> &callback) const {
+  if (status_ != PackStatus::Ok || !callback || maxZoom < 3 || maxZoom > 19 ||
+      !std::isfinite(minLon) || !std::isfinite(minLat) ||
+      !std::isfinite(maxLon) || !std::isfinite(maxLat) ||
+      minLon > maxLon || minLat > maxLat || minLon < -180 || maxLon > 180 ||
+      minLat < -90 || maxLat > 90) return false;
+  const size_t bodyOffset = 10 + metadataSize_;
+  if (bodyOffset >= size_ - 4) return false;
+  std::unique_ptr<InflateCursor> cursor(new (std::nothrow) InflateCursor(
+      data_ + bodyOffset, size_ - 4 - bodyOffset));
+  if (!cursor) return false;
+  bool deliver = true;
+  for (size_t feature = 0; feature < featureCount_; ++feature) {
+    uint32_t name = 0, province = 0, zoom = 0, geometryBytes = 0, count = 0, kindSize = 0;
+    if (!varuint(*cursor, name) || !varuint(*cursor, province) ||
+        !varuint(*cursor, zoom) || !varuint(*cursor, geometryBytes) ||
+        name > names_.size() || province >= 12 || zoom < 3 || zoom > 19 ||
+        !geometryBytes || geometryBytes > 10 * kMaxGeometryPoints + 5 ||
+        geometryBytes > kMaxDecodedBody - cursor->position()) return false;
+    const size_t geometryEnd = cursor->position() + geometryBytes;
+    if (!varuint(*cursor, count, geometryEnd) || !count || count > kMaxGeometryPoints) return false;
+    FeatureRecord record;
+    record.nameIndex = static_cast<uint16_t>(name); // zero = unnamed, otherwise one-based
+    record.provinceIndex = static_cast<uint8_t>(province);
+    record.zoomMin = static_cast<uint8_t>(zoom);
+    record.geometry.reserve(count);
+    int64_t lon = 0, lat = 0;
+    for (uint32_t point = 0; point < count; ++point) {
+      uint32_t dx = 0, dy = 0;
+      if (!varuint(*cursor, dx, geometryEnd) || !varuint(*cursor, dy, geometryEnd)) return false;
+      lon += unzigzag(dx); lat += unzigzag(dy);
+      if (lon < -18000000 || lon > 18000000 || lat < -9000000 || lat > 9000000) return false;
+      record.geometry.push_back({static_cast<int32_t>(lon), static_cast<int32_t>(lat)});
+    }
+    if (cursor->position() != geometryEnd || !varuint(*cursor, kindSize) ||
+        !kindSize || kindSize > 9) return false;
+    for (uint32_t i = 0; i < kindSize; ++i) {
+      uint8_t ch = 0;
+      if (!cursor->byte(ch)) return false;
+      record.kind.push_back(static_cast<char>(ch));
+    }
+    if (!allowedKind(record.kind)) return false;
+    if (!deliver || zoom > maxZoom) continue;
+    FeatureRecord clipped;
+    clipped.nameIndex = record.nameIndex;
+    clipped.provinceIndex = record.provinceIndex;
+    clipped.zoomMin = record.zoomMin;
+    clipped.kind = record.kind;
+    if (record.geometry.size() == 1) {
+      const auto point = record.geometry[0];
+      const double x = point.first / 100000.0, y = point.second / 100000.0;
+      if (x >= minLon && x <= maxLon && y >= minLat && y <= maxLat) {
+        clipped.geometry.push_back(point);
+        if (!callback(clipped)) deliver = false;
+      }
+    } else {
+      for (size_t i = 1; i < record.geometry.size() && deliver; ++i) {
+        double x0 = record.geometry[i-1].first / 100000.0;
+        double y0 = record.geometry[i-1].second / 100000.0;
+        double x1 = record.geometry[i].first / 100000.0;
+        double y1 = record.geometry[i].second / 100000.0;
+        if (!clip(x0, y0, x1, y1, minLon, minLat, maxLon, maxLat)) continue;
+        clipped.geometry = {{static_cast<int32_t>(std::llround(x0 * 100000)),
+                             static_cast<int32_t>(std::llround(y0 * 100000))},
+                            {static_cast<int32_t>(std::llround(x1 * 100000)),
+                             static_cast<int32_t>(std::llround(y1 * 100000))}};
+        if (!callback(clipped)) deliver = false;
+      }
+    }
+  }
+  return cursor->finish(); // validate checksum, full record count and no trailing body
 }
 
 bool NanoMapPack::lookupPlace(const std::string &prefix,
@@ -138,7 +314,7 @@ bool NanoMapPack::lookupPlace(const std::string &prefix,
   if (status_ != PackStatus::Ok || limit == 0 || limit > kMaxNames) return false;
   for (size_t i = 0; i < names_.size() && out.size() < limit; ++i) {
     if (names_[i].compare(0, prefix.size(), prefix) == 0)
-      out.push_back({names_[i], static_cast<uint16_t>(i)});
+      out.push_back({names_[i], static_cast<uint16_t>(i + 1)});
   }
   return true;
 }

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace meshtastic::nanomap {
 
@@ -14,15 +15,26 @@ enum class PackStatus : uint8_t {
   MetadataOutOfBounds,
   BadChecksum,
   BadMetadata,
+  GeometryCorrupt,
+  GeometryTooLarge,
+};
+
+struct FeatureRecord {
+  uint16_t nameIndex;
+  uint8_t provinceIndex;
+  uint8_t zoomMin;
+  std::string kind;
+  std::vector<std::pair<int32_t, int32_t>> geometry;
 };
 
 struct PlaceResult {
   std::string name;
-  uint16_t dictionaryIndex;
+  uint16_t dictionaryIndex; // one-based; zero reserved for unnamed features
 };
 
 class NanoMapPack {
  public:
+  // Borrows immutable caller bytes. Keep them alive until all queries finish.
   PackStatus open(const uint8_t *data, size_t size);
   PackStatus status() const { return status_; }
   size_t featureCount() const { return featureCount_; }
@@ -30,11 +42,18 @@ class NanoMapPack {
   bool lookupPlace(const std::string &prefix, std::vector<PlaceResult> &out,
                    size_t limit = 16) const;
   const std::vector<std::string> &names() const { return names_; }
+  // Segments may be emitted before final integrity validation. Discard all
+  // candidate output if false is returned; never commit partial results to a renderer.
+  bool forEachFeature(double minLon, double minLat, double maxLon, double maxLat,
+                      uint8_t maxZoom, const std::function<bool(const FeatureRecord &)> &callback) const;
 
  private:
   PackStatus status_ = PackStatus::TooSmall;
   size_t featureCount_ = 0;
   std::vector<std::string> names_;
+  const uint8_t *data_ = nullptr;
+  size_t size_ = 0;
+  size_t metadataSize_ = 0;
 };
 
 }  // namespace meshtastic::nanomap
