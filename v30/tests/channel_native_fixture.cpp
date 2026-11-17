@@ -34,7 +34,8 @@ static void openThreadDetailByIdx(int idx, bool channel) {
 
 int main() {
   auto key = "0123456789abcdef0123456789abcdef";
-  seed(0, "Different", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  seed(0, "Different", key);
+  the_mesh.channels[0].channel.secret[16] = 1;  // 32-byte imported secret differs beyond typed 16-byte key
   seed(2, "Shared", key);
   task.refreshThreadsFromMesh();
   input = key;
