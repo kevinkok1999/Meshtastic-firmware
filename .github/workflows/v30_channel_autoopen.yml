@@ -1,0 +1,14 @@
+name: V30 native channel behavior
+on:
+  push:
+    branches: [v30-work-channel-autoopen]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  behavior:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actual patched native channel callback behavior
+        run: python -m unittest discover -s v30/tests -p test_channel_native_behavior.py -v
