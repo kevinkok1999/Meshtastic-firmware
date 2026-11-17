@@ -1,0 +1,19 @@
+name: V30 network grants candidate tests
+on:
+  push:
+    branches: [v30-network-grant-challenge]
+    paths: ['v30/relay/**', '.github/workflows/v30_network_grant_candidate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24'}
+      - name: Run all V30 relay tests including actual two-device TCP exchange
+        run: node --test v30/relay/test*.mjs
