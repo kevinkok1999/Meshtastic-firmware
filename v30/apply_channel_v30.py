@@ -67,7 +67,7 @@ static bool v30ChannelNameInUse(const char* label, int except_slot, bool history
   {
     const char* raw = lv_textarea_get_text(s_addch_secret_ta);
     const size_t n = strlen(raw);
-    uint8_t secret[16] = {};
+    uint8_t secret[PUB_KEY_SIZE] = {};  // native key has 16 bytes, plus canonical zero padding
     if (v30_direct_join::parseKey(raw, n, secret)) {
       int slot = -1; char label[32] = {};
 #ifdef MAX_GROUP_CHANNELS
@@ -113,9 +113,11 @@ static bool v30ChannelNameInUse(const char* label, int except_slot, bool history
         g_lv.task->refreshThreadsFromMesh();
         g_lv.dirty_threads = true;
         for (int i = 0; i < UITask::MAX_UI_THREADS; ++i) {
-          if (g_lv.task->threadMeshChannelSlot(i) == slot) {
-            thread_idx = i; break;
-          }
+          if (g_lv.task->threadMeshChannelSlot(i) != slot) continue;
+          bool channel = false; uint16_t unread = 0; uint32_t ts = 0;
+          char thread_name[UITask::MAX_THREAD_NAME + 1] = {};
+          if (g_lv.task->getThreadInfo(i, channel, unread, ts, thread_name, sizeof(thread_name)) &&
+              channel && strcmp(thread_name, label) == 0) { thread_idx = i; break; }
         }
       }
       lv_textarea_set_text(s_addch_secret_ta, "");
@@ -146,7 +148,7 @@ static bool v30ChannelNameInUse(const char* label, int except_slot, bool history
         src=once(src,'lv_label_set_text(hint, TR("Enter the 8-character code. The owner must approve before the secure channel is added."));','lv_label_set_text(hint, TR("Enter the 32-hex channel key to join directly, or a short invitation code for owner approval."));',"V30 join hint")
         src=once(src,'lv_label_set_text(sec_l, TR("Join code"));','lv_label_set_text(sec_l, TR("Key or invitation"));',"V30 join label")
         src=once(src,'lv_label_set_text(bl, TR("Request access"));','lv_label_set_text(bl, TR("Join channel"));',"V30 join button")
-    elif 'lv_textarea_set_max_length(s_addch_secret_ta, 64);' not in src or '32-hex key' not in src or 'lv_textarea_set_password_mode(s_addch_secret_ta, true);' not in src or 'v30ChannelNameInUse' not in src or 'threadMeshChannelSlot(i) == slot' not in src:
+    elif 'lv_textarea_set_max_length(s_addch_secret_ta, 64);' not in src or '32-hex key' not in src or 'lv_textarea_set_password_mode(s_addch_secret_ta, true);' not in src or 'v30ChannelNameInUse' not in src or 'threadMeshChannelSlot(i) != slot' not in src or 'strcmp(thread_name, label) == 0' not in src:
         fail("V30 direct-key patch is incomplete")
     ui.write_text(src,encoding="utf-8")
     print("V30 native direct-key join installed; browser WebSocket remains invite-only.")

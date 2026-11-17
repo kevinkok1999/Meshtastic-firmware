@@ -10,6 +10,7 @@
 #define MESH_OFFGRIDNL_V30 1
 #define MESH_OFFGRIDNL_V28 1
 #define MAX_GROUP_CHANNELS 5
+#define PUB_KEY_SIZE 32
 #define TR(x) (x)
 #define CHAT_INBOX_TAB_INDEX 2
 #define LV_EVENT_CLICKED 1
