@@ -7,6 +7,7 @@ import zlib
 import tempfile
 import unittest
 from pathlib import Path
+from partition_fixture import partition_image, ROWS
 
 SPEC = importlib.util.spec_from_file_location("verify_install_manifest", Path(__file__).parents[1] / "installer" / "verify_install_manifest.py")
 sys.path.insert(0, str(Path(__file__).parents[1] / 'maps'))
@@ -22,7 +23,8 @@ class ManifestVerifierTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.files = {}
         for kind in ("bootloader", "partition", "ota_data", "app0"):
-            data = ((kind.encode() * 32)[:128] if kind != "ota_data" else bytes([0]) * 0x2000)
+            data = (partition_image() if kind == "partition" else
+                    (kind.encode() * 32)[:128] if kind != "ota_data" else bytes([0]) * 0x2000)
             path = self.root / f"{kind}.bin"
             path.write_bytes(data)
             self.files[kind] = path
@@ -44,6 +46,38 @@ class ManifestVerifierTests(unittest.TestCase):
 
     def test_valid_manifest(self):
         self.assertTrue(MODULE.validate_manifest(self.manifest, self.root))
+
+    def replace_partition(self, image):
+        self.files["partition"].write_bytes(image)
+        artifact = next(x for x in self.manifest["artifacts"] if x["kind"] == "partition")
+        artifact["size"] = len(image)
+        artifact["sha256"] = hashlib.sha256(image).hexdigest()
+
+    def test_valid_checksum_cannot_move_tiles_into_preserved_user_region(self):
+        rows = list(ROWS)
+        rows[4] = ("tiles", 1, 0x83, 0xC90000, 0x360000)
+        self.replace_partition(partition_image(rows))
+        with self.assertRaisesRegex(MODULE.ManifestError, "partition.*layout"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_partition_checksum_must_match(self):
+        image = bytearray(partition_image())
+        image[7 * 32 + 16] ^= 1
+        self.replace_partition(image)
+        with self.assertRaisesRegex(MODULE.ManifestError, "partition.*checksum"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_partition_rejects_non_erased_trailing_bytes(self):
+        image = bytearray(partition_image())
+        image[-1] = 0
+        self.replace_partition(image)
+        with self.assertRaisesRegex(MODULE.ManifestError, "partition.*padding"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_partition_rejects_missing_user_data_partition(self):
+        self.replace_partition(partition_image([row for row in ROWS if row[0] != "spiffs"]))
+        with self.assertRaisesRegex(MODULE.ManifestError, "partition.*layout"):
+            MODULE.validate_manifest(self.manifest, self.root)
 
     def test_rejects_path_traversal(self):
         self.manifest["artifacts"][0]["path"] = "../outside.bin"
@@ -239,5 +273,3 @@ class ManifestVerifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

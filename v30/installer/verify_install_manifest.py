@@ -32,6 +32,17 @@ MAP_MAGIC = b"MMN1"
 MAP_FORMAT_VERSION = 1
 MAP_HEADER_SIZE = 10
 MAP_CRC_SIZE = 4
+# Exact immutable WadaMesh T-Deck Plus partition layout; source
+# 6fe6b9f.../variants/lilygo_tdeck/partitions_tdeck_touch.csv.
+PARTITION_LAYOUT = (
+    ("nvs", 0x01, 0x02, 0x9000, 0x5000),
+    ("otadata", 0x01, 0x00, 0xE000, 0x2000),
+    ("app0", 0x00, 0x10, 0x10000, 0x3E0000),
+    ("app1", 0x00, 0x11, 0x3F0000, 0x3E0000),
+    ("tiles", 0x01, 0x83, 0x7D0000, 0x4C0000),
+    ("spiffs", 0x01, 0x82, 0xC90000, 0x360000),
+    ("coredump", 0x01, 0x03, 0xFF0000, 0x10000),
+)
 
 
 class ManifestError(ValueError):
@@ -67,6 +78,26 @@ def _sha256(path: Path) -> tuple[int, str]:
             digest.update(chunk)
     return size, digest.hexdigest()
 
+
+
+def _validate_partition(path: Path, expected_hash: str) -> None:
+    with path.open("rb") as handle:
+        image = handle.read(0x1001)
+    if len(image) not in (0xC00, 0x1000):
+        raise ManifestError("partition binary must occupy 0xC00 or 0x1000 bytes")
+    if hashlib.sha256(image).hexdigest() != expected_hash:
+        raise ManifestError("partition sha256 changed during validation")
+    entries = b"".join(struct.pack("<HBBII16sI", 0x50AA, kind, subtype, offset, size,
+                                   label.encode("ascii"), 0)
+                       for label, kind, subtype, offset, size in PARTITION_LAYOUT)
+    if image[:len(entries)] != entries:
+        raise ManifestError("partition binary layout differs from pinned T-Deck Plus layout")
+    # MD5 is the ESP-IDF table format checksum, not a trust/authentication primitive.
+    checksum = b"\xeb\xeb" + b"\xff" * 14 + hashlib.md5(entries, usedforsecurity=False).digest()
+    if image[len(entries):len(entries) + 32] != checksum:
+        raise ManifestError("partition table checksum mismatch")
+    if any(value != 255 for value in image[len(entries) + 32:]):
+        raise ManifestError("partition table padding must be erased (0xFF)")
 
 
 def _validate_map(path: Path, item: dict[str, Any], manifest: dict[str, Any]) -> None:
@@ -170,6 +201,8 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
             raise ManifestError(f"{kind} sha256 mismatch")
         if kind == "map":
             _validate_map(path, item, manifest)
+        if kind == "partition":
+            _validate_partition(path, actual_hash)
         end = offset + declared_size
         for other_start, other_end, other_kind in intervals:
             if offset < other_end and other_start < end:

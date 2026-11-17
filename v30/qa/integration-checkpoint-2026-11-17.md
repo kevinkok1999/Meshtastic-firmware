@@ -19,3 +19,5 @@ No release or hardware ACK claim. V29 branch remains unchanged.
 - Prior complete main T-Deck run 43983670079 and host run 43983670118 both succeeded on b84cdfd3.
 
 - Added detached Ed25519 signature gate with explicit independent raw-public-key SHA256 pin. Local red: 6 failing assertions against unsigned validation; green: 43 installer/map/signature tests. Real production signing key and browser installer not provisioned; production manifests still refused.
+
+- Red/green partition binary gate: 5 regressions initially failed, now all 48 local installer/map/signature tests pass. Validate the actual PlatformIO-generated partition binary in the pinned firmware CI as well. The previous combined main embedded run 44183448985 (550fc8f5) succeeded; NanoMapPack.cpp compiled but miniz source filter still requires actual linker integration, being handled separately.

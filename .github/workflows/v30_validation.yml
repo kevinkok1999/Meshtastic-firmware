@@ -81,3 +81,13 @@ jobs:
           test -f upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin
           size=$(stat -c%s upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin)
           test "$size" -lt $((0x3E0000-262144))
+      - name: Verify actual generated T-Deck partition binary against immutable layout
+        run: |
+          PYTHONPATH=v30/installer python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          from verify_install_manifest import _validate_partition
+          path = Path('upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/partitions.bin')
+          _validate_partition(path, hashlib.sha256(path.read_bytes()).hexdigest())
+          print('Actual generated partition table matches V30 preserved layout')
+          PY

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from partition_fixture import partition_image, ROWS
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -25,7 +26,7 @@ class SignedManifestTests(unittest.TestCase):
         self.public.write_bytes(public)
         self.pin = hashlib.sha256(public).hexdigest()
         entries = []
-        for kind, offset, payload in (("bootloader", 0, b"boot"), ("partition", 0x8000, b"part"),
+        for kind, offset, payload in (("bootloader", 0, b"boot"), ("partition", 0x8000, partition_image()),
                                       ("ota_data", 0xe000, b"\xff" * 8192), ("app0", 0x10000, b"app")):
             path = self.root / (kind + ".bin")
             path.write_bytes(payload)
@@ -87,6 +88,17 @@ class SignedManifestTests(unittest.TestCase):
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("production", result.stdout.lower())
+
+    def test_signed_partition_still_cannot_move_user_data(self):
+        rows = list(ROWS)
+        rows[5] = ("spiffs", 1, 0x82, 0x700000, 0x360000)
+        image = partition_image(rows)
+        (self.root / "partition.bin").write_bytes(image)
+        next(x for x in self.data["artifacts"] if x["kind"] == "partition")["sha256"] = hashlib.sha256(image).hexdigest()
+        self.sign(json.dumps(self.data).encode())
+        check = self.check()
+        self.assertNotEqual(check.returncode, 0)
+        self.assertIn("partition", check.stdout.lower())
 
     def test_truncated_signature_rejected(self):
         self.signature.write_bytes(self.signature.read_bytes()[:63])
