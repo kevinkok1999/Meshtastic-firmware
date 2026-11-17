@@ -28,6 +28,7 @@ SPIFFS_OFFSET = 0xC90000
 SPIFFS_SIZE = 0x360000
 MAX_PACK_SIZE = 0x380000  # 3.5 MiB logical pack, excluding image padding
 MAX_PACK_METADATA = 65_536  # native NanoMapPack metadata bound
+MAX_DECODED_MAP_BODY = 4 * 1024 * 1024  # native streaming reader work bound
 MAP_MAGIC = b"MMN1"
 MAP_FORMAT_VERSION = 1
 MAP_HEADER_SIZE = 10
@@ -111,9 +112,12 @@ def _validate_map(path: Path, item: dict[str, Any], manifest: dict[str, Any]) ->
         raise ManifestError("map metadata must be 1..65536 bytes")
     # The complete fixed-size image has already passed size/hash checks.
     # Read a bounded image snapshot; neither the pack nor padding is inferred.
-    image = path.read_bytes()
+    with path.open("rb") as handle:
+        image = handle.read(MAP_SIZE + 1)
     if len(image) != MAP_SIZE:
         raise ManifestError("map image size changed during validation")
+    if hashlib.sha256(image).hexdigest() != item["sha256"].lower():
+        raise ManifestError("map sha256 changed during validation")
     pack = image[:pack_size]
     if pack[:4] != MAP_MAGIC:
         raise ManifestError("map pack magic must be MMN1")
@@ -133,6 +137,16 @@ def _validate_map(path: Path, item: dict[str, Any], manifest: dict[str, Any]) ->
         raise ManifestError("map metadata must be complete UTF-8 JSON") from exc
     if not isinstance(metadata, dict) or type(metadata.get("version")) is not int or metadata["version"] != version:
         raise ManifestError("map metadata version must match pack header version")
+    try:
+        stream = zlib.decompressobj()
+        decoded = stream.decompress(pack[MAP_HEADER_SIZE + actual_metadata_size:-MAP_CRC_SIZE],
+                                    MAX_DECODED_MAP_BODY + 1)
+    except zlib.error as exc:
+        raise ManifestError("map zlib stream invalid") from exc
+    if len(decoded) > MAX_DECODED_MAP_BODY or stream.unconsumed_tail:
+        raise ManifestError("map decoded body exceeds reader limit")
+    if not stream.eof or stream.unused_data or not decoded:
+        raise ManifestError("map zlib stream must terminate exactly once without trailing data")
     if any(value != 255 for value in image[pack_size:]):
         raise ManifestError("map padding must contain only 0xFF bytes")
     # CRC32 and SHA256 detect inconsistent bytes, not a trusted publisher.

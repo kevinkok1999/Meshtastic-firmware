@@ -60,6 +60,7 @@ def main() -> None:
         (upstream / "platformio.ini").write_text(
             "[env:LilyGo_TDeck_companion_radio_touch]\n"
             "  -D MESH_OFFGRIDNL_V29=1\n"
+            "  +<ui-touch/*.c>\n"
             "lib_deps = https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4\n"
             "[env:LilyGo_TDeck_Pro_companion_radio_touch]\n",
             encoding="utf-8",
@@ -75,10 +76,14 @@ def main() -> None:
             (ws.parent / name).write_bytes((REPO / "v29/overlay/src/helpers/esp32" / name).read_bytes())
         ui = upstream / "src/ui-touch/UITask.cpp"
         ui.parent.mkdir(parents=True)
-        ui.write_text((REPO / "v30/patches/portal/callback_v29.inc").read_text())
+        ui.write_text((REPO / "v30/patches/portal/callback_v29.inc").read_text() + "\n" +
+                      (REPO / "v30/tests/channel_native_fixture.cpp").read_text() + "\n" +
+                      '#include "UITask.h"\n' + (REPO / "v30/tests/test_guard_fixture.inc").read_text())
         for _ in range(2):
             subprocess.run(["python", str(APPLIER), str(upstream)], cwd=REPO, check=True)
         require(ui.read_text(), "approvePending")
+        require(ui.read_text(), "v30_direct_join::parseKey")
+        require(ui.read_text(), "openThreadDetailByIdx(thread_idx, true)")
         require(ws.read_text(), "v29_emergency_portal.active()")
         require((ws.parent / "V29EmergencyPortal.cpp").read_text(), "executeApproved")
         require(ws.read_text(), "V30: no fragmented/reserved/unknown application frames.")
@@ -86,6 +91,8 @@ def main() -> None:
         require(pio, "MESH_OFFGRIDNL_V29=1")
         require(pio, "MESH_OFFGRIDNL_V30=1")
         require(pio, MESHCORE_SHA)
+        require(pio, "+<ui-touch/miniz/*.c>")
+        require(ui.read_text(), "mountLegacyTilesWithoutFormat")
         if not (upstream / "src/helpers/esp32/V30EmergencyTransport.h").exists():
             raise AssertionError("V30 overlay helper was not copied")
 

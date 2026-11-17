@@ -23,3 +23,9 @@ No release or hardware ACK claim. V29 branch remains unchanged.
 - Red/green partition binary gate: 5 regressions initially failed, now all 48 local installer/map/signature tests pass. Validate the actual PlatformIO-generated partition binary in the pinned firmware CI as well. The previous combined main embedded run 44183448985 (550fc8f5) succeeded; NanoMapPack.cpp compiled but miniz source filter still requires actual linker integration, being handled separately.
 
 - Integrated optional registered-channel network challenge grant issuer and reference client. Exact legacy scope HMAC preserved, independent membership verifier + device signatures, bounded 15s challenge/60s grant, default disabled routes. Local 10/10 relay tests + isolated CI 44184513544 passed actual loopback two-client exchange/restart. No native client, public deployment, secure enrollment or real internet proof yet.
+
+- Integrated exact native channel join/open behavior after host 44184356322 and full pinned T-Deck 44184356058 passed: no overwriting existing same-key slot, exact full padded key and slot/thread match, preserve short invite.
+- Integrated readonly flash map guard and miniz source filter after full pinned firmware 44184306946 passed. The internal raw map is never automatically mounted/formatted as LittleFS; no map UI or signed production image yet.
+- Installer now rejects CRC-valid invalid zlib, trailing extra streams and decoded size beyond 4 MiB; 51 local installer/map/signature cases pass.
+- Integrated national-source pipeline (native PBF smoke run 44184880421 passed); ordinary pushes never download the large input. Actual national extract run 44184613196 was still running and no coverage was verified.
+- Combined host and embedded checks must be rerun against this integration, and no publishing or flashing has been authorized by these development results.

@@ -136,6 +136,28 @@ class ManifestVerifierTests(unittest.TestCase):
     def repack(self, prefix):
         return prefix + struct.pack("<I", zlib.crc32(prefix) & 0xffffffff)
 
+    def replace_map_body(self, body):
+        artifact = self.add_map()
+        metadata_len = struct.unpack_from("<I", self.pack, 6)[0]
+        logical = self.repack(self.pack[:10 + metadata_len] + body)
+        artifact["pack_size"] = len(logical)
+        self.replace_map(logical + b"\xff" * (MODULE.MAP_SIZE - len(logical)))
+
+    def test_valid_crc_cannot_hide_invalid_compressed_geometry(self):
+        self.replace_map_body(b"not a zlib stream")
+        with self.assertRaisesRegex(MODULE.ManifestError, "map.*zlib"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_valid_crc_cannot_hide_trailing_zlib_stream(self):
+        self.replace_map_body(zlib.compress(b"x") + zlib.compress(b"y"))
+        with self.assertRaisesRegex(MODULE.ManifestError, "map.*zlib"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_compressed_payload_cannot_exceed_native_decoded_budget(self):
+        self.replace_map_body(zlib.compress(b"x" * (4 * 1024 * 1024 + 1)))
+        with self.assertRaisesRegex(MODULE.ManifestError, "map.*decoded"):
+            MODULE.validate_manifest(self.manifest, self.root)
+
     def test_generated_pack_valid_in_full_partition_image(self):
         self.add_map()
         self.manifest["install_mode"] = "full-v30"
