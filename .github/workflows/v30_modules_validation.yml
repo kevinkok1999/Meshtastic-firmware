@@ -61,3 +61,7 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -I. v30/overlay/src/helpers/esp32/V30Journal.cpp v30/overlay/src/helpers/esp32/V30FileJournalStorage.cpp v30/tests/test_journal_storage.cpp -o /tmp/v30-file-journal
           /tmp/v30-file-journal /tmp/v30-journal.bin
+      - name: Test detached publisher signature and read-only install gate
+        run: |
+          python -m pip install 'cryptography==50.0.0'
+          python -m unittest discover -s v30/tests -p test_signed_install_manifest.py -v

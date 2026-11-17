@@ -17,3 +17,5 @@ No release or hardware ACK claim. V29 branch remains unchanged.
 
 - 2026-11-17: merged native streaming map reader + miniz and builder decoded-budget enforcement, isolated host + ESP32-S3 module run 43983880432; merged installer padded-image/CRC/metadata verification run 43983923659. No signed map, real geographic coverage, native renderer or live flash activation yet. Combined T-Deck reconstruction to be revalidated.
 - Prior complete main T-Deck run 43983670079 and host run 43983670118 both succeeded on b84cdfd3.
+
+- Added detached Ed25519 signature gate with explicit independent raw-public-key SHA256 pin. Local red: 6 failing assertions against unsigned validation; green: 43 installer/map/signature tests. Real production signing key and browser installer not provisioned; production manifests still refused.
