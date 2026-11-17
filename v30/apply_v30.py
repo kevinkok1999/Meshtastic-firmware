@@ -6,6 +6,7 @@ import shutil
 import sys
 from apply_browser_framing_v30 import apply_browser_framing
 from apply_portal_v30 import apply as apply_portal
+from apply_channel_v30 import apply as apply_channel
 
 WADAMESH_SHA = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
 MESHCORE_SHA = "edd7ed47f42acf6c64c9fcac551050fdbd531a09"
@@ -73,6 +74,7 @@ def main() -> None:
             shutil.copy2(src, dst)
 
     apply_portal(root)
+    apply_channel(root)
 
     # V30 sender/receiver integration stays disabled until the real dispatcher
     # completion hook exists. The copied helper is host-tested only; V29 remains

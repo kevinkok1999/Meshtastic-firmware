@@ -5,7 +5,7 @@ class ChannelPatchTests(unittest.TestCase):
   root=pathlib.Path(tempfile.mkdtemp()); block="[env:LilyGo_TDeck_companion_radio_touch]\n"+("  -D MESH_OFFGRIDNL_V30=1\n" if flag else "")+"[env:LilyGo_TDeck_Pro_companion_radio_touch]\n"
   (root/"platformio.ini").write_text(block); (root/"src/ui-touch").mkdir(parents=True)
   (root/"src/MyMesh.cpp").write_text("// native channel path\n")
-  (root/"src/ui-touch/UITask.cpp").write_text('#include "../MyMesh.h"\nstatic void joinPrivateChannelSubmitCb(lv_event_t* e) {\n  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;\n  kbMirrorSyncToReal();\n  if (!s_addch_secret_ta) return;\n#if defined(MESH_OFFGRIDNL_V28)\n  const char* code = lv_textarea_get_text(s_addch_secret_ta);\n  taSetPlaceholder(s_addch_secret_ta, TR("XXXX-XXXX"));\n  lv_textarea_set_max_length(s_addch_secret_ta, 10);\n')
+  (root/"src/ui-touch/UITask.cpp").write_bytes((ROOT/"tests/channel_native_fixture.cpp").read_bytes())
   return root
  def run_patch(self,root): return subprocess.run([sys.executable,str(SCRIPT),str(root)],text=True,capture_output=True,check=False)
  def test_native_direct_join_patch_is_idempotent_and_gated(self):

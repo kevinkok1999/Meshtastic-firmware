@@ -26,6 +26,7 @@ static const char* lv_textarea_get_text(std::string* ta) {return ta->c_str();}
 static void lv_textarea_set_text(std::string* ta,const char* value) {*ta=value;}
 static void lv_textarea_set_max_length(std::string*,size_t) {}
 static void lv_textarea_set_password_mode(std::string*,bool) {}
+static void lv_textarea_set_password_show_time(std::string*,uint32_t) {}
 static void taSetPlaceholder(std::string*,const char*) {}
 static void lv_label_set_text(void*,const char*) {}
 static void useChainedFont(void*) {}

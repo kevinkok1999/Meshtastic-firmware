@@ -1,0 +1,56 @@
+name: v30-channel-native-reconstruction
+on:
+  push:
+    branches: [v30-work-channel-autoopen]
+    paths:
+      - "v27/**"
+      - "v28/**"
+      - "v29/**"
+      - "v30/apply_v30.py"
+      - "v30/apply_channel_v30.py"
+      - "v30/overlay/**"
+      - ".github/workflows/v30-channel-autoopen-reconstruction.yml"
+  workflow_dispatch:
+jobs:
+  reconstruct-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned WadaMesh source
+        run: |
+          git clone https://github.com/ALLFATHER-BV/wadamesh.git wadamesh
+          git -C wadamesh checkout 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Reconstruct V27 through V29
+        run: |
+          python v11/apply_v11.py wadamesh
+          python v12/apply_v12.py wadamesh
+          python v13/apply_v13.py wadamesh
+          python v15/apply_v15.py wadamesh
+          python v16/apply_v16.py wadamesh
+          python v17/apply_v17.py wadamesh
+          python v18/apply_v18.py wadamesh
+          python v19/apply_v19.py wadamesh
+          python v26/apply_v26.py wadamesh
+          python v27/apply_v27.py wadamesh
+          python v28/apply_v28.py wadamesh
+          python v29/apply_v29.py wadamesh
+      - name: Apply V30 baseline and native channel patch
+        run: |
+          python v30/apply_v30.py wadamesh
+          python v30/apply_v30.py wadamesh
+          python v30/tests/test_transport.py
+      - name: Verify native patch markers
+        run: |
+          grep -F "V30DirectChannelJoin.h" wadamesh/src/ui-touch/UITask.cpp
+          grep -F "v30_direct_join::parseKey" wadamesh/src/ui-touch/UITask.cpp
+          grep -F "openThreadDetailByIdx(thread_idx, true)" wadamesh/src/ui-touch/UITask.cpp
+          grep -F "v29_emergency_portal.approvePending" wadamesh/src/ui-touch/UITask.cpp
+          grep -F "MESH_OFFGRIDNL_V30=1" wadamesh/platformio.ini
+      - name: Build patched T-Deck firmware
+        run: |
+          python -m pip install --upgrade platformio
+          platformio run -d wadamesh -e LilyGo_TDeck_companion_radio_touch

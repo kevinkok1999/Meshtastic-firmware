@@ -11,4 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run actual patched native channel callback behavior
-        run: python -m unittest discover -s v30/tests -p test_channel_native_behavior.py -v
+        run: |
+          python -m unittest discover -s v30/tests -p test_channel_native_behavior.py -v
+          python -m unittest discover -s v30/tests -p test_apply_channel_v30.py -v
