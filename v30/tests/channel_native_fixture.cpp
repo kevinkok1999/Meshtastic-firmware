@@ -28,6 +28,7 @@ void openJoinPrivateChannelModal() {
 static void openThreadDetailByIdx(int idx, bool channel) {
   assert(channel);
   openedSlot = g_lv.task->threadMeshChannelSlot(idx);
+  openedName = task.threads.at(idx).first;
   assert(closed && currentTab == CHAT_INBOX_TAB_INDEX);
 }
 
@@ -42,9 +43,11 @@ int main() {
   assert(the_mesh.channels[2].name == std::string("Shared"));
   resetUi();
   seed(1, "Private", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  task.threads.push_back({"Removed private", 3});  // stale chat pinned to reused slot
   input = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
   joinPrivateChannelSubmitCb(&event);
   assert(writes == 1 && openedSlot == 3 && closed);
+  assert(openedName == "Private 2");
   assert(the_mesh.channels[3].name == std::string("Private 2"));
   resetUi();
   input = std::string(key) + "x";

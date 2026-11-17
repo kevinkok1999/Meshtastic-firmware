@@ -14,7 +14,7 @@
 #define CHAT_INBOX_TAB_INDEX 2
 #define LV_EVENT_CLICKED 1
 struct lv_event_t{}; static lv_event_t event;
-static std::string input, error;
+static std::string input, error, openedName;
 static std::string* s_addch_secret_ta = &input;
 static std::string* s_addch_name_ta = nullptr;
 static void* hint=nullptr, *sec_l=nullptr, *bl=nullptr;
@@ -52,4 +52,4 @@ struct UITask {
 }; static UITask task;
 static struct {UITask* task;bool dirty_threads;} g_lv{&task,false};
 static struct {bool requestChannelJoin(const char* s){++bridgeCalls;return std::string(s)=="ABCD-EFGH";}} v11_global_bridge;
-static void resetUi(){openedSlot=-1;closed=false;currentTab=-1;error.clear();}
+static void resetUi(){openedSlot=-1;closed=false;currentTab=-1;error.clear();openedName.clear();}
