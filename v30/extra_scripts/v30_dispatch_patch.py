@@ -145,7 +145,12 @@ def patch_dependency(libdeps: str | Path) -> tuple[Path, Path]:
 
 # PlatformIO entry point is deliberately opt-in. apply_v30.py does not add this
 # extra script; a future build must explicitly opt into the candidate.
-if "Import" in globals():
+try:
     Import("env")
+except NameError:
+    # Normal Python import for host tests; PlatformIO provides Import via SCons.
+    pass
+else:
     if env.GetProjectOption("custom_v30_dispatch_patch", default="") == "1":
-        patch_dependency(env.subst("$PROJECT_LIBDEPS_DIR"))
+        header_path, source_path = patch_dependency(env.subst("$PROJECT_LIBDEPS_DIR"))
+        print("V30_DISPATCH_PATCH_APPLIED", header_path, source_path)
