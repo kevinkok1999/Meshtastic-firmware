@@ -1,0 +1,73 @@
+name: V30 native viewport background job
+on:
+  push:
+    branches: [v30-map-viewport-worker]
+    paths: ["v30/**", ".github/workflows/v30_map_viewport_worker.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python v30/tests/generate_reader_fixture.py /tmp/v30-raw-fixture.meshmap
+      - run: python -m unittest discover -s v30/tests -p test_map_build.py -v
+      - run: |
+          base=v30/overlay/src/ui-touch
+          cc -O2 -c "$base/miniz/miniz_tinfl.c" -o /tmp/v30-miniz.o
+          c++ -std=c++17 -Wall -Wextra -Werror -I "$base" "$base/NanoMapPack.cpp" "$base/NanoMapImage.cpp" v30/tests/test_nano_image.cpp /tmp/v30-miniz.o -lz -o /tmp/v30-image
+          /tmp/v30-image /tmp/v30-raw-fixture.meshmap
+          c++ -std=c++17 -Wall -Wextra -Werror "$base/NanoMapPack.cpp" v30/tests/test_map_pack.cpp /tmp/v30-miniz.o -lz -o /tmp/v30-map
+          /tmp/v30-map /tmp/v30-raw-fixture.meshmap
+          c++ -std=c++17 -Wall -Wextra -Werror -I "$base" "$base/NanoMapPack.cpp" "$base/NanoMapViewport.cpp" v30/tests/test_nano_viewport.cpp /tmp/v30-miniz.o -lz -o /tmp/v30-view
+          /tmp/v30-view /tmp/v30-raw-fixture.meshmap
+      - run: python v30/tests/test_apply_map_guard.py
+  v29-to-v30-build:
+    name: Pinned full firmware with V30 no-format guard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false, fetch-depth: 1}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Checkout immutable WadaMesh baseline
+        run: |
+          git clone --no-checkout https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          git -C upstream-wadamesh fetch --depth 1 origin 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          git -C upstream-wadamesh checkout --detach 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          test "$(git -C upstream-wadamesh rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+      - name: Apply V11 through V29 baseline
+        run: |
+          set -euo pipefail
+          for patch in v11 v12 v13 v15 v16 v17 v18 v19 v26 v27 v28 v29; do
+            python "$patch/apply_$patch.py" upstream-wadamesh
+          done
+      - name: Run V29 contracts before V30 overlay
+        run: |
+          python v29/tests/test_contracts.py upstream-wadamesh
+          python v29/tests/test_resilience_model.py upstream-wadamesh
+      - name: Apply gated V30 overlay
+        run: |
+          python v30/apply_v30.py upstream-wadamesh
+          python v30/apply_map_guard_v30.py upstream-wadamesh
+          python v30/apply_map_guard_v30.py upstream-wadamesh
+      - name: Build DEV firmware only
+        working-directory: upstream-wadamesh
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DMESH_OFFGRIDNL_V30_EXPERIMENTAL=0
+            -DFIRMWARE_RELEASE_TAG='"v30-f1-dev"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V30 F1 DEV"'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "platformio==6.2.0" --no-build-isolation
+          pio run -e LilyGo_TDeck_companion_radio_touch
+      - name: Guard DEV app headroom
+        run: |
+          test -f upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin
+          size=$(stat -c%s upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin)
+          test "$size" -lt $((0x3E0000-262144))
