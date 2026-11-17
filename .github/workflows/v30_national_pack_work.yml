@@ -1,0 +1,101 @@
+name: V30 national map candidate
+on:
+  push:
+    branches: [v30-work-national-pack]
+    paths: ["v30/maps/**", "v30/tests/test_national_pack.py", ".github/workflows/v30_national_pack_work.yml"]
+  workflow_dispatch:
+    inputs:
+      source_date:
+        description: "Geofabrik snapshot date (YYMMDD; no latest alias)"
+        required: true
+        type: string
+      expected_pbf_sha256:
+        description: "Reviewed SHA256 of exact dated Geofabrik PBF"
+        required: true
+        type: string
+      expected_boundary_sha256:
+        description: "Reviewed SHA256 of exact PDOK province GeoJSON"
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  unit-and-pbf-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install native extraction dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          python -m pip install osmium==4.3.2 shapely==2.1.2
+      - name: Run actual binary PBF and map selection checks
+        run: |
+          python -c 'import osmium, shapely'
+          command -v osmium
+          python -m unittest discover -s v30/tests -p test_national_pack.py -v
+          python -m unittest discover -s v30/tests -p test_map_build.py -v
+          python -m unittest discover -s v30/tests -p test_osm_ingest.py -v
+  national-candidate:
+    # Network and multi-GB data retrieval are always explicit.
+    if: github.event_name == 'workflow_dispatch'
+    needs: [unit-and-pbf-smoke]
+    timeout-minutes: 50
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_DATE: ${{ inputs.source_date }}
+      EXPECTED_PBF: ${{ inputs.expected_pbf_sha256 }}
+      EXPECTED_BOUNDARY: ${{ inputs.expected_boundary_sha256 }}
+      BOUNDARY_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied/items?f=json&limit=100
+      BOUNDARY_METADATA_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied?f=json
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install extraction dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osmium-tool
+          python -m pip install osmium==4.3.2 shapely==2.1.2
+      - name: Acquire reviewed bytes from licensed publishers
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_DATE" =~ ^[0-9]{6}$ ]]
+          [[ "$EXPECTED_PBF" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_BOUNDARY" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p map-input map-output
+          PBF_URL="https://download.geofabrik.de/europe/netherlands-${SOURCE_DATE}.osm.pbf"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 1200 --max-filesize 2147483648 "$PBF_URL" --output map-input/source.osm.pbf
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 180 --max-filesize 134217728 "$BOUNDARY_URL" --output map-input/provinces.geojson
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1048576 "$BOUNDARY_METADATA_URL" --output map-output/pdok-collection.json
+          printf '%s  %s\n' "$EXPECTED_PBF" map-input/source.osm.pbf | sha256sum -c -
+          printf '%s  %s\n' "$EXPECTED_BOUNDARY" map-input/provinces.geojson | sha256sum -c -
+          DATA_TIMESTAMP="$(osmium fileinfo -g header.option.osmosis_replication_timestamp map-input/source.osm.pbf)"
+          [[ -n "$DATA_TIMESTAMP" ]]
+          echo "PBF_URL=$PBF_URL" >> "$GITHUB_ENV"
+          echo "DATA_TIMESTAMP=$DATA_TIMESTAMP" >> "$GITHUB_ENV"
+      - name: Filter to supported roads, waterways and settlements with references
+        run: |
+          osmium tags-filter --no-progress map-input/source.osm.pbf \
+            'n/place=city,town,village,hamlet,suburb' \
+            'w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,residential,unclassified,living_street' \
+            'w/waterway=river,canal,stream' 'w/natural=water' \
+            -o map-input/filtered.osm.pbf
+      - name: Produce non-production map and measure the actual decoded inventory
+        run: |
+          FILTERED_HASH="$(sha256sum map-input/filtered.osm.pbf | cut -d' ' -f1)"
+          python v30/maps/national_pack.py map-input/filtered.osm.pbf map-input/provinces.geojson map-output \
+            --data-date "$DATA_TIMESTAMP" --pbf-sha256 "$FILTERED_HASH" --boundaries-sha256 "$EXPECTED_BOUNDARY"
+          python v30/maps/national_provenance.py map-output/coverage.json map-output/provenance.json
+      - name: Retain an unsigned candidate and evidence, never publish a firmware release
+        uses: actions/upload-artifact@v4
+        with:
+          name: V30-unsigned-NL-map-candidate
+          path: map-output/
+          if-no-files-found: error
+          retention-days: 7
