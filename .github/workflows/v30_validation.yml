@@ -110,7 +110,8 @@ jobs:
         run: |
           header=$(grep -R -F -l "virtual void onV30TxComplete" upstream-wadamesh/.pio/libdeps | head -n1)
           source=$(grep -R -F -l "onV30TxComplete(outbound" upstream-wadamesh/.pio/libdeps | head -n1)
-          test -n "$header" && test -n "$source"
+          test -n "$header"
+          test -n "$source"
           test "$(grep -F -c "onV30TxComplete" "$header")" -eq 1
           test "$(grep -F -c "onV30TxComplete(outbound" "$source")" -eq 3
           test "$(grep -F -c "onV30TxAdmission" "$header")" -eq 1
