@@ -64,6 +64,8 @@ class ProvinceLocator:
         for feature in source["features"]:
             props = feature["properties"]
             province = props.get("naam", props.get("province", props.get("name")))
+            if province == "Fryslân":
+                province = "Friesland"  # existing MMN1 province dictionary
             if province not in PROVINCES or province in self.polygons:
                 raise ValueError(f"unknown or duplicate province: {province}")
             geometry = feature["geometry"]

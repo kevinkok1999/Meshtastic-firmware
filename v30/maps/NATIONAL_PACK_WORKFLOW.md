@@ -29,13 +29,17 @@ configuration; when the workflow is not on the default branch, execute
 the same documented commands in a controlled development runner.
 
 One explicitly requested bootstrap attempt is isolated to the named
-development branch and exact CI-triggering commit message. It checks
+development branch and prior pinned commit `59319e41`. It checks
 Geofabrik's published MD5 over HTTPS before calculating SHA256 for the
 downloaded PBF, and records an observed SHA256 for the PDOK response
 (which has no independently published checksum in the API). These are
 bootstrap fingerprints, not publisher signatures or prior review. Repeat
 builds must use the recorded SHA256 inputs; ordinary pushes do not perform
 the download.
+Future attempts preflight and hash the complete PDOK province geometry
+before downloading the large PBF. The official name Fryslân is normalized
+to the fixed MMN1 dictionary identifier Friesland and the original
+PDOK GeoJSON is retained with the artifact.
 
 The job uses osmium tags-filter retaining referenced nodes to avoid
 processing every building and node in Python, then streams raw PBF

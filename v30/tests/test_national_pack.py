@@ -47,6 +47,11 @@ class NationalPackTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             national.ProvinceLocator(doc)
 
+    def test_official_fryslan_name_maps_to_existing_format_province(self):
+        doc = boundaries()
+        doc["features"][2]["properties"]["naam"] = "Fryslân"
+        self.assertEqual(national.ProvinceLocator(doc).assign([[4.01, 52.01]])[0], "Friesland")
+
     def test_selection_is_order_independent_bounded_and_counts_dropped(self):
         locator = national.ProvinceLocator(boundaries())
         candidates = [candidate(f"way/{i}", [[3.51, 52.01], [3.52, 52.02]])
