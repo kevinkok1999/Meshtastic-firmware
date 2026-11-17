@@ -2,15 +2,15 @@ name: V30 F1 transport validation
 
 on:
   push:
-    branches: [v30-work-radio-bridge]
+    branches: [v30-work-pool-observer]
     paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   pull_request:
-    branches: [v30-work-radio-bridge]
+    branches: [v30-work-pool-observer]
     paths: ["v30/**", ".github/workflows/v30_validation.yml"]
   workflow_dispatch:
 
 concurrency:
-  group: meshoffgridnl-v30-radio-bridge
+  group: meshoffgridnl-v30-pool-observer
   cancel-in-progress: true
 
 permissions:
@@ -29,6 +29,8 @@ jobs:
         run: python v30/tests/test_transport.py
       - name: Verify pinned Dispatcher hook candidate
         run: python v30/tests/test_dispatch_patch.py
+      - name: Test real pinned packet pool observer, default and opt-in
+        run: python v30/tests/test_pool_patch.py
       - name: Assert immutable dependency pins
         run: |
           grep -F 'WADAMESH_SHA = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"' v30/apply_v30.py
@@ -70,6 +72,7 @@ jobs:
       - name: Stage opt-in pinned Dispatcher hook
         run: |
           cp v30/extra_scripts/v30_dispatch_patch.py upstream-wadamesh/v30_dispatch_patch.py
+          cp v30/extra_scripts/v30_pool_patch.py upstream-wadamesh/v30_pool_patch.py
           python - <<'PY'
           from pathlib import Path
           p = Path("upstream-wadamesh/platformio.ini")
@@ -86,13 +89,13 @@ jobs:
               if line.startswith("extra_scripts = "):
                   if "pre:v30_dispatch_patch.py" in line:
                       raise SystemExit("hook already staged")
-                  lines[i] = line.rstrip("\n") + ", pre:v30_dispatch_patch.py\n"
+                  lines[i] = line.rstrip("\n") + ", pre:v30_dispatch_patch.py, pre:v30_pool_patch.py\n"
                   break
           else:
               raise SystemExit("T-Deck extra_scripts option missing")
           block = "".join(lines)
           section_end = block.find("\n", block.find("]")) + 1
-          block = block[:section_end] + "custom_v30_dispatch_patch = 1\n" + block[section_end:]
+          block = block[:section_end] + "custom_v30_dispatch_patch = 1\ncustom_v30_pool_patch = 1\n" + block[section_end:]
           p.write_text(text[:start] + block + text[end:], encoding="utf-8")
           PY
       - name: Build DEV firmware with hook only
@@ -100,6 +103,7 @@ jobs:
         env:
           PLATFORMIO_BUILD_FLAGS: >-
             -DMESH_OFFGRIDNL_V30_EXPERIMENTAL=0
+            -DMESH_OFFGRIDNL_V30_POOL_OBSERVER=1
             -DFIRMWARE_RELEASE_TAG='"v30-f1-hook"'
             -DFIRMWARE_VERSION='"MeshOffGridNL V30 F1 HOOK"'
         run: |
@@ -126,6 +130,12 @@ jobs:
           object=$(find upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch -name V30RadioAdmissionBridge.cpp.o -print -quit)
           test -n "$object"
           test -f "$object"
+          observer=$(find upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch -name V30PoolObserverAdapter.cpp.o -print -quit)
+          test -n "$observer"
+          header=$(find upstream-wadamesh/.pio/libdeps -name StaticPoolPacketManager.h -print -quit)
+          source=$(find upstream-wadamesh/.pio/libdeps -name StaticPoolPacketManager.cpp -print -quit)
+          test "$(git hash-object "$header")" = af25e5578ea39c79f966be91ee423aa8e82ae39f
+          test "$(git hash-object "$source")" = 20806cb8184615df772bd55eba753de7ed8ae92f
       - name: Guard DEV app headroom
         run: |
           test -f upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin

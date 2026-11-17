@@ -22,13 +22,17 @@ public:
   V30PacketLease allocate(const void*);
   bool markQueued(V30PacketLease);
   bool markDispatching(V30PacketLease);
+  bool markInboundQueued(V30PacketLease);
+  bool markInboundDequeued(V30PacketLease);
   bool detach(V30PacketLease);
   bool release(V30PacketLease);
   bool isAllocated(V30PacketLease) const;
+  bool isQueued(V30PacketLease) const;
+  bool isInboundQueued(V30PacketLease) const;
   bool isDispatching(V30PacketLease) const;
   V30PacketLease current(const void*) const;
 private:
-  enum class State : uint8_t { Empty, Allocated, Queued, Dispatching };
+  enum class State : uint8_t { Empty, Allocated, Queued, InboundQueued, Dispatching };
   struct Slot {
     V30PacketLease lease{};
     State state = State::Empty;
