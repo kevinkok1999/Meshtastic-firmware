@@ -3,6 +3,7 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 import { V30RelayCore } from './V30RelayCore.mjs';
 import { V30GrantAuthority } from './V30GrantAuthority.mjs';
 import { V30RelayAdapter } from './V30RelayAdapter.mjs';
+import { V30NetworkGrantIssuer } from './V30NetworkGrantIssuer.mjs';
 
 const MAX_BODY = 16384;
 const SPKI = Buffer.from('302a300506032b6570032100', 'hex');
@@ -94,14 +95,16 @@ function restoreState(state, core, authority) {
 }
 
 // storage.load()/save(state) must be atomic and durable before save resolves.
-// No grant issuer or network grant-minting route is exposed by this service.
+// Grant issuance is disabled unless explicitly configured with a trusted
+// server-side membership verifier registry and the matching issuer key.
 export async function createV30RelayService({issuerPublicKey, storage,
-                                            now = Date.now} = {}) {
+                                            now = Date.now, grantIssuer} = {}) {
   if (!storage || typeof storage.load !== 'function' || typeof storage.save !== 'function')
     throw Error('storage_required');
   const core = new V30RelayCore();
   const authority = new V30GrantAuthority({issuerPublicKey});
   const adapter = new V30RelayAdapter(core, authority);
+  const issuer = grantIssuer === undefined ? null : new V30NetworkGrantIssuer({...grantIssuer,issuerPublicKey});
   restoreState(await storage.load(), core, authority);
   let queue = Promise.resolve();
   let pending = 0;
@@ -112,7 +115,8 @@ export async function createV30RelayService({issuerPublicKey, storage,
     const send = (status, value) => {
       if (!res.destroyed) { res.statusCode = status; res.end(JSON.stringify(value)); }
     };
-    if (req.method !== 'POST' || !['/v30/push', '/v30/poll'].includes(req.url)) {
+    const grantPath=issuer && ['/v30/grants/challenge','/v30/grants/issue'].includes(req.url);
+    if (req.method !== 'POST' || (!grantPath && !['/v30/push', '/v30/poll'].includes(req.url))) {
       req.resume(); return send(404, {error: 'route_invalid'});
     }
     if (pending >= 16 || poisoned) { req.resume(); return send(503, {error: 'unavailable'}); }
@@ -122,6 +126,10 @@ export async function createV30RelayService({issuerPublicKey, storage,
     try {
       const body = await readBody(req);
       clearTimeout(bodyDeadline);
+      if(grantPath) {
+        const result=req.url==='/v30/grants/challenge'?issuer.begin(body,now()):issuer.issue(body,now());
+        return send(200,result);
+      }
       shape(body, req.url);
       const operation = queue.then(async () => {
         if (poisoned) throw Error('storage_unavailable');
@@ -157,3 +165,4 @@ export async function createV30RelayService({issuerPublicKey, storage,
   server.maxHeadersCount = 32;
   return server;
 }
+

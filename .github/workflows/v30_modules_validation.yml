@@ -65,3 +65,5 @@ jobs:
         run: |
           python -m pip install 'cryptography==50.0.0'
           python -m unittest discover -s v30/tests -p test_signed_install_manifest.py -v
+      - name: Test challenge-bound same-key private channel relay grants
+        run: node --test v30/relay/test_v30_network_grant.mjs v30/relay/test_v30_channel_credential.mjs
