@@ -17,6 +17,7 @@ from ingest_osm import HIGHWAY, _inside
 MAX_POINTS = 512
 CELL = 0.025
 MAX_CELLS = 100_000
+MAX_SELECTED_POINTS = 2_000_000
 MAP_SIZE = 0x4C0000
 EXTENT = (3.0, 50.5, 7.5, 54.0)
 ATTRIBUTION = "© OpenStreetMap contributors (ODbL 1.0); Kadaster/PDOK (CC BY 4.0)"
@@ -37,6 +38,7 @@ def verify_sha256(path, expected):
 
 def _name(text):
     text = " ".join(str(text or "").split())
+    text = "".join(ch for ch in text if ord(ch) >= 0x20)
     # UTF-8 boundary-safe; never leave an invalid character sequence.
     return text.encode("utf-8")[:256].decode("utf-8", errors="ignore")
 
@@ -134,6 +136,10 @@ def simplify(points, threshold=0.000075):
             result.append(list(point))
     if len(points) > 1:
         result.append(list(points[-1]))
+    if len(points) >= 4 and points[0] == points[-1] and len({tuple(p) for p in result}) < 3:
+        # Small island polygons cannot disappear merely because their
+        # perimeter is shorter than the simplification threshold.
+        result = [list(p) for p in points]
     if len(result) > MAX_POINTS:
         result = [result[i * (len(result) - 1) // (MAX_POINTS - 1)]
                   for i in range(MAX_POINTS)]
@@ -148,13 +154,14 @@ def _inventory(rows):
     return result
 
 
-def select_candidates(candidates, locator, *, per_cell=2, data_date=""):
+def select_candidates(candidates, locator, *, per_cell=2, data_date="", max_points=MAX_SELECTED_POINTS):
     if not 1 <= per_cell <= 4:
         raise ValueError("per-cell must be 1..4")
     buckets = {}
     eligible = {p: Counter() for p in PROVINCES}
     outside = 0
     cross_border = 0
+    stored_points = 0
     for item in candidates:
         kind = item["kind"]
         if kind not in REQUIRED_KINDS or kind == "boundary":
@@ -192,8 +199,13 @@ def select_candidates(candidates, locator, *, per_cell=2, data_date=""):
                "zoom_min": max(3, min(19, int(item["zoom_min"]))),
                "geometry": simplify(points), "data_date": data_date}
         bucket.append((rank, row))
+        stored_points += len(row["geometry"])
         bucket.sort(key=lambda x: x[0])
+        if len(bucket) > per_cell:
+            stored_points -= len(bucket[-1][1]["geometry"])
         del bucket[per_cell:]
+        if stored_points > max_points:
+            raise ValueError("national candidate geometry budget exceeded")
     rows = sorted((row for bucket in buckets.values() for _, row in bucket), key=lambda r: r["id"])
     return rows, {"outside_or_unassigned": outside, "cross_border_candidates": cross_border,
                   "eligible_by_province_kind": {p: dict(eligible[p]) for p in PROVINCES},

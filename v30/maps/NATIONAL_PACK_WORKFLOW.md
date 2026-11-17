@@ -20,7 +20,7 @@ claim of street-level coverage. No SD card is required by the pack format.
 
 `V30 national map candidate` CI runs local synthetic fixtures including a
 real binary PBF conversion and reference-preserving filter. The full
-national job is manual only. Enter the dated PBF filename date (YYMMDD),
+national job normally requires a manual trigger. Enter the dated PBF filename date (YYMMDD),
 and reviewed SHA256 values of the exact PBF and exact PDOK GeoJSON response.
 A changing upstream response will intentionally fail verification.
 Archive both inputs independently if reproducibility across days is
@@ -28,11 +28,21 @@ required. GitHub workflow_dispatch must be enabled by repository
 configuration; when the workflow is not on the default branch, execute
 the same documented commands in a controlled development runner.
 
+One explicitly requested bootstrap attempt is isolated to the named
+development branch and exact CI-triggering commit message. It checks
+Geofabrik's published MD5 over HTTPS before calculating SHA256 for the
+downloaded PBF, and records an observed SHA256 for the PDOK response
+(which has no independently published checksum in the API). These are
+bootstrap fingerprints, not publisher signatures or prior review. Repeat
+builds must use the recorded SHA256 inputs; ordinary pushes do not perform
+the download.
+
 The job uses osmium tags-filter retaining referenced nodes to avoid
 processing every building and node in Python, then streams raw PBF
 features through a prepared GEOS polygon lookup and deterministic
 geographical grid sampler. Sampling is bounded by grid/layer, per-cell
-quota and geometry point caps; road geometry is approximate and local
+quota, geometry point caps and a two-million selected-point safety bound;
+road geometry is approximate and local
 road labels are omitted to preserve scarce dictionary bytes. Named
 settlements receive priority ahead of roads in the effective profile.
 Offshore/unassigned and multi-province ways are counted rather than

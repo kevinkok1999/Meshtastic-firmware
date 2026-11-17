@@ -18,6 +18,8 @@ def main():
         "osm_source_url": os.environ["PBF_URL"],
         "osm_license": "ODbL-1.0",
         "osm_original_sha256": os.environ["EXPECTED_PBF"],
+        "osm_official_published_md5": os.environ["OFFICIAL_MD5"],
+        "source_hash_review_mode": "bootstrap-observed" if os.environ["BOOTSTRAP"] == "true" else "reviewed-exact-sha256",
         "osm_filtered_sha256": coverage["filtered_input_sha256"],
         "osm_replication_timestamp": os.environ["DATA_TIMESTAMP"],
         "boundary_url": os.environ["BOUNDARY_URL"],

@@ -89,6 +89,20 @@ class NationalPackTests(unittest.TestCase):
         self.assertEqual(geometry[0], points[0])
         self.assertEqual(geometry[-1], points[-1])
 
+    def test_small_island_still_has_closed_non_degenerate_boundary(self):
+        ring = [[3.51,52.01], [3.51001,52.01], [3.51001,52.01001],
+                [3.51,52.01001], [3.51,52.01]]
+        simplified = national.simplify(ring, 0.00015)
+        self.assertEqual(simplified[0], simplified[-1])
+        self.assertGreaterEqual(len(set(tuple(p) for p in simplified)), 3)
+
+    def test_selected_geometry_budget_is_hard_bound(self):
+        locator = national.ProvinceLocator(boundaries())
+        rows = [candidate("way/a", [[3.51,52.01], [3.52,52.02]]),
+                candidate("way/b", [[3.55,52.05], [3.56,52.06]])]
+        with self.assertRaisesRegex(ValueError, "geometry budget"):
+            national.select_candidates(rows, locator, max_points=3)
+
     def test_integrity_requires_exact_input_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "input.pbf"
