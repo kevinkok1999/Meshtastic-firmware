@@ -108,12 +108,41 @@ def main() -> None:
         assert hp.read_text().count("onV30TxDropped") == 1
         assert sp.read_text().count("onV30TxAdmission") == 1
         assert sp.read_text().count("onV30TxDropped") == 3
+        # Pre-scripts run for each PlatformIO compile, including rebuilds.
+        patched_pair = (hp.read_bytes(), sp.read_bytes())
+        assert module.patch_dependency(root) == (hp, sp)
+        assert (hp.read_bytes(), sp.read_bytes()) == patched_pair
+
+        with urllib.request.urlopen(base + "Dispatcher.h", timeout=30) as response:
+            original_header = response.read()
+        hp.write_bytes(original_header)
         try:
             module.patch_dependency(root)
         except module.PatchError:
             pass
         else:
-            raise AssertionError("modified or unpinned core accepted")
+            raise AssertionError("partially patched core accepted")
+
+        hp.write_bytes(patched_pair[0])
+        sp.write_bytes(patched_pair[1] + b"\n// hand-edited\n")
+        try:
+            module.patch_dependency(root)
+        except module.PatchError:
+            pass
+        else:
+            raise AssertionError("modified patched core accepted")
+
+        sp.write_bytes(patched_pair[1])
+        duplicate = root / "duplicate"
+        duplicate.mkdir()
+        (duplicate / "Dispatcher.h").write_bytes(patched_pair[0])
+        (duplicate / "Dispatcher.cpp").write_bytes(patched_pair[1])
+        try:
+            module.patch_dependency(root)
+        except module.PatchError:
+            pass
+        else:
+            raise AssertionError("ambiguous pinned core accepted")
     print("V30 Dispatcher hook candidate tests passed")
 
 if __name__ == "__main__":
