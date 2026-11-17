@@ -37,6 +37,8 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/test_transport.cpp v30/overlay/src/helpers/esp32/V30EmergencyTransport.cpp -o /tmp/v30-transport
           /tmp/v30-transport
+          c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I v30/overlay/src/helpers/esp32 v30/tests/test_tx_binding.cpp v30/overlay/src/helpers/esp32/V30RadioAdmissionBridge.cpp v30/overlay/src/helpers/esp32/V30AirtimeGovernor.cpp -o /tmp/v30-tx-binding
+          /tmp/v30-tx-binding
 
   v29-to-v30-build:
     name: Pinned V11-V29 baseline then gated V30 compile

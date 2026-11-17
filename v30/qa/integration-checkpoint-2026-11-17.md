@@ -29,3 +29,5 @@ No release or hardware ACK claim. V29 branch remains unchanged.
 - Installer now rejects CRC-valid invalid zlib, trailing extra streams and decoded size beyond 4 MiB; 51 local installer/map/signature cases pass.
 - Integrated national-source pipeline (native PBF smoke run 44184880421 passed); ordinary pushes never download the large input. Actual national extract run 44184613196 was still running and no coverage was verified.
 - Combined host and embedded checks must be rerun against this integration, and no publishing or flashing has been authorized by these development results.
+
+- Combined host 44185369383 and national PBF smoke 44185369352 passed 5f560c59. Integrated opt-in Dispatcher idempotence and dormant qualified-radio bridge with conservative cold-start, explicit generation identity and fail-closed admission after full pinned candidate run 44184780932 success. No observer is installed in the default runtime, no production enable, no HIL and no duty compliance claim. The separate pool lifecycle observer must be independently verified before integration.

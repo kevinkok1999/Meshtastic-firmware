@@ -24,3 +24,9 @@ This is a gated development checkpoint, NOT a release candidate.
 - No real nationwide signed map pack, native geometry renderer, production relay connection, mixed transports, HIL, RF conformity, 72h soak or 192h external-power evidence. No earlier firmware sources or release artifacts were changed; V29 branch stays at `18b9f4d4c00c372b5d458c4fbb8c9779f80c6b91`.
 
 All three phases remain OPEN. Development branches and host tests are valuable progress, but not a substitute for phase completion gates. Never re-label a development build as a stable customer product.
+
+### Updated integration checkpoint (2026-11-17)
+
+- Phase 1: bounded file journal, actual portal request/confirmation wiring and dormant radio-admission bridge; candidate full opt-in Dispatcher build 44184780932 passed. No actual airtime/receive/ACK or storage power-cut proof, no new RF mode enabled.
+- Phase 2: exact same-key native chat join/open (44184356058), raw-map startup guard (44184306946), bounded map reader, native national-source ingestion smoke (44185369352), signed installer and exact partition validation, localhost two independent clients with registered-channel challenge grants. Integrated host suite 44185369383 passed on 5f560c59. No fully measured or signed national map, native map rendering, public/TLS relay, native internet session, or browser pairing activation.
+- Phase 3: development firmware compilation succeeded for preceding integration and isolated candidates; combined newest firmware build is pending. No hardware access, conformity, 72h/192h measurements or production signing. All phases remain open. Never distribute development firmware as a customer end product.

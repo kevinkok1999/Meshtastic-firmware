@@ -38,12 +38,27 @@ void Dispatcher::loop() {
   }
 }
 void Dispatcher::checkSend() {
-  if (!outbound) {
+  if (outbound) {
+    if (len + outbound->payload_len > MAX_TRANS_UNIT) {
+      _mgr->free(outbound);
+      outbound = NULL;
+    } else {
+      uint32_t max_airtime = _radio->getEstAirtimeFor(len)*3/2;
+      outbound_start = _ms->getMillis();
     bool success = _radio->startSendRaw(outbound_raw, len);
     if (!success) {
         logTxFail(outbound, outbound->getRawLength());
       releasePacket(outbound);
       outbound = NULL;
+    }
+    }
+  }
+}
+void Dispatcher::sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis) {
+  if (!Packet::isValidPathLen(packet->path_len) || packet->payload_len > MAX_PACKET_PAYLOAD) {
+    _mgr->free(packet);
+  } else {
+    if (packet->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
     }
   }
 }
@@ -61,6 +76,10 @@ def main() -> None:
     header, source = module.patch_sources(HEADER, SOURCE)
     assert header.count("onV30TxComplete") == 1
     assert source.count("onV30TxComplete") == 3
+    assert header.count("onV30TxAdmission") == 1
+    assert header.count("onV30TxDropped") == 1
+    assert source.count("onV30TxAdmission") == 1
+    assert source.count("onV30TxDropped") == 3
     assert "onV30TxComplete(outbound, true, static_cast<uint32_t>(t));" in source
     assert "onV30TxComplete(outbound, false, static_cast<uint32_t>(_ms->getMillis() - outbound_start));" in source
     assert "onV30TxComplete(outbound, false, 0);" in source
@@ -85,12 +104,45 @@ def main() -> None:
         hp, sp = module.patch_dependency(root)
         assert hp.read_text().count("onV30TxComplete") == 1
         assert sp.read_text().count("onV30TxComplete") == 3
+        assert hp.read_text().count("onV30TxAdmission") == 1
+        assert hp.read_text().count("onV30TxDropped") == 1
+        assert sp.read_text().count("onV30TxAdmission") == 1
+        assert sp.read_text().count("onV30TxDropped") == 3
+        # Pre-scripts run for each PlatformIO compile, including rebuilds.
+        patched_pair = (hp.read_bytes(), sp.read_bytes())
+        assert module.patch_dependency(root) == (hp, sp)
+        assert (hp.read_bytes(), sp.read_bytes()) == patched_pair
+
+        with urllib.request.urlopen(base + "Dispatcher.h", timeout=30) as response:
+            original_header = response.read()
+        hp.write_bytes(original_header)
         try:
             module.patch_dependency(root)
         except module.PatchError:
             pass
         else:
-            raise AssertionError("modified or unpinned core accepted")
+            raise AssertionError("partially patched core accepted")
+
+        hp.write_bytes(patched_pair[0])
+        sp.write_bytes(patched_pair[1] + b"\n// hand-edited\n")
+        try:
+            module.patch_dependency(root)
+        except module.PatchError:
+            pass
+        else:
+            raise AssertionError("modified patched core accepted")
+
+        sp.write_bytes(patched_pair[1])
+        duplicate = root / "duplicate"
+        duplicate.mkdir()
+        (duplicate / "Dispatcher.h").write_bytes(patched_pair[0])
+        (duplicate / "Dispatcher.cpp").write_bytes(patched_pair[1])
+        try:
+            module.patch_dependency(root)
+        except module.PatchError:
+            pass
+        else:
+            raise AssertionError("ambiguous pinned core accepted")
     print("V30 Dispatcher hook candidate tests passed")
 
 if __name__ == "__main__":
