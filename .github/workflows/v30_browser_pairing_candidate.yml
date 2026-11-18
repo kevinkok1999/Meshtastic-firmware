@@ -14,7 +14,7 @@ jobs:
         with: {persist-credentials: false}
       - name: Strict parser and lifecycle
         run: |
-          c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/helpers/esp32 v30/tests/browser_auth/test_session.cpp -o /tmp/v30-browser-test
+          c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I v30/overlay/src/helpers/esp32 v30/tests/browser_auth/test_session.cpp -o /tmp/v30-browser-test
           /tmp/v30-browser-test
   browser-pinned-dev:
     runs-on: ubuntu-24.04

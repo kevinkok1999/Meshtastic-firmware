@@ -103,7 +103,12 @@ inline Route validateHandshake(const char* bytes,size_t length,const char* host,
     return Route::Reject;
 }
 
-struct PairRequest { uint32_t generation=0; uint32_t code=0; };
+struct PairRequest {
+    constexpr PairRequest(uint32_t generationValue=0, uint32_t codeValue=0)
+        : generation(generationValue), code(codeValue) {}
+    uint32_t generation;
+    uint32_t code;
+};
 
 // A single socket-bound session; caller serializes access under the listener's
 // existing lock. A challenge is a display-only number, never a bearer token.
