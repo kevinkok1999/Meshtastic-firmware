@@ -50,3 +50,12 @@ device layout, selected compatible board, user approval, backup and physical
 tests before any hardware write. Resetting OTA data changes the boot choice;
 preserving app1 bytes by itself does not prove working rollback. The output is
 review metadata, not an esptool command or a browser release manifest.
+
+## Verify offline pre/post flash snapshots
+
+```sh
+python v30/installer/verify_flash_readback.py manifest.json manifest.sig publisher.pub \
+  --public-key-sha256 "$TRUSTED_PUBLIC_KEY_SHA256" --before before.bin --after after.bin
+```
+
+Only compares two separately acquired, complete 16 MiB local flash snapshots. The pre-flash partition bytes must match the signed layout exactly. The post-write snapshot, acquired before reboot, must contain all expected segment digests, erased sector padding, identical protected regions, and no other changed bytes. Keep snapshots on the owner's local device; they contain private data and must never be uploaded to CI or shared. This tool has no device I/O, cannot validate boot success, and cannot approve installation or release. Hardware encryption and different layouts require a separate validated process.

@@ -12,6 +12,7 @@ from partition_fixture import partition_image
 
 INSTALLER = Path(__file__).parents[1] / 'installer'
 PLAN = INSTALLER / 'flash_review_plan.py'
+READBACK = INSTALLER / 'verify_flash_readback.py'
 
 
 class FlashReviewTests(unittest.TestCase):
@@ -106,6 +107,66 @@ class FlashReviewTests(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, '')
         self.assertIn('full-v30', r.stderr)
+
+    def readback_fixture(self):
+        before = bytearray(b'\xff' * 0x1000000)
+        partition = (self.root/'partition.bin').read_bytes()
+        before[0x8000:0x8000+len(partition)] = partition
+        before[0x9000:0xe000] = b'N' * 0x5000
+        before[0x3f0000:0x3f0008] = b'rollback'
+        before[0xc90000:0xc90008] = b'userdata'
+        after = bytearray(before)
+        for item in self.data['artifacts']:
+            offset = item['offset']
+            data = (self.root / item['path']).read_bytes()
+            stop = (offset + len(data) + 4095) // 4096 * 4096
+            after[offset:stop] = data.ljust(stop-offset, b'\xff')
+        (self.root/'before.bin').write_bytes(before)
+        (self.root/'after.bin').write_bytes(after)
+
+    def readback(self):
+        return subprocess.run([sys.executable, str(READBACK), str(self.root/'manifest'),
+            str(self.root/'sig'), str(self.root/'pub'), '--public-key-sha256', self.pin,
+            '--before', str(self.root/'before.bin'), '--after', str(self.root/'after.bin')],
+            capture_output=True, text=True)
+
+    def test_readback_match_verifies_ranges_without_claiming_boot_success(self):
+        self.readback_fixture()
+        r = self.readback()
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        evidence = json.loads(r.stdout)
+        self.assertIs(evidence['byte_match'], True)
+        self.assertIs(evidence['boot_verified'], False)
+        self.assertIs(evidence['release_authorized'], False)
+        self.assertEqual(evidence['preserved_match'], ['nvs','app1','spiffs','coredump'])
+        self.assertNotIn('userdata', r.stdout)
+
+    def test_readback_changed_user_byte_rejected(self):
+        self.readback_fixture()
+        with (self.root/'after.bin').open('r+b') as f:
+            f.seek(0xc90000); f.write(b'X')
+        r = self.readback()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, '')
+        self.assertIn('spiffs', r.stderr)
+
+    def test_readback_wrong_app_byte_rejected(self):
+        self.readback_fixture()
+        with (self.root/'after.bin').open('r+b') as f:
+            f.seek(0x10000); f.write(b'X')
+        r = self.readback()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, '')
+        self.assertIn('app0', r.stderr)
+
+    def test_readback_wrong_preexisting_partition_rejected(self):
+        self.readback_fixture()
+        with (self.root/'before.bin').open('r+b') as f:
+            f.seek(0x8000); f.write(b'X')
+        r = self.readback()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, '')
+        self.assertIn('existing partition', r.stderr)
 
 
 if __name__ == '__main__':
