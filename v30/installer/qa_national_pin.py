@@ -17,13 +17,14 @@ from build_dev_package import build
 from verify_install_manifest import MAP_SIZE, MAX_PACK_SIZE, ManifestError, validate_manifest
 from verify_signed_manifest import bounded_read, strict_object, reject_constant, verified_map_pin
 
-MAP_SOURCE_COMMIT = 'cf4b8e2b8804cbcec045013654968bf3a8070a64'
+MAP_SOURCE_COMMIT = '97ff3a4d94d2b9b8397c15f4894d980ca8766dcc'
 FIRMWARE_SOURCE_COMMIT = 'a673a9ab3c52e93771e45003c617b7f97bb827fb'
 PBF_SHA = '2d0528596573987ae547ba4dc16b50c347ac97cfc3fc864d470f184dc8e5c1c7'
 BOUNDARY_SHA = '845bbe3287d77ee4bb16b75374cc55a5f6464ab4e95d1a634636de18e2aa9400'
 PROVINCES = {'Drenthe','Flevoland','Friesland','Gelderland','Groningen','Limburg',
              'Noord-Brabant','Noord-Holland','Overijssel','Utrecht','Zeeland','Zuid-Holland'}
 ROADS = ('motorway','trunk','primary','secondary','tertiary','local')
+CATEGORIES = set(ROADS) | {'boundary','place','water'}
 
 
 def metadata(path):
@@ -51,8 +52,8 @@ def verify_map(root):
     if not isinstance(inv,dict) or set(inv) != PROVINCES:
         raise ManifestError('national map inventory misses provinces')
     for province, kinds in inv.items():
-        if (not isinstance(kinds,dict) or any(type(v) is not int or v < 0 for v in kinds.values()) or
-                not kinds.get('boundary') or not kinds.get('place') or not sum(kinds.get(k,0) for k in ROADS)):
+        if (not isinstance(kinds,dict) or set(kinds) != CATEGORIES or
+                any(type(v) is not int or v <= 0 for v in kinds.values())):
             raise ManifestError(f'national map inventory inadequate for {province}')
     return a
 

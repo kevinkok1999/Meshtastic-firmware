@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'installer'))
-from qa_national_pin import verify_map, prepare_pin, MAP_SOURCE_COMMIT, FIRMWARE_SOURCE_COMMIT, PBF_SHA, BOUNDARY_SHA
+from qa_national_pin import verify_map, prepare_pin, MAP_SOURCE_COMMIT, FIRMWARE_SOURCE_COMMIT, PBF_SHA, BOUNDARY_SHA, CATEGORIES
 from verify_install_manifest import ManifestError, MAP_SIZE
 from esp_image_fixture import esp_image
 from partition_fixture import partition_image
@@ -22,7 +22,7 @@ class NationalPinTests(unittest.TestCase):
         features = self.root/'fixture.jsonl'
         features.write_text(''.join(json.dumps({'id':f'{kind}/{i}','kind':kind,'province':p,'name':f'Dorp {i}',
             'geometry':[[4+i/100,52]] if kind=='place' else [[4+i/100,52],[4+i/100,52.01]]})+'\n'
-            for i,p in enumerate(PROVINCES) for kind in ('place','boundary','primary')))
+            for i,p in enumerate(PROVINCES) for kind in sorted(CATEGORIES)))
         build_pack(features, Path(__file__).parents[1]/'maps/nl_profile.json', self.root/'candidate.meshmap')
         self.pack = (self.root/'candidate.meshmap').read_bytes()
         image = self.pack.ljust(MAP_SIZE, b'\xff')
@@ -33,7 +33,7 @@ class NationalPinTests(unittest.TestCase):
         self.c = dict(production=False, pack_sha256=digest, image_sha256=image_digest,
                       pack_size=len(self.pack), image_size=MAP_SIZE,
                       boundaries_input_sha256=BOUNDARY_SHA, filtered_input_sha256='ab'*32,
-                      packed_by_province_kind={p:{'boundary':1, 'place':1, 'primary':1} for p in PROVINCES})
+                      packed_by_province_kind={p:{k:1 for k in CATEGORIES} for p in PROVINCES})
         self.p = dict(production=False, source_commit=MAP_SOURCE_COMMIT, osm_original_sha256=PBF_SHA,
                       boundary_sha256=BOUNDARY_SHA, osm_filtered_sha256='ab'*32,
                       source_hash_review_mode='reviewed-exact-sha256', pack_sha256=digest,
@@ -53,6 +53,10 @@ class NationalPinTests(unittest.TestCase):
 
     def test_missing_province(self):
         self.c['packed_by_province_kind'].pop(PROVINCES[0]); self.write()
+        with self.assertRaises(ManifestError): verify_map(self.root)
+
+    def test_missing_layer(self):
+        self.c['packed_by_province_kind'][PROVINCES[0]].pop('water'); self.write()
         with self.assertRaises(ManifestError): verify_map(self.root)
 
     def test_tampered_map(self):

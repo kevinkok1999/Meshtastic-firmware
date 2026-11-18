@@ -1,7 +1,7 @@
 name: V30 full national QA package (never production)
 on:
   push:
-    branches: [v30-full-national-qa]
+    branches: [v30-full-national-balanced-qa]
     paths: [".github/workflows/v30_full_national_qa.yml"]
   workflow_dispatch:
 permissions:
@@ -9,14 +9,19 @@ permissions:
   actions: read
 jobs:
   full-qa:
-    if: github.ref == 'refs/heads/v30-full-national-qa' && github.run_attempt == '1'
+    if: github.ref == 'refs/heads/v30-full-national-balanced-qa' && github.run_attempt == '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     env:
-      MAP_RUN: '44313087295'
-      MAP_COMMIT: 'cf4b8e2b8804cbcec045013654968bf3a8070a64'
+      MAP_RUN: '44316158868'
+      MAP_COMMIT: '97ff3a4d94d2b9b8397c15f4894d980ca8766dcc'
+      MAP_ARTIFACT: '14432656677'
+      MAP_ARTIFACT_SHA: 'fc2068a4d0b5f10088c0dab18048a9e7252b009c957251ca4ff2040195a0a384'
+      EXPECTED_PACK_SHA: 'b75518fdbf161055dcbe747eba03e793ba7822967762fb8cfa35622b4bf316b6'
       INITIAL_RUN: '44314605923'
       INITIAL_COMMIT: 'a673a9ab3c52e93771e45003c617b7f97bb827fb'
+      INITIAL_ARTIFACT: '14432087361'
+      INITIAL_ARTIFACT_SHA: '7131f81a8d94eb13fbb9e1d1ca9af494d8d4844b445ab1bf04bd9382d3381ccb'
     steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false, fetch-depth: 1}
@@ -46,27 +51,30 @@ jobs:
             sleep 30
           done
           test "$ready" = 2
-          for spec in "$MAP_RUN:V30-unsigned-NL-map-candidate" "$INITIAL_RUN:V30-TDeck-Plus-UNSIGNED-DEV-NO-MAP-$INITIAL_COMMIT"; do
+          for spec in "$MAP_RUN:V30-unsigned-NL-balanced-candidate" "$INITIAL_RUN:V30-TDeck-Plus-UNSIGNED-DEV-NO-MAP-$INITIAL_COMMIT"; do
             id="${spec%%:*}"; name="${spec#*:}"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" | jq -e --arg name "$name" '[.artifacts[] | select(.name==$name and .expired==false)] | length==1'
           done
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: V30-unsigned-NL-map-candidate
-          path: national/
-          github-token: ${{ github.token }}
-          run-id: '44313087295'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: V30-TDeck-Plus-UNSIGNED-DEV-NO-MAP-a673a9ab3c52e93771e45003c617b7f97bb827fb
-          path: initial/
-          github-token: ${{ github.token }}
-          run-id: '44314605923'
+      - name: Acquire exact artifact ZIPs and compare reviewed digests before extraction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for spec in "$MAP_ARTIFACT:$MAP_ARTIFACT_SHA:national" "$INITIAL_ARTIFACT:$INITIAL_ARTIFACT_SHA:initial"; do
+            IFS=: read -r id sha folder <<< "$spec"
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 120 --max-filesize 33554432 \
+              -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" -o "$folder.zip"
+            printf '%s  %s\n' "$sha" "$folder.zip" | sha256sum -c -
+            mkdir "$folder"
+            unzip -q "$folder.zip" -d "$folder"
+          done
       - name: Verify actual national inventory, QA-only signed pin and native parser
         run: |
           set -euo pipefail
           pin=$(python v30/installer/qa_national_pin.py --initial initial --map-dir national)
           [[ "$pin" =~ ^[0-9a-f]{64}$ ]]
+          test "$pin" = "$EXPECTED_PACK_SHA"
           echo "QA_MAP_PIN=$pin" >> "$GITHUB_ENV"
           base=v30/overlay/src/ui-touch
           cc -O2 -c "$base/miniz/miniz_tinfl.c" -o /tmp/v30-miniz.o
@@ -118,13 +126,13 @@ jobs:
           python v30/tests/check_generated_esp_images.py "$base"
           python v30/installer/build_dev_package.py --bootloader native-dev/bootloader.bin --partition native-dev/partitions.bin --ota-data native-dev/boot_app0.bin --app native-dev/firmware.bin --map national/candidate.meshmap --output full-qa
           python v30/installer/verify_install_manifest.py full-qa/manifest.json
-          cp national/{coverage.json,provenance.json,candidate.meshmap.report.json} full-qa/
+          cp national/{coverage.json,provenance.json,native-reader.txt} full-qa/
           cp upstream-wadamesh/v30-resolved-dependencies.txt full-qa/
           printf 'QA ONLY, unsigned, no physical flash, not a release\nsource=%s\nmap_run=%s\nlogical_map_pin=%s\n' "$GITHUB_SHA" "$MAP_RUN" "$QA_MAP_PIN" > full-qa/QA-EVIDENCE.txt
           (cd full-qa && sha256sum *.bin manifest.json > SHA256SUMS && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: V30-FULL-NL-UNSIGNED-QA-NOT-FOR-RELEASE
+          name: V30-FULL-NL-BALANCED-UNSIGNED-QA-NOT-FOR-RELEASE
           path: full-qa/
           if-no-files-found: error
           retention-days: 14

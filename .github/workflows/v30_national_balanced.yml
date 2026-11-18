@@ -1,0 +1,84 @@
+name: V30 balanced national candidate (immutable repack)
+on:
+  push:
+    branches: [v30-national-repack-balanced]
+    paths: [.github/workflows/v30_national_balanced.yml, v30/maps/repack_balanced.py, v30/maps/test_repack_balanced.py, v30/tests/check_balanced_native.cpp]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  repack:
+    if: github.ref == 'refs/heads/v30-national-repack-balanced'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Regression checks
+        run: |
+          python -m unittest discover -s v30/maps -p test_repack_balanced.py -v
+          python -m unittest discover -s v30/tests -p 'test_*map*.py' -v
+          python -m unittest discover -s v30/tests -p 'test_osm_ingest.py' -v
+          python -m unittest discover -s v30/tests -p 'test_national_pack.py' -v
+      - name: Retrieve only the previous immutable candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/kevinkok1999/Meshtastic-firmware/actions/artifacts/14432406579/zip -o source.zip
+          printf '%s  %s\n' d01e8674a33ff169344b1b98665567131b733831fd46ae37a7548371ec22e239 source.zip | sha256sum -c -
+          mkdir source-repack map-output
+          unzip -j source.zip candidate.normalized.jsonl candidate.meshmap.report.json candidate.meshmap coverage.json provenance.json -d source-repack
+          python - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('source-repack')
+          report=json.loads((root/'candidate.meshmap.report.json').read_text())
+          cov=json.loads((root/'coverage.json').read_text())
+          prov=json.loads((root/'provenance.json').read_text())
+          sha=lambda name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+          assert sha('candidate.meshmap')==report['pack_sha256']==cov['pack_sha256']=='51e68bbdd14a8cac16684f05d2fe73b39d2df98133560f3459f667d8ba66986d'
+          assert prov['source_commit']=='cf4b8e2b8804cbcec045013654968bf3a8070a64'
+          assert prov['osm_original_sha256']=='2d0528596573987ae547ba4dc16b50c347ac97cfc3fc864d470f184dc8e5c1c7'
+          assert prov['boundary_sha256']=='845bbe3287d77ee4bb16b75374cc55a5f6464ab4e95d1a634636de18e2aa9400'
+          assert prov['source_hash_review_mode']=='reviewed-exact-sha256'
+          assert sha('candidate.normalized.jsonl')==report['source_sha256']
+          pathlib.Path('normalized-sha').write_text(report['source_sha256'])
+          PY
+      - name: Balanced pack from the exact normalized bytes
+        run: |
+          set -euo pipefail
+          python v30/maps/repack_balanced.py source-repack/candidate.normalized.jsonl v30/maps/nl_profile.json map-output --expected-sha256 "$(<normalized-sha)"
+          python - <<'PY'
+          import json,os,pathlib,shutil
+          src=pathlib.Path('source-repack'); out=pathlib.Path('map-output')
+          old=json.loads((src/'coverage.json').read_text()); p=json.loads((src/'provenance.json').read_text()); c=json.loads((out/'coverage.json').read_text())
+          assert c['selected_by_province_kind']==old['selected_by_province_kind']
+          assert all(len(kinds)==9 and all(n>0 for n in kinds.values()) for kinds in c['packed_by_province_kind'].values())
+          c.update({k:old[k] for k in ('eligible_by_province_kind','outside_or_unassigned','cross_border_candidates','filtered_input_sha256','boundaries_input_sha256')})
+          c.update({'original_artifact_id':14432406579,'original_run_id':44313087295,'original_artifact_sha256':'d01e8674a33ff169344b1b98665567131b733831fd46ae37a7548371ec22e239'})
+          p.update({'parent_source_commit':p['source_commit'],'source_commit':os.environ['GITHUB_SHA'], 'parent_pack_sha256':p['pack_sha256'], 'parent_padded_image_sha256':p['padded_image_sha256'], 'pack_sha256':c['pack_sha256'],'padded_image_sha256':c['image_sha256'], 'normalized_sha256':c['source_sha256'], 'original_artifact_id':14432406579,'original_run_id':44313087295,'original_artifact_sha256':c['original_artifact_sha256']})
+          for name,obj in (('coverage.json',c),('provenance.json',p)):
+              (out/name).write_text(json.dumps(obj,sort_keys=True,indent=2)+'\n')
+          shutil.copyfile(src/'candidate.normalized.jsonl',out/'candidate.normalized.jsonl')
+          shutil.copyfile(src/'provenance.json',out/'parent-provenance.json')
+          shutil.copyfile(src/'coverage.json',out/'parent-coverage.json')
+          print(json.dumps(c,sort_keys=True,indent=2))
+          PY
+      - name: Native image and reader compatibility on all nine layers and provinces
+        run: |
+          set -euo pipefail
+          dir=v30/overlay/src/ui-touch
+          gcc -std=c11 -O2 -I"$dir/miniz" -c "$dir/miniz/miniz_tinfl.c" -o /tmp/miniz.o
+          g++ -std=c++17 -O2 -I"$dir" v30/tests/check_balanced_native.cpp "$dir/NanoMapPack.cpp" "$dir/NanoMapImage.cpp" /tmp/miniz.o -o /tmp/check-balanced-native
+          /tmp/check-balanced-native map-output/candidate.tiles.bin | tee map-output/native-reader.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V30-unsigned-NL-balanced-candidate
+          path: map-output/
+          if-no-files-found: error
+          retention-days: 14
