@@ -1,0 +1,88 @@
+name: V30 exact PDOK boundary capture
+on:
+  push:
+    branches: [v30-boundary-capture-20261118]
+    paths: [".github/workflows/v30_boundary_capture.yml"]
+permissions:
+  contents: read
+jobs:
+  boundary-capture:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/v30-boundary-capture-20261118' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BOUNDARY_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied/items?f=json&limit=100
+      METADATA_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied?f=json
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install shapely==2.1.2
+      - name: Capture only licensed province data from pinned HTTPS origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir boundary-out
+          actual="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 120 --max-filesize 134217728 --write-out '%{url_effective}' "$BOUNDARY_URL" --output boundary-out/pdok-provinces.geojson)"
+          [[ "$actual" == "$BOUNDARY_URL" ]]
+          metadata="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1048576 --write-out '%{url_effective}' "$METADATA_URL" --output boundary-out/pdok-collection.json)"
+          [[ "$metadata" == "$METADATA_URL" ]]
+      - name: Validate all provinces, real polygon geometry and control locations
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=v30/maps python - <<'PY'
+          import datetime, hashlib, json, os
+          from pathlib import Path
+          from national_pack import ProvinceLocator
+
+          root = Path("boundary-out")
+          geodata = (root / "pdok-provinces.geojson").read_bytes()
+          metadata = (root / "pdok-collection.json").read_bytes()
+          parsed = json.loads(geodata)
+          collection = json.loads(metadata)
+          assert len(parsed["features"]) == parsed.get("numberMatched", len(parsed["features"])) == 12
+          assert collection.get("id") == "provinciegebied"
+          locator = ProvinceLocator(parsed, require_fast=True)
+          controls = {"Drenthe":(6.56,52.99),"Flevoland":(5.47,52.52),
+                      "Friesland":(5.80,53.20),"Gelderland":(5.91,51.98),
+                      "Groningen":(6.56,53.22),"Limburg":(5.69,50.85),
+                      "Noord-Brabant":(5.30,51.69),"Noord-Holland":(4.64,52.38),
+                      "Overijssel":(6.10,52.52),"Utrecht":(5.12,52.09),
+                      "Zeeland":(3.61,51.50),"Zuid-Holland":(4.30,52.08)}
+          assert set(controls) == set(locator.polygons)
+          inventory = {}
+          for province, polys in locator.polygons.items():
+              assert province in locator.locate(controls[province]), f"control not inside {province}"
+              lo, la, hi, ha = locator.bounds[province]
+              assert 2 <= lo < hi <= 8 and 50 <= la < ha <= 55, f"unexpected extent: {province}"
+              inventory[province] = {"polygons": len(polys), "bounds": [lo,la,hi,ha],
+                                     "vertices": sum(len(ring) for poly in polys for ring in poly)}
+          canonical = json.dumps(locator.polygons, sort_keys=True, ensure_ascii=False,
+                                 separators=(",",":"), allow_nan=False).encode("utf-8")
+          result = {
+              "source_url": os.environ["BOUNDARY_URL"],
+              "metadata_url": os.environ["METADATA_URL"],
+              "commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "retrieved_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "raw_geojson_sha256": hashlib.sha256(geodata).hexdigest(),
+              "raw_metadata_sha256": hashlib.sha256(metadata).hexdigest(),
+              "canonical_geometry_sha256": hashlib.sha256(canonical).hexdigest(),
+              "raw_geojson_size": len(geodata),
+              "raw_metadata_size": len(metadata),
+              "inventory": inventory,
+              "production": False
+          }
+          serialized = json.dumps(result, indent=2, sort_keys=True) + "\n"
+          (root / "boundary-evidence.json").write_text(serialized, encoding="utf-8")
+          print(serialized)
+          PY
+      - name: Preserve exact validated source bytes and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: v30-pdok-boundary-20261118
+          path: boundary-out/
+          if-no-files-found: error
+          retention-days: 7
