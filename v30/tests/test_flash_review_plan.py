@@ -9,6 +9,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from partition_fixture import partition_image
+from esp_image_fixture import esp_image
 
 INSTALLER = Path(__file__).parents[1] / 'installer'
 PLAN = INSTALLER / 'flash_review_plan.py'
@@ -33,8 +34,8 @@ class FlashReviewTests(unittest.TestCase):
             sys.path.remove(str(maps))
         pack = (self.root / 'map.meshmap').read_bytes()
         self.map_image = pack.ljust(0x4c0000, b'\xff')
-        files = [('bootloader', 0, b'boot'), ('partition', 0x8000, partition_image()),
-                 ('ota_data', 0xe000, b'\xff'*8192), ('app0', 0x10000, b'app'),
+        files = [('bootloader', 0, esp_image('bootloader')), ('partition', 0x8000, partition_image()),
+                 ('ota_data', 0xe000, b'\xff'*8192), ('app0', 0x10000, esp_image('app0')),
                  ('map', 0x7d0000, self.map_image)]
         entries = []
         for kind, offset, data in files:
@@ -82,7 +83,7 @@ class FlashReviewTests(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, '')
         self.assertIn('pin', r.stderr)
-        (self.root/'app0.bin').write_bytes(b'bad')
+        (self.root/'app0.bin').write_bytes(b'\x00' + esp_image('app0')[1:])
         r = self.check()
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(r.stdout, '')
@@ -90,9 +91,10 @@ class FlashReviewTests(unittest.TestCase):
 
     def test_rollback_slot_is_not_accepted_even_with_safe_mode(self):
         self.data['safe_mode'] = True
-        (self.root/'app1.bin').write_bytes(b'other')
-        self.data['artifacts'].append(dict(kind='app1',offset=0x3f0000,path='app1.bin',size=5,
-            sha256=hashlib.sha256(b'other').hexdigest()))
+        other = esp_image('app1')
+        (self.root/'app1.bin').write_bytes(other)
+        self.data['artifacts'].append(dict(kind='app1',offset=0x3f0000,path='app1.bin',size=len(other),
+            sha256=hashlib.sha256(other).hexdigest()))
         self.sign()
         r = self.check()
         self.assertNotEqual(r.returncode, 0)

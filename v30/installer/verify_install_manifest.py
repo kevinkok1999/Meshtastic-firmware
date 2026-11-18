@@ -22,6 +22,19 @@ EXPECTED_OFFSETS = {
 }
 APP_PARTITION_SIZE = 0x3E0000
 APP_HEADROOM = 0x40000
+ESP_IMAGE_HEADER_SIZE = 24
+ESP_MAX_SEGMENTS = 16
+ESP32S3_CHIP_ID = 9
+ESP_APP_DESC_MAGIC = b'\x32\x54\xcd\xab'
+ESP_APP_DESC_SIZE = 256
+ESP_IMAGE_CHECKSUM_MAGIC = 0xEF
+ESP_FLASH_MAPPED_RANGES = ((0x3C000000, 0x3E000000), (0x42000000, 0x44000000))
+ESP_EXEC_RANGES = ((0x40370000, 0x403E0000), (0x42000000, 0x44000000),
+                   (0x600FE000, 0x60100000))
+ESP_SEGMENT_RANGES = ESP_FLASH_MAPPED_RANGES + ESP_EXEC_RANGES + (
+    (0x3FC88000, 0x3FD00000),  # internal DRAM
+    (0x50000000, 0x50002000),  # RTC slow memory
+)
 MAP_OFFSET = 0x7D0000
 MAP_SIZE = 0x4C0000
 SPIFFS_OFFSET = 0xC90000
@@ -70,15 +83,91 @@ def _artifact_path(root: Path, name: str) -> Path:
     return candidate
 
 
-def _sha256(path: Path) -> tuple[int, str]:
+def _sha256(path: Path, limit: int) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        while size <= limit:
+            chunk = handle.read(min(1024 * 1024, limit + 1 - size))
+            if not chunk:
+                break
             size += len(chunk)
             digest.update(chunk)
     return size, digest.hexdigest()
 
+
+
+def _validate_esp_image(path: Path, kind: str, expected_hash: str) -> None:
+    """Validate the exact unsigned ESP32-S3 ROM image, never executing it.
+
+    Framing: Espressif esptool v4.8.1 bin_image.py, ESP32S3ROM.IMAGE_CHIP_ID.
+    Mapped address and size rules: ESP-IDF v4.4.7 esp_image_format.c.
+    This project's unsigned DEV profile intentionally rejects extra trailers
+    (secure boot signatures, arbitrary padding, or merged flash images).
+    Not a substitute for ROM verification, on-device tests or release trust.
+    """
+    limit = 0x8000 if kind == 'bootloader' else APP_PARTITION_SIZE - APP_HEADROOM
+    with path.open('rb') as handle:
+        image = handle.read(limit + 1)
+    if not ESP_IMAGE_HEADER_SIZE <= len(image) <= limit:
+        raise ManifestError(f'{kind} ESP image header truncated or exceeds role budget')
+    if hashlib.sha256(image).hexdigest() != expected_hash:
+        raise ManifestError(f'{kind} sha256 changed during image validation')
+    if image[0] != 0xE9:
+        raise ManifestError(f'{kind} ESP image magic invalid')
+    count = image[1]
+    if not 1 <= count <= ESP_MAX_SEGMENTS:
+        raise ManifestError(f'{kind} ESP image segment count invalid')
+    if struct.unpack_from('<H', image, 12)[0] != ESP32S3_CHIP_ID:
+        raise ManifestError(f'{kind} ESP image chip must be ESP32-S3 (9)')
+    hash_appended = image[23]
+    if hash_appended not in (0, 1):
+        raise ManifestError(f'{kind} ESP image digest flag must be 0 or 1')
+    entry = struct.unpack_from('<I', image, 4)[0]
+    cursor = ESP_IMAGE_HEADER_SIZE
+    checksum = ESP_IMAGE_CHECKSUM_MAGIC
+    descriptor = False
+    entry_covered = False
+    for index in range(count):
+        if cursor + 8 > len(image):
+            raise ManifestError(f'{kind} ESP image segment header truncated')
+        address, size = struct.unpack_from('<II', image, cursor)
+        cursor += 8
+        if size % 4 or size >= FLASH_SIZE or size > len(image) - cursor:
+            raise ManifestError(f'{kind} ESP image segment size invalid or truncated')
+        segment_end = address + size
+        # 0 and 4 are the ESP-IDF reserved non-loaded padding/MD5 block addresses.
+        if address not in (0, 4) and not any(start <= address < end and segment_end <= end
+                                            for start, end in ESP_SEGMENT_RANGES):
+            raise ManifestError(f'{kind} ESP image segment load address out of bounds')
+        if any(start <= address < end for start, end in ESP_FLASH_MAPPED_RANGES):
+            if (EXPECTED_OFFSETS[kind] + cursor) % 0x10000 != address % 0x10000:
+                raise ManifestError(f'{kind} ESP image mapped segment alignment invalid')
+        if address <= entry < segment_end and any(start <= entry < end for start, end in ESP_EXEC_RANGES):
+            entry_covered = True
+        # The ESP-IDF app descriptor starts at the first DROM segment data.
+        if index == 0:
+            descriptor = (ESP_FLASH_MAPPED_RANGES[0][0] <= address < ESP_FLASH_MAPPED_RANGES[0][1]
+                          and size >= ESP_APP_DESC_SIZE and image[cursor:cursor + 4] == ESP_APP_DESC_MAGIC)
+        for value in memoryview(image)[cursor:cursor + size]:
+            checksum ^= value
+        cursor += size
+    if descriptor != (kind != 'bootloader'):
+        raise ManifestError(f'{kind} ESP application descriptor inconsistent with artifact role')
+    if not entry_covered:
+        raise ManifestError(f'{kind} ESP image entry point not in an executable segment')
+    checksum_at = cursor + (15 - cursor % 16)
+    if checksum_at >= len(image):
+        raise ManifestError(f'{kind} ESP image checksum truncated')
+    if any(memoryview(image)[cursor:checksum_at]):
+        raise ManifestError(f'{kind} ESP image checksum padding must be zero')
+    if image[checksum_at] != checksum:
+        raise ManifestError(f'{kind} ESP image checksum mismatch')
+    data_end = checksum_at + 1
+    if len(image) != data_end + 32 * hash_appended:
+        raise ManifestError(f'{kind} ESP image digest or trailer length invalid')
+    if hash_appended and hashlib.sha256(memoryview(image)[:data_end]).digest() != image[data_end:]:
+        raise ManifestError(f'{kind} ESP image appended digest mismatch')
 
 
 def _validate_partition(path: Path, expected_hash: str) -> None:
@@ -188,7 +277,7 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
         declared_size = _int(item.get("size"), f"{kind}.size")
         if offset < 0 or declared_size <= 0 or offset + declared_size > FLASH_SIZE:
             raise ManifestError(f"{kind} is outside 16 MiB flash")
-        if kind == "bootloader" and offset >= 0x8000:
+        if kind == "bootloader" and offset + declared_size > 0x8000:
             raise ManifestError("bootloader must remain below partition table at 0x8000")
         if kind == "partition" and (offset != 0x8000 or declared_size > 0x1000):
             raise ManifestError("partition table must be at 0x8000 and no larger than 0x1000")
@@ -207,7 +296,7 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
         path = _artifact_path(root, name)
         if not path.is_file():
             raise ManifestError(f"artifact does not exist: {name}")
-        actual_size, actual_hash = _sha256(path)
+        actual_size, actual_hash = _sha256(path, declared_size)
         if actual_size != declared_size:
             raise ManifestError(f"{kind} size mismatch: manifest {declared_size}, file {actual_size}")
         expected_hash = item.get("sha256")
@@ -217,6 +306,8 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
             _validate_map(path, item, manifest)
         if kind == "partition":
             _validate_partition(path, actual_hash)
+        if kind in ("bootloader", "app0", "app1"):
+            _validate_esp_image(path, kind, actual_hash)
         end = offset + declared_size
         for other_start, other_end, other_kind in intervals:
             if offset < other_end and other_start < end:

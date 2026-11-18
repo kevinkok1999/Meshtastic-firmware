@@ -59,3 +59,7 @@ python v30/installer/verify_flash_readback.py manifest.json manifest.sig publish
 ```
 
 Only compares two separately acquired, complete 16 MiB local flash snapshots. The pre-flash partition bytes must match the signed layout exactly. The post-write snapshot, acquired before reboot, must contain all expected segment digests, erased sector padding, identical protected regions, and no other changed bytes. Keep snapshots on the owner's local device; they contain private data and must never be uploaded to CI or shared. This tool has no device I/O, cannot validate boot success, and cannot approve installation or release. Hardware encryption and different layouts require a separate validated process.
+
+## Build and export real firmware (development only)
+
+The `V30 unsigned DEV firmware artifact` workflow reconstructs the pinned upstream and V11–V30 patches, resolves the configured PlatformIO bootloader, partition table, OTA data and application files, validates image framing and compares with Espressif esptool. It makes a four-file unsigned initial-mode artifact with hashes and build provenance, not a full-v30 or production package. No device I/O or public release occurs. The map is not included. The installer checks the ESP32-S3 image structure, segment addressing, application descriptor, checksum and optional appended digest. These checks cannot demonstrate that an image boots on a physical board.

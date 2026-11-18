@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from partition_fixture import partition_image, ROWS
+from esp_image_fixture import esp_image
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -26,8 +27,8 @@ class SignedManifestTests(unittest.TestCase):
         self.public.write_bytes(public)
         self.pin = hashlib.sha256(public).hexdigest()
         entries = []
-        for kind, offset, payload in (("bootloader", 0, b"boot"), ("partition", 0x8000, partition_image()),
-                                      ("ota_data", 0xe000, b"\xff" * 8192), ("app0", 0x10000, b"app")):
+        for kind, offset, payload in (("bootloader", 0, esp_image('bootloader')), ("partition", 0x8000, partition_image()),
+                                      ("ota_data", 0xe000, b"\xff" * 8192), ("app0", 0x10000, esp_image('app0'))):
             path = self.root / (kind + ".bin")
             path.write_bytes(payload)
             entries.append(dict(kind=kind, offset=offset, path=path.name, size=len(payload), sha256=hashlib.sha256(payload).hexdigest()))
@@ -128,10 +129,23 @@ class SignedManifestTests(unittest.TestCase):
         self.assertIn("duplicate", result.stdout.lower())
 
     def test_signed_artifact_mismatch_rejected(self):
-        (self.root / "app0.bin").write_bytes(b"bad")
+        image = bytearray(esp_image('app0'))
+        image[0] ^= 1
+        (self.root / "app0.bin").write_bytes(image)
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("sha256 mismatch", result.stdout.lower())
+
+    def test_signed_rehashed_invalid_firmware_is_still_rejected(self):
+        image = bytearray(esp_image('app0'))
+        image[12] = 0
+        (self.root / 'app0.bin').write_bytes(image)
+        next(x for x in self.data['artifacts'] if x['kind'] == 'app0')['sha256'] = hashlib.sha256(image).hexdigest()
+        self.sign(json.dumps(self.data).encode())
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('app0', result.stdout.lower())
+        self.assertIn('chip', result.stdout.lower())
 
     def test_signature_does_not_override_production_gate(self):
         self.data["production"] = True

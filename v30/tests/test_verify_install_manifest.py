@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from partition_fixture import partition_image, ROWS
+from esp_image_fixture import esp_image
 
 SPEC = importlib.util.spec_from_file_location("verify_install_manifest", Path(__file__).parents[1] / "installer" / "verify_install_manifest.py")
 sys.path.insert(0, str(Path(__file__).parents[1] / 'maps'))
@@ -24,7 +25,7 @@ class ManifestVerifierTests(unittest.TestCase):
         self.files = {}
         for kind in ("bootloader", "partition", "ota_data", "app0"):
             data = (partition_image() if kind == "partition" else
-                    (kind.encode() * 32)[:128] if kind != "ota_data" else bytes([0]) * 0x2000)
+                    esp_image(kind) if kind != "ota_data" else bytes([0]) * 0x2000)
             path = self.root / f"{kind}.bin"
             path.write_bytes(data)
             self.files[kind] = path
@@ -46,6 +47,93 @@ class ManifestVerifierTests(unittest.TestCase):
 
     def test_valid_manifest(self):
         self.assertTrue(MODULE.validate_manifest(self.manifest, self.root))
+
+    def replace_firmware(self, kind, image):
+        self.files[kind].write_bytes(image)
+        artifact = next(x for x in self.manifest["artifacts"] if x["kind"] == kind)
+        artifact["size"] = len(image)
+        artifact["sha256"] = hashlib.sha256(image).hexdigest()
+
+    def test_rehashed_wrong_esp_image_magic_chip_or_count_rejected(self):
+        for offset, value, error in ((0, 0, 'magic'), (12, 0, 'chip'),
+                                     (1, 0, 'segment count'), (1, 17, 'segment count'),
+                                     (23, 2, 'digest flag')):
+            image = bytearray(esp_image('bootloader'))
+            image[offset] = value
+            with self.subTest(offset=offset, value=value):
+                self.replace_firmware('bootloader', image)
+                with self.assertRaisesRegex(MODULE.ManifestError, 'bootloader.*' + error):
+                    MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_rehashed_truncated_segment_or_invalid_alignment_rejected(self):
+        for size in (0xfffffffc, 3):
+            image = bytearray(esp_image('app0'))
+            struct.pack_into('<I', image, 28, size)
+            with self.subTest(size=size):
+                self.replace_firmware('app0', image)
+                with self.assertRaisesRegex(MODULE.ManifestError, 'app0.*segment'):
+                    MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_wrong_mapped_flash_offset_rejected(self):
+        image = bytearray(esp_image('app0'))
+        struct.pack_into('<I', image, 24, 0x3c000024)
+        image[-32:] = hashlib.sha256(image[:-32]).digest()
+        self.replace_firmware('app0', image)
+        with self.assertRaisesRegex(MODULE.ManifestError, 'app0.*alignment'):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_rehashed_firmware_with_invalid_entry_or_load_address_rejected(self):
+        for position, addr, error in ((4, 0, 'entry point'), (24, 0xeeeeeeee, 'load address')):
+            image = bytearray(esp_image('bootloader'))
+            struct.pack_into('<I', image, position, addr)
+            image[-32:] = hashlib.sha256(image[:-32]).digest()
+            self.replace_firmware('bootloader', image)
+            with self.assertRaisesRegex(MODULE.ManifestError, 'bootloader.*' + error):
+                MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_application_descriptor_and_bootloader_role_not_interchangeable(self):
+        for kind, image in (('app0', esp_image('bootloader')), ('bootloader', esp_image('app0'))):
+            with self.subTest(kind=kind):
+                self.replace_firmware(kind, image)
+                with self.assertRaisesRegex(MODULE.ManifestError, kind + '.*descriptor'):
+                    MODULE.validate_manifest(self.manifest, self.root)
+                self.replace_firmware(kind, esp_image(kind))
+
+    def test_rehashed_checksum_digest_padding_and_trailing_bytes_rejected(self):
+        valid = esp_image('bootloader')
+        for offset, error in ((-33, 'checksum'), (-1, 'digest'), (-34, 'padding')):
+            image = bytearray(valid)
+            image[offset] ^= 1
+            with self.subTest(error=error):
+                self.replace_firmware('bootloader', image)
+                with self.assertRaisesRegex(MODULE.ManifestError, 'bootloader.*' + error):
+                    MODULE.validate_manifest(self.manifest, self.root)
+        for image in (valid + b'\xff', valid[:-1]):
+            self.replace_firmware('bootloader', image)
+            with self.assertRaisesRegex(MODULE.ManifestError, 'bootloader.*digest.*length'):
+                MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_no_appended_digest_still_requires_checksum_and_exact_end(self):
+        image = esp_image('bootloader', append_digest=False)
+        self.replace_firmware('bootloader', image)
+        self.assertTrue(MODULE.validate_manifest(self.manifest, self.root))
+        self.replace_firmware('bootloader', image[:-1] + bytes([image[-1] ^ 1]))
+        with self.assertRaisesRegex(MODULE.ManifestError, 'bootloader.*checksum'):
+            MODULE.validate_manifest(self.manifest, self.root)
+
+    def test_valid_app1_safe_mode_validation_and_corruption(self):
+        image = esp_image('app1')
+        path = self.root / 'app1.bin'
+        path.write_bytes(image)
+        self.files['app1'] = path
+        self.manifest['artifacts'].append(dict(kind='app1', path=path.name,
+            offset=MODULE.EXPECTED_OFFSETS['app1'], size=len(image),
+            sha256=hashlib.sha256(image).hexdigest()))
+        self.manifest['safe_mode'] = True
+        self.assertTrue(MODULE.validate_manifest(self.manifest, self.root))
+        self.replace_firmware('app1', image[:-1])
+        with self.assertRaisesRegex(MODULE.ManifestError, 'app1.*digest'):
+            MODULE.validate_manifest(self.manifest, self.root)
 
     def replace_partition(self, image):
         self.files["partition"].write_bytes(image)
@@ -291,9 +379,10 @@ class ManifestVerifierTests(unittest.TestCase):
                 MODULE.validate_manifest(self.manifest, self.root)
 
     def test_app1_requires_explicit_safe_mode(self):
-        p = self.root / "app1.bin"; p.write_bytes(b"app1")
+        image = esp_image('app1')
+        p = self.root / "app1.bin"; p.write_bytes(image)
         self.manifest["artifacts"].append({"kind": "app1", "path": p.name, "offset": MODULE.EXPECTED_OFFSETS["app1"],
-                                           "size": 4, "sha256": hashlib.sha256(b"app1").hexdigest()})
+                                           "size": len(image), "sha256": hashlib.sha256(image).hexdigest()})
         with self.assertRaises(MODULE.ManifestError):
             MODULE.validate_manifest(self.manifest, self.root)
 

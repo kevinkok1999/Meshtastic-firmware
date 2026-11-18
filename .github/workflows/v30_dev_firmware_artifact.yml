@@ -1,0 +1,97 @@
+name: V30 unsigned DEV firmware artifact
+
+on:
+  push:
+    branches: [v30-dev-flash-artifact-candidate, v30-pro-meshmap-nano]
+    paths: ["v30/**", ".github/workflows/v30_dev_firmware_artifact.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v30-dev-firmware-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dev-firmware:
+    name: Actual T-Deck Plus build and offline verified DEV artifact
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false, fetch-depth: 1}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Test exporter contracts and manifest guard
+        run: |
+          pip install cryptography==50.0.0
+          python -m unittest discover -s v30/tests
+      - name: Checkout immutable WadaMesh baseline
+        run: |
+          git clone --no-checkout https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          git -C upstream-wadamesh fetch --depth 1 origin 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          git -C upstream-wadamesh checkout --detach 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          test "$(git -C upstream-wadamesh rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+      - name: Apply V11 through V29 baseline
+        run: |
+          set -euo pipefail
+          for patch in v11 v12 v13 v15 v16 v17 v18 v19 v26 v27 v28 v29; do
+            python "$patch/apply_$patch.py" upstream-wadamesh
+          done
+      - name: Run V29 contracts before V30 overlay
+        run: |
+          python v29/tests/test_contracts.py upstream-wadamesh
+          python v29/tests/test_resilience_model.py upstream-wadamesh
+      - name: Apply gated V30 overlay and verify candidate anchors
+        run: |
+          python v30/apply_v30.py upstream-wadamesh
+          python v30/tests/browser_auth/test_candidate.py upstream-wadamesh
+      - name: Add read-only capture of exact configured PlatformIO image inputs
+        run: |
+          cp v30/installer/capture_pio_flash_metadata.py upstream-wadamesh/v30-capture-flash-metadata.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('upstream-wadamesh/platformio.ini')
+          text = p.read_text()
+          marker = '[env:LilyGo_TDeck_companion_radio_touch]\n'
+          assert text.count(marker) == 1
+          start = text.index(marker)
+          line = text.index('extra_scripts = ', start)
+          end = text.index('\n', line)
+          assert 'merge-bin.py' in text[line:end]
+          text = text[:end] + ', post:v30-capture-flash-metadata.py' + text[end:]
+          p.write_text(text)
+          PY
+      - name: Build actual DEV firmware only (never upload)
+        working-directory: upstream-wadamesh
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DMESH_OFFGRIDNL_V30_EXPERIMENTAL=0
+            -DFIRMWARE_RELEASE_TAG='"v30-f1-dev"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V30 F1 DEV"'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "platformio==6.2.0" --no-build-isolation
+          pio run -e LilyGo_TDeck_companion_radio_touch
+          pio pkg list -e LilyGo_TDeck_companion_radio_touch > v30-resolved-dependencies.txt
+      - name: Verify and package generated four flash images offline
+        run: |
+          set -euo pipefail
+          build=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          python -m pip install esptool==4.8.1
+          python v30/tests/check_generated_esp_images.py "$build"
+          python v30/installer/export_dev_firmware.py \
+            --metadata "$build/v30-pio-flash-metadata.json" \
+            --build-dir "$build" --output v30-unsigned-dev \
+            --source-sha "$GITHUB_SHA"
+          cp upstream-wadamesh/v30-resolved-dependencies.txt v30-unsigned-dev/
+          python v30/installer/verify_install_manifest.py v30-unsigned-dev/manifest.json
+          (cd v30-unsigned-dev && sha256sum -c SHA256SUMS)
+      - name: Upload CI-only artifact, never publish a release or installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: V30-TDeck-Plus-UNSIGNED-DEV-NO-MAP-${{ github.sha }}
+          path: v30-unsigned-dev/
+          if-no-files-found: error
+          retention-days: 14
