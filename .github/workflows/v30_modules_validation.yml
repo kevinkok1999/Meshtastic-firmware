@@ -79,3 +79,5 @@ jobs:
           base=v30/overlay/src/ui-touch
           c++ -std=c++17 -Wall -Wextra -Werror -I "$base" "$base/NanoMapPack.cpp" "$base/NanoMapViewport.cpp" v30/tests/test_nano_viewport.cpp /tmp/tinfl.o -lz -o /tmp/v30-view
           /tmp/v30-view /tmp/reader-fixture.meshmap
+      - name: Test reproducible unsigned development package assembly
+        run: python -m unittest discover -s v30/tests -p test_build_dev_package.py -v
