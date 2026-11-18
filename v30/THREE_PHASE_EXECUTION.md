@@ -33,3 +33,6 @@ All three phases remain OPEN. Development branches and host tests are valuable p
 
 ### 2026-11-18 checkpoint
 Combined 718f9688 software + actual pinned T-Deck build passed (44185700985, 44185701037). Map viewport worker and actual packet-pool observer isolated builds passed (44185658673, 44185727514) and are integrated as unactivated development modules. Map national build requires fresh verified pack output; old run failed province alias, fixed on current branch. Browser C++11 repair remains isolated. No physical validation, public relay or signed map; all phase gates remain open.
+
+### Further 2026-11-18 integration
+Phase 1: real pinned observer and latest combined firmware run 44311207288 green; still no RF activation or physical evidence. Phase 2: HTTPS relay verified local TLS transport (44311736834), browser parser/guard candidate full build (44311092861), complete native map UI opt-in candidate full build (44312054527), signed map logical pin handoff and installer assembly. Map dataset frozen-source run 44312552238 pending; no approved map pin, live browser/relay activation or actual coverage. Phase 3: 60 local installer/map/signature tests and combined package full T-Deck build 44311641984 green, but no production signing, device tests, physical radio or release. All three gates remain open.

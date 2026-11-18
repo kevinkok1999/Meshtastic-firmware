@@ -87,3 +87,9 @@ jobs:
         run: |
           c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I v30/overlay/src/helpers/esp32 v30/tests/browser_auth/test_session.cpp -o /tmp/v30-browser-test
           /tmp/v30-browser-test
+      - name: Test native bounded presentation and map trust pin
+        run: |
+          base=v30/overlay/src/ui-touch
+          c++ -std=c++11 -Wall -Wextra -Werror -DMESH_OFFGRIDNL_NANOMAP_HOST_TEST -I "$base" "$base/NanoMapPresentation.cpp" "$base/NanoMapTrustPin.cpp" v30/tests/test_nano_present.cpp -lcrypto -o /tmp/v30-present
+          /tmp/v30-present
+          python v30/tests/test_apply_map_native.py
