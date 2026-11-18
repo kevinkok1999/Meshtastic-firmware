@@ -1,0 +1,21 @@
+name: V30 verified TLS relay candidate
+on:
+  push:
+    branches: [v30-world-chat-tls-candidate]
+    paths: ["v30/relay/**", ".github/workflows/v30_relay_tls_candidate.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  relay-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run all relay tests including real verified loopback HTTPS
+        run: |
+          openssl version
+          node --test v30/relay/test_v30_*.mjs

@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { createServer as createTlsServer } from 'node:https';
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { V30RelayCore } from './V30RelayCore.mjs';
 import { V30GrantAuthority } from './V30GrantAuthority.mjs';
@@ -7,6 +8,17 @@ import { V30NetworkGrantIssuer } from './V30NetworkGrantIssuer.mjs';
 
 const MAX_BODY = 16384;
 const SPKI = Buffer.from('302a300506032b6570032100', 'hex');
+
+function tlsOptions(tls) {
+  if (tls === undefined) return undefined;
+  const pem = value => (typeof value === 'string' || Buffer.isBuffer(value)) && value.length > 0;
+  // Deliberately accept only a key and certificate (the latter may include
+  // intermediates). Callers cannot override protocol floors or TLS identity.
+  if (!tls || typeof tls !== 'object' || Array.isArray(tls) ||
+      Object.keys(tls).length !== 2 || !Object.hasOwn(tls, 'key') || !Object.hasOwn(tls, 'cert') ||
+      !pem(tls.key) || !pem(tls.cert)) throw Error('tls_config_invalid');
+  return {key:tls.key, cert:tls.cert, minVersion:'TLSv1.2', handshakeTimeout:5000};
+}
 
 export function canonicalHttpRequest(path, request) {
   // Explicit tuple construction avoids dependence on JSON property order.
@@ -98,9 +110,10 @@ function restoreState(state, core, authority) {
 // Grant issuance is disabled unless explicitly configured with a trusted
 // server-side membership verifier registry and the matching issuer key.
 export async function createV30RelayService({issuerPublicKey, storage,
-                                            now = Date.now, grantIssuer} = {}) {
+                                            now = Date.now, grantIssuer, tls} = {}) {
   if (!storage || typeof storage.load !== 'function' || typeof storage.save !== 'function')
     throw Error('storage_required');
+  const secureOptions = tlsOptions(tls);
   const core = new V30RelayCore();
   const authority = new V30GrantAuthority({issuerPublicKey});
   const adapter = new V30RelayAdapter(core, authority);
@@ -109,7 +122,7 @@ export async function createV30RelayService({issuerPublicKey, storage,
   let queue = Promise.resolve();
   let pending = 0;
   let poisoned = false;
-  const server = createServer(async (req, res) => {
+  const handleRequest = async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/json');
     const send = (status, value) => {
@@ -158,11 +171,15 @@ export async function createV30RelayService({issuerPublicKey, storage,
         {error: code === 'body_too_large' ? code : code === 'storage_unavailable'
           ? code : 'request_rejected'});
     } finally { clearTimeout(bodyDeadline); --pending; }
-  });
+  };
+  // Never open a second listener or fall back to HTTP if TLS setup fails.
+  const server = secureOptions === undefined ? createServer(handleRequest)
+    : createTlsServer(secureOptions,handleRequest);
   server.requestTimeout = 5000;
   server.headersTimeout = 5000;
   server.timeout = 5000;
   server.maxHeadersCount = 32;
   return server;
 }
+
 
