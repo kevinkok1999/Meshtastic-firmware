@@ -34,3 +34,19 @@ manifest and its artifacts, then rechecks the complete signed map image in
 the exact bounded snapshot used for the digest. This is a potential input to
 the explicit development native-map compile pin, never a production release
 authorization. Do not supply a pin computed from untrusted downloaded data.
+
+## Review exact flash-sector boundaries (no hardware access)
+
+```sh
+python v30/installer/flash_review_plan.py manifest.json manifest.sig publisher.pub \
+  --public-key-sha256 "$TRUSTED_PUBLIC_KEY_SHA256"
+```
+
+Prints a signed full-v30 development package's five write ranges and the
+sector-rounded half-open erase extents. Explicitly preserves NVS, app1,
+SPIFFS and coredump, refuses all app1 writes even when safe_mode is set, and
+does not authorize flashing or erase-all. Requires readback of the actual
+device layout, selected compatible board, user approval, backup and physical
+tests before any hardware write. Resetting OTA data changes the boot choice;
+preserving app1 bytes by itself does not prove working rollback. The output is
+review metadata, not an esptool command or a browser release manifest.

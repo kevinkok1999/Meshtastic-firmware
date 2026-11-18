@@ -93,3 +93,5 @@ jobs:
           c++ -std=c++11 -Wall -Wextra -Werror -DMESH_OFFGRIDNL_NANOMAP_HOST_TEST -I "$base" "$base/NanoMapPresentation.cpp" "$base/NanoMapTrustPin.cpp" v30/tests/test_nano_present.cpp -lcrypto -o /tmp/v30-present
           /tmp/v30-present
           python v30/tests/test_apply_map_native.py
+      - name: Test signed flash-range review and preserved partitions
+        run: python -m unittest discover -s v30/tests -p test_flash_review_plan.py -v
