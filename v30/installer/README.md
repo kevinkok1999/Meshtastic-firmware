@@ -23,3 +23,14 @@ python v30/installer/build_dev_package.py --bootloader bootloader.bin --partitio
 ```
 
 The output directory must not exist. The builder copies bounded inputs, pads the raw map to exactly 0x4C0000 with 0xFF, creates a deterministic manifest, and runs the existing validator before creating the output. It never writes hardware, includes no user-data partition, does not distribute a key, and cannot sign or mark a release as production. The manifest is published last; no crash/durability guarantee is implied. The actual input firmware must come from the verified pinned build; a structural manifest does not establish firmware identity or real map coverage. A separate trusted signature and hardware evidence are required.
+
+## Derive the native development map trust pin
+
+For a full-v30 package and independently trusted publisher key, add
+`--print-map-pin` to the signed verifier command. On success stdout is only
+the lowercase SHA256 of the logical MMN1 pack (not the padded partition);
+failure uses stderr and a nonzero exit. The verifier checks the authenticated
+manifest and its artifacts, then rechecks the complete signed map image in
+the exact bounded snapshot used for the digest. This is a potential input to
+the explicit development native-map compile pin, never a production release
+authorization. Do not supply a pin computed from untrusted downloaded data.

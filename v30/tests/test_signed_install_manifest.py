@@ -47,6 +47,57 @@ class SignedManifestTests(unittest.TestCase):
                                str(self.public), "--public-key-sha256", self.pin if pin is None else pin],
                               capture_output=True, text=True)
 
+    def add_map(self):
+        maps = VERIFIER.parent.parent / 'maps'
+        sys.path.insert(0, str(maps))
+        try:
+            from build_nl import PROVINCES, build_pack
+            source = self.root / 'features.jsonl'
+            source.write_text(''.join(json.dumps({'id': f'place/{i}', 'kind': 'place',
+                'province': province, 'name': f'Dorp {i}', 'geometry': [[4 + i / 100, 52]]}) + '\n'
+                for i, province in enumerate(PROVINCES)), encoding='utf-8')
+            build_pack(source, maps / 'nl_profile.json', self.root / 'map.meshmap')
+        finally:
+            sys.path.remove(str(maps))
+        pack = (self.root / 'map.meshmap').read_bytes()
+        image = pack.ljust(0x4c0000, b'\xff')
+        (self.root / 'map.bin').write_bytes(image)
+        self.data['install_mode'] = 'full-v30'
+        self.data['pack_metadata_size'] = int.from_bytes(pack[6:10], 'little')
+        self.data['artifacts'].append(dict(kind='map', offset=0x7d0000, path='map.bin',
+            size=len(image), sha256=hashlib.sha256(image).hexdigest(), pack_size=len(pack), padding_byte=255))
+        self.sign(json.dumps(self.data).encode())
+        return hashlib.sha256(pack).hexdigest()
+
+    def map_pin(self, *, pin=None):
+        return subprocess.run([sys.executable, str(VERIFIER), str(self.manifest), str(self.signature),
+            str(self.public), '--public-key-sha256', self.pin if pin is None else pin, '--print-map-pin'],
+            capture_output=True, text=True)
+
+    def test_map_pin_is_logical_pack_digest_not_padded_image(self):
+        pin = self.add_map()
+        result = self.map_pin()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(result.stdout.strip(), pin)
+
+    def test_map_pin_cannot_be_issued_for_invalid_signature_or_changed_artifact(self):
+        pin = self.add_map()
+        denied = self.map_pin(pin='00' * 32)
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(denied.stdout, '')
+        self.assertIn('pin', denied.stderr)
+        (self.root / 'map.bin').write_bytes(b'x')
+        denied = self.map_pin()
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(denied.stdout, '')
+        self.assertIn('map', denied.stderr)
+
+    def test_map_pin_requires_full_map_install_mode(self):
+        result = self.map_pin()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('full-v30', result.stderr)
+
     def test_valid_signature_and_artifacts_still_not_release_authorization(self):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
