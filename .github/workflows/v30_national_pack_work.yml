@@ -1,24 +1,11 @@
 name: V30 national map candidate
 on:
   push:
-    branches: [v30-pro-meshmap-nano]
-    paths: ["v30/maps/**", "v30/tests/test_national_pack.py", ".github/workflows/v30_national_pack_work.yml"]
-  workflow_dispatch:
-    inputs:
-      source_date:
-        description: "Geofabrik snapshot date (YYMMDD; no latest alias)"
-        required: true
-        type: string
-      expected_pbf_sha256:
-        description: "Reviewed SHA256 of exact dated Geofabrik PBF"
-        required: true
-        type: string
-      expected_boundary_sha256:
-        description: "Reviewed SHA256 of exact PDOK province GeoJSON"
-        required: true
-        type: string
+    branches: [v30-national-captured-261116]
+    paths: [".github/workflows/v30_national_pack_work.yml"]
 permissions:
   contents: read
+  actions: read
 jobs:
   unit-and-pbf-smoke:
     runs-on: ubuntu-24.04
@@ -40,16 +27,18 @@ jobs:
           python -m unittest discover -s v30/tests -p test_map_build.py -v
           python -m unittest discover -s v30/tests -p test_osm_ingest.py -v
   national-candidate:
-    # The one-time bootstrap was launched from a prior pinned commit.
-    # Ordinary pushes must never download the national source again.
-    if: github.event_name == 'workflow_dispatch'
+    # One verified candidate run on this isolated branch only. Never publish.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/v30-national-captured-261116' && github.run_attempt == '1'
     needs: [unit-and-pbf-smoke]
     timeout-minutes: 50
     runs-on: ubuntu-24.04
     env:
-      SOURCE_DATE: ${{ inputs.source_date }}
-      EXPECTED_PBF: ${{ inputs.expected_pbf_sha256 }}
-      EXPECTED_BOUNDARY: ${{ inputs.expected_boundary_sha256 }}
+      SOURCE_DATE: "261116"
+      EXPECTED_PBF: "2d0528596573987ae547ba4dc16b50c347ac97cfc3fc864d470f184dc8e5c1c7"
+      EXPECTED_BOUNDARY: "845bbe3287d77ee4bb16b75374cc55a5f6464ab4e95d1a634636de18e2aa9400"
+      EXPECTED_BOUNDARY_METADATA: "ac516a3e7bb1168c93dbf4f77c5373d50b12b69b3f90ddb11489ed8153f38a2a"
+      EXPECTED_BOUNDARY_CANONICAL: "25acd7dfde99919493f23bfef57c8db2373e3b2a83dfaf89e0ea1838c19b4c0b"
+      EXPECTED_BOUNDARY_EVIDENCE: "e22b88245f1f143926bb667218cbc74d91ebf435ada62373b4847bc2320978af"
       BOOTSTRAP: "false"
       BOUNDARY_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied/items?f=json&limit=100
       BOUNDARY_METADATA_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied?f=json
@@ -63,7 +52,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y osmium-tool
           python -m pip install osmium==4.3.2 shapely==2.1.2
-      - name: Acquire reviewed bytes from licensed publishers
+      - name: Retrieve pinned artifact from separate successful boundary capture
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: "14430552513"
+          path: map-output/
+          github-token: ${{ github.token }}
+          repository: kevinkok1999/Meshtastic-firmware
+          run-id: "44311825192"
+      - name: Verify frozen boundary and acquire dated PBF bytes
         shell: bash
         run: |
           set -euo pipefail
@@ -71,16 +68,34 @@ jobs:
           [[ "$EXPECTED_PBF" =~ ^[0-9a-f]{64}$ ]]
           [[ "$EXPECTED_BOUNDARY" =~ ^[0-9a-f]{64}$ ]]
           mkdir -p map-input map-output
-          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 180 --max-filesize 134217728 "$BOUNDARY_URL" --output map-input/provinces.geojson
-          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1048576 "$BOUNDARY_METADATA_URL" --output map-output/pdok-collection.json
-          printf '%s  %s\n' "$EXPECTED_BOUNDARY" map-input/provinces.geojson | sha256sum -c -
-          PYTHONPATH=v30/maps python -c 'import json; from national_pack import ProvinceLocator; ProvinceLocator(json.load(open("map-input/provinces.geojson")), require_fast=True)'
-          cp map-input/provinces.geojson map-output/pdok-provinces.geojson
+          printf '%s  %s\n' "$EXPECTED_BOUNDARY" map-output/pdok-provinces.geojson | sha256sum -c -
+          printf '%s  %s\n' "$EXPECTED_BOUNDARY_METADATA" map-output/pdok-collection.json | sha256sum -c -
+          printf '%s  %s\n' "$EXPECTED_BOUNDARY_EVIDENCE" map-output/boundary-evidence.json | sha256sum -c -
+          cp map-output/pdok-provinces.geojson map-input/provinces.geojson
+          PYTHONPATH=v30/maps python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          from national_pack import ProvinceLocator
+          data = Path("map-input/provinces.geojson").read_bytes()
+          evidence = json.loads(Path("map-output/boundary-evidence.json").read_bytes())
+          assert evidence["production"] is False
+          assert evidence["source_url"] == os.environ["BOUNDARY_URL"]
+          assert evidence["metadata_url"] == os.environ["BOUNDARY_METADATA_URL"]
+          assert evidence["commit"] == "6b38fb757db43030f388ea58a56689b9c952f282"
+          assert evidence["run_id"] == "44311825192"
+          assert evidence["raw_geojson_sha256"] == os.environ["EXPECTED_BOUNDARY"]
+          assert evidence["raw_metadata_sha256"] == os.environ["EXPECTED_BOUNDARY_METADATA"]
+          locator = ProvinceLocator(json.loads(data), require_fast=True)
+          canonical = json.dumps(locator.polygons, sort_keys=True, ensure_ascii=False,
+                                 separators=(",",":"), allow_nan=False).encode("utf-8")
+          assert hashlib.sha256(canonical).hexdigest() == evidence["canonical_geometry_sha256"] == os.environ["EXPECTED_BOUNDARY_CANONICAL"]
+          print("Verified 12 frozen province geometries:", ", ".join(sorted(locator.polygons)))
+          PY
           PBF_URL="https://download.geofabrik.de/europe/netherlands-${SOURCE_DATE}.osm.pbf"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1024 "$PBF_URL.md5" --output map-output/geofabrik-source.md5
           OFFICIAL_MD5="$(awk 'NR==1 {print $1}' map-output/geofabrik-source.md5)"
           [[ "$OFFICIAL_MD5" =~ ^[0-9a-f]{32}$ ]]
-          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 1200 --max-filesize 2147483648 "$PBF_URL" --output map-input/source.osm.pbf
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 0 --max-time 1200 --max-filesize 2147483648 "$PBF_URL" --output map-input/source.osm.pbf
           printf '%s  %s\n' "$OFFICIAL_MD5" map-input/source.osm.pbf | md5sum -c -
           printf '%s  %s\n' "$EXPECTED_PBF" map-input/source.osm.pbf | sha256sum -c -
           DATA_TIMESTAMP="$(osmium fileinfo -g header.option.osmosis_replication_timestamp map-input/source.osm.pbf)"
@@ -103,6 +118,17 @@ jobs:
           python v30/maps/national_pack.py map-input/filtered.osm.pbf map-input/provinces.geojson map-output \
             --data-date "$DATA_TIMESTAMP" --pbf-sha256 "$FILTERED_HASH" --boundaries-sha256 "$EXPECTED_BOUNDARY"
           python v30/maps/national_provenance.py map-output/coverage.json map-output/provenance.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("map-output/provenance.json")
+          p = json.loads(path.read_text())
+          p["boundary_capture"] = {"run_id":"44311825192","artifact_id":"14430552513",
+                                   "evidence_sha256":"e22b88245f1f143926bb667218cbc74d91ebf435ada62373b4847bc2320978af",
+                                   "canonical_geometry_sha256":"25acd7dfde99919493f23bfef57c8db2373e3b2a83dfaf89e0ea1838c19b4c0b",
+                                   "metadata_sha256":"ac516a3e7bb1168c93dbf4f77c5373d50b12b69b3f90ddb11489ed8153f38a2a"}
+          path.write_text(json.dumps(p, sort_keys=True, indent=2) + "\n")
+          PY
       - name: Retain an unsigned candidate and evidence, never publish a firmware release
         uses: actions/upload-artifact@v4
         with:
