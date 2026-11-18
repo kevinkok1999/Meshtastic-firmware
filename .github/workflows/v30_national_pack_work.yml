@@ -56,7 +56,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: "14430552513"
-          path: map-output/
+          path: map-boundary/
           github-token: ${{ github.token }}
           repository: kevinkok1999/Meshtastic-firmware
           run-id: "44311825192"
@@ -68,6 +68,12 @@ jobs:
           [[ "$EXPECTED_PBF" =~ ^[0-9a-f]{64}$ ]]
           [[ "$EXPECTED_BOUNDARY" =~ ^[0-9a-f]{64}$ ]]
           mkdir -p map-input map-output
+          capture="map-boundary/v30-pdok-boundary-20261118"
+          # Artifact-ID retrieval on pinned v4.3.0 creates the named subdirectory.
+          for file in pdok-provinces.geojson pdok-collection.json boundary-evidence.json; do
+            [[ -f "$capture/$file" && ! -L "$capture/$file" ]]
+            cp "$capture/$file" "map-output/$file"
+          done
           printf '%s  %s\n' "$EXPECTED_BOUNDARY" map-output/pdok-provinces.geojson | sha256sum -c -
           printf '%s  %s\n' "$EXPECTED_BOUNDARY_METADATA" map-output/pdok-collection.json | sha256sum -c -
           printf '%s  %s\n' "$EXPECTED_BOUNDARY_EVIDENCE" map-output/boundary-evidence.json | sha256sum -c -
