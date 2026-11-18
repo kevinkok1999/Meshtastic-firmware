@@ -36,10 +36,14 @@ version directories and the website production branch must stay unchanged.
   binary hashes plus manifest hash passed. The CI artifact expires 2026-12-02;
   this is not a public release download or evidence of a physical flash.
 - Website work is isolated at `kevinkok1999/Meshoffgridnl`, branch
-  `v30-website-staging`, commit 865aa04f1d6641889d779dc2cecfdf4f1df7c290.
-  21 V30 and 4 V29 regression tests passed; the staged executor refuses
+  `v30-website-staging`, commit 056a38603da03baa2ee708a000551c8f2af1bc1c.
+  Final website audit Actions 44318292752 passed with 23 V30 and 4 V29
+  regression tests, all three V28 relay crypto/join contracts, syntax and API
+  function budget checks. The staged executor refuses
   wrong pre-existing partitions, requires exact qualified writes and terminal
   digest readback, and checks protected sectors and erased tails before reboot.
+  Unknown or enabled secure boot/flash encryption is a pre-write stop, and
+  the browser rejects a signed partition whose internal MD5 is damaged.
   The production website remains unchanged, and public V30 paths remain locked.
   The browser executor is a bench/mock contract, not a qualified device
   serial adapter. Direct use of the old esptool-js read/uncompressed-write
