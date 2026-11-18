@@ -1,22 +1,8 @@
 name: V30 national map candidate
 on:
   push:
-    branches: [v30-pro-meshmap-nano]
-    paths: ["v30/maps/**", "v30/tests/test_national_pack.py", ".github/workflows/v30_national_pack_work.yml"]
-  workflow_dispatch:
-    inputs:
-      source_date:
-        description: "Geofabrik snapshot date (YYMMDD; no latest alias)"
-        required: true
-        type: string
-      expected_pbf_sha256:
-        description: "Reviewed SHA256 of exact dated Geofabrik PBF"
-        required: true
-        type: string
-      expected_boundary_sha256:
-        description: "Reviewed SHA256 of exact PDOK province GeoJSON"
-        required: true
-        type: string
+    branches: [v30-national-verified-261116]
+    paths: [".github/workflows/v30_national_pack_work.yml"]
 permissions:
   contents: read
 jobs:
@@ -40,16 +26,15 @@ jobs:
           python -m unittest discover -s v30/tests -p test_map_build.py -v
           python -m unittest discover -s v30/tests -p test_osm_ingest.py -v
   national-candidate:
-    # The one-time bootstrap was launched from a prior pinned commit.
-    # Ordinary pushes must never download the national source again.
-    if: github.event_name == 'workflow_dispatch'
+    # One verified candidate run on this isolated branch only. Never publish.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/v30-national-verified-261116' && github.run_attempt == '1'
     needs: [unit-and-pbf-smoke]
     timeout-minutes: 50
     runs-on: ubuntu-24.04
     env:
-      SOURCE_DATE: ${{ inputs.source_date }}
-      EXPECTED_PBF: ${{ inputs.expected_pbf_sha256 }}
-      EXPECTED_BOUNDARY: ${{ inputs.expected_boundary_sha256 }}
+      SOURCE_DATE: "261116"
+      EXPECTED_PBF: "2d0528596573987ae547ba4dc16b50c347ac97cfc3fc864d470f184dc8e5c1c7"
+      EXPECTED_BOUNDARY: "985956e2b97b68d0c009e42a4a1bdc3980a597bd2de3d323d2c87db89deb36e5"
       BOOTSTRAP: "false"
       BOUNDARY_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied/items?f=json&limit=100
       BOUNDARY_METADATA_URL: https://api.pdok.nl/kadaster/brk-bestuurlijke-gebieden/ogc/v1/collections/provinciegebied?f=json
@@ -74,13 +59,13 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 180 --max-filesize 134217728 "$BOUNDARY_URL" --output map-input/provinces.geojson
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1048576 "$BOUNDARY_METADATA_URL" --output map-output/pdok-collection.json
           printf '%s  %s\n' "$EXPECTED_BOUNDARY" map-input/provinces.geojson | sha256sum -c -
-          PYTHONPATH=v30/maps python -c 'import json; from national_pack import ProvinceLocator; ProvinceLocator(json.load(open("map-input/provinces.geojson")), require_fast=True)'
+          PYTHONPATH=v30/maps python -c 'import json; from national_pack import ProvinceLocator; locator=ProvinceLocator(json.load(open("map-input/provinces.geojson")), require_fast=True); print("Verified province names:", ", ".join(sorted(locator.polygons)))'
           cp map-input/provinces.geojson map-output/pdok-provinces.geojson
           PBF_URL="https://download.geofabrik.de/europe/netherlands-${SOURCE_DATE}.osm.pbf"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-time 60 --max-filesize 1024 "$PBF_URL.md5" --output map-output/geofabrik-source.md5
           OFFICIAL_MD5="$(awk 'NR==1 {print $1}' map-output/geofabrik-source.md5)"
           [[ "$OFFICIAL_MD5" =~ ^[0-9a-f]{32}$ ]]
-          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 1200 --max-filesize 2147483648 "$PBF_URL" --output map-input/source.osm.pbf
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --retry 0 --max-time 1200 --max-filesize 2147483648 "$PBF_URL" --output map-input/source.osm.pbf
           printf '%s  %s\n' "$OFFICIAL_MD5" map-input/source.osm.pbf | md5sum -c -
           printf '%s  %s\n' "$EXPECTED_PBF" map-input/source.osm.pbf | sha256sum -c -
           DATA_TIMESTAMP="$(osmium fileinfo -g header.option.osmosis_replication_timestamp map-input/source.osm.pbf)"
