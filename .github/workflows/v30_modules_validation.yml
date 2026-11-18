@@ -83,3 +83,7 @@ jobs:
         run: python -m unittest discover -s v30/tests -p test_build_dev_package.py -v
       - name: Test authenticated two-client relay over actual verified TLS
         run: node --test v30/relay/test_v30_tls.mjs
+      - name: Test browser pairing parser and authorization in embedded C++ dialect
+        run: |
+          c++ -std=c++11 -Wall -Wextra -Werror -pedantic -I v30/overlay/src/helpers/esp32 v30/tests/browser_auth/test_session.cpp -o /tmp/v30-browser-test
+          /tmp/v30-browser-test

@@ -69,6 +69,8 @@ jobs:
           python v29/tests/test_resilience_model.py upstream-wadamesh
       - name: Apply gated V30 overlay
         run: python v30/apply_v30.py upstream-wadamesh
+      - name: Verify opt-in browser guard anchors without enabling it
+        run: python v30/tests/browser_auth/test_candidate.py upstream-wadamesh
       - name: Build DEV firmware only
         working-directory: upstream-wadamesh
         env:
