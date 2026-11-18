@@ -9,6 +9,7 @@ import zlib
 from pathlib import Path
 
 from partition_fixture import partition_image, ROWS
+from esp_image_fixture import esp_image
 
 INSTALLER = Path(__file__).parents[1] / 'installer'
 BUILDER = INSTALLER / 'build_dev_package.py'
@@ -27,8 +28,8 @@ class DevPackageTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.inputs = {'bootloader': b'boot', 'partition': partition_image(),
-                       'ota-data': bytes(8192), 'app': b'firmware', 'map': pack_bytes()}
+        self.inputs = {'bootloader': esp_image('bootloader'), 'partition': partition_image(),
+                       'ota-data': bytes(8192), 'app': esp_image('app0'), 'map': pack_bytes()}
         for name, data in self.inputs.items():
             (self.root / name).write_bytes(data)
 
@@ -88,6 +89,14 @@ class DevPackageTests(unittest.TestCase):
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('partition binary layout', result.stdout)
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_wrong_firmware_never_creates_package(self):
+        (self.root / 'app').write_bytes(esp_image('bootloader'))
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('app0', result.stdout)
+        self.assertIn('descriptor', result.stdout)
         self.assertFalse((self.root / 'output').exists())
 
     def test_damaged_map_never_creates_package(self):

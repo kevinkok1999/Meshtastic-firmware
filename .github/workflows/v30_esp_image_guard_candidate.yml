@@ -1,0 +1,55 @@
+name: V30 ESP32-S3 image guard candidate
+
+on:
+  push:
+    branches: [v30-esp-image-guard]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer-guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false, fetch-depth: 1}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Host image corruption and installer regressions
+        run: |
+          set -euo pipefail
+          pip install cryptography
+          python v30/tests/test_verify_install_manifest.py
+          python v30/tests/test_signed_install_manifest.py
+          python v30/tests/test_build_dev_package.py
+      - name: Checkout pinned WadaMesh
+        run: |
+          set -euo pipefail
+          git clone --no-checkout https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          git -C upstream-wadamesh fetch --depth 1 origin 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          git -C upstream-wadamesh checkout --detach 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          test "$(git -C upstream-wadamesh rev-parse HEAD)" = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"
+      - name: Reconstruct immutable baseline through V30 overlay
+        run: |
+          set -euo pipefail
+          for patch in v11 v12 v13 v15 v16 v17 v18 v19 v26 v27 v28 v29 v30; do
+            python "$patch/apply_$patch.py" upstream-wadamesh
+          done
+      - name: Build T-Deck Plus unsigned development images
+        working-directory: upstream-wadamesh
+        env:
+          PLATFORMIO_BUILD_FLAGS: >-
+            -DMESH_OFFGRIDNL_V30_EXPERIMENTAL=0
+            -DFIRMWARE_RELEASE_TAG='"v30-f1-dev"'
+            -DFIRMWARE_VERSION='"MeshOffGridNL V30 F1 DEV"'
+        run: |
+          set -euo pipefail
+          pip install "platformio==6.2.0" --no-build-isolation
+          pio run -e LilyGo_TDeck_companion_radio_touch
+      - name: Check real bootloader and app against independent Espressif parser
+        run: |
+          set -euo pipefail
+          pip install "esptool==4.8.1"
+          python v30/tests/check_generated_esp_images.py upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
