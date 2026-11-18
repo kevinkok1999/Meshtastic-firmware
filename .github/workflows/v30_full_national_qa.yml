@@ -1,0 +1,130 @@
+name: V30 full national QA package (never production)
+on:
+  push:
+    branches: [v30-full-national-qa]
+    paths: [".github/workflows/v30_full_national_qa.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  full-qa:
+    if: github.ref == 'refs/heads/v30-full-national-qa' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      MAP_RUN: '44313087295'
+      MAP_COMMIT: 'cf4b8e2b8804cbcec045013654968bf3a8070a64'
+      INITIAL_RUN: '44314605923'
+      INITIAL_COMMIT: 'a673a9ab3c52e93771e45003c617b7f97bb827fb'
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false, fetch-depth: 1}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Check QA pin tests
+        run: |
+          pip install cryptography==50.0.0
+          python v30/tests/test_qa_national_pin.py
+      - name: Await immutable producers, fail if either producer fails
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for try in $(seq 1 50); do
+            ready=0
+            for spec in "$MAP_RUN:$MAP_COMMIT" "$INITIAL_RUN:$INITIAL_COMMIT"; do
+              id="${spec%%:*}"; sha="${spec#*:}"
+              info=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id")
+              test "$(jq -r .head_sha <<<"$info")" = "$sha"
+              if [[ $(jq -r .status <<<"$info") == completed ]]; then
+                test "$(jq -r .conclusion <<<"$info")" = success
+                ready=$((ready+1))
+              fi
+            done
+            if [[ $ready == 2 ]]; then break; fi
+            sleep 30
+          done
+          test "$ready" = 2
+          for spec in "$MAP_RUN:V30-unsigned-NL-map-candidate" "$INITIAL_RUN:V30-TDeck-Plus-UNSIGNED-DEV-NO-MAP-$INITIAL_COMMIT"; do
+            id="${spec%%:*}"; name="${spec#*:}"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" | jq -e --arg name "$name" '[.artifacts[] | select(.name==$name and .expired==false)] | length==1'
+          done
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: V30-unsigned-NL-map-candidate
+          path: national/
+          github-token: ${{ github.token }}
+          run-id: '44313087295'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: V30-TDeck-Plus-UNSIGNED-DEV-NO-MAP-a673a9ab3c52e93771e45003c617b7f97bb827fb
+          path: initial/
+          github-token: ${{ github.token }}
+          run-id: '44314605923'
+      - name: Verify actual national inventory, QA-only signed pin and native parser
+        run: |
+          set -euo pipefail
+          pin=$(python v30/installer/qa_national_pin.py --initial initial --map-dir national)
+          [[ "$pin" =~ ^[0-9a-f]{64}$ ]]
+          echo "QA_MAP_PIN=$pin" >> "$GITHUB_ENV"
+          base=v30/overlay/src/ui-touch
+          cc -O2 -c "$base/miniz/miniz_tinfl.c" -o /tmp/v30-miniz.o
+          c++ -std=c++17 -Wall -Wextra -Werror -I "$base" "$base/NanoMapPack.cpp" v30/tests/check_national_native.cpp /tmp/v30-miniz.o -lz -o /tmp/v30-national
+          /tmp/v30-national national/candidate.meshmap
+      - name: Reconstruct pinned V30 development firmware
+        run: |
+          git clone --no-checkout https://github.com/ALLFATHER-BV/wadamesh.git upstream-wadamesh
+          git -C upstream-wadamesh fetch --depth 1 origin 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          git -C upstream-wadamesh checkout --detach 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          test "$(git -C upstream-wadamesh rev-parse HEAD)" = 6fe6b9f06332708b6ed0cc78958017d0dcc9e35d
+          for patch in v11 v12 v13 v15 v16 v17 v18 v19 v26 v27 v28 v29; do
+            python "$patch/apply_$patch.py" upstream-wadamesh
+          done
+          python v29/tests/test_contracts.py upstream-wadamesh
+          python v29/tests/test_resilience_model.py upstream-wadamesh
+          python v30/apply_v30.py upstream-wadamesh
+          python v30/apply_map_guard_v30.py upstream-wadamesh
+          python v30/apply_map_native_v30.py upstream-wadamesh
+          cp v30/installer/capture_pio_flash_metadata.py upstream-wadamesh/v30-capture-flash-metadata.py
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('upstream-wadamesh/platformio.ini'); s=p.read_text()
+          marker='[env:LilyGo_TDeck_companion_radio_touch]\n'
+          assert s.count(marker)==1
+          start=s.index('extra_scripts = ',s.index(marker)); end=s.index('\n',start)
+          assert 'merge-bin.py' in s[start:end]
+          p.write_text(s[:end]+', post:v30-capture-flash-metadata.py'+s[end:])
+          PY
+      - name: Compile native map with verified QA pin, no experimental RF
+        working-directory: upstream-wadamesh
+        run: |
+          set -euo pipefail
+          export PLATFORMIO_BUILD_FLAGS="-DMESH_OFFGRIDNL_V30_EXPERIMENTAL=0 -DMESH_OFFGRIDNL_V30_NANOMAP_DEV=1 -DMESH_OFFGRIDNL_V30_DEV_NANOMAP_SHA256='\"${QA_MAP_PIN}\"' -DFIRMWARE_RELEASE_TAG='\"v30-national-qa\"' -DFIRMWARE_VERSION='\"MeshOffGridNL V30 NL QA\"'"
+          pip install platformio==6.2.0 --no-build-isolation
+          pio run -e LilyGo_TDeck_companion_radio_touch
+          pio pkg list -e LilyGo_TDeck_companion_radio_touch > v30-resolved-dependencies.txt
+      - name: Assemble and cross-check all five real images (unsigned QA)
+        run: |
+          set -euo pipefail
+          base=upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          assert os.environ['QA_MAP_PIN'].encode() in Path('upstream-wadamesh/.pio/build/LilyGo_TDeck_companion_radio_touch/firmware.bin').read_bytes()
+          PY
+          python v30/installer/export_dev_firmware.py --metadata "$base/v30-pio-flash-metadata.json" --build-dir "$base" --output native-dev --source-sha "$GITHUB_SHA"
+          pip install esptool==4.8.1
+          python v30/tests/check_generated_esp_images.py "$base"
+          python v30/installer/build_dev_package.py --bootloader native-dev/bootloader.bin --partition native-dev/partitions.bin --ota-data native-dev/boot_app0.bin --app native-dev/firmware.bin --map national/candidate.meshmap --output full-qa
+          python v30/installer/verify_install_manifest.py full-qa/manifest.json
+          cp national/{coverage.json,provenance.json,candidate.meshmap.report.json} full-qa/
+          cp upstream-wadamesh/v30-resolved-dependencies.txt full-qa/
+          printf 'QA ONLY, unsigned, no physical flash, not a release\nsource=%s\nmap_run=%s\nlogical_map_pin=%s\n' "$GITHUB_SHA" "$MAP_RUN" "$QA_MAP_PIN" > full-qa/QA-EVIDENCE.txt
+          (cd full-qa && sha256sum *.bin manifest.json > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V30-FULL-NL-UNSIGNED-QA-NOT-FOR-RELEASE
+          path: full-qa/
+          if-no-files-found: error
+          retention-days: 14
