@@ -30,13 +30,24 @@ struct LegacyFs {
   size_t totalBytes() const { return bytes; }
   void end() { ended=true; }
 };
+static bool cancel(void* ptr) { ++*static_cast<unsigned*>(ptr);return false; }
 int main(int argc,char** argv){
   size_t len=0;auto v=image(100000,len); size_t out=0;
   assert(locateRawImage(v.data(),v.size(),out)==ImageStatus::Ok && out==len);
+  unsigned cancelled=0;
+  assert(locateRawImage(v.data(),v.size(),out,{cancel,&cancelled})==ImageStatus::Cancelled&&out==0&&cancelled==1);
   v[len-1]^=1;assert(locateRawImage(v.data(),v.size(),out)==ImageStatus::BadChecksum && out==0);
   v[len-1]^=1;v[len+2]=0;assert(locateRawImage(v.data(),v.size(),out)==ImageStatus::BadPadding);
   v[len+2]=0xff;assert(locateRawImage(v.data(),v.size()-1,out)==ImageStatus::WrongPartition);
   auto bomb=image(4*1024*1024+1,len);assert(locateRawImage(bomb.data(),bomb.size(),out)==ImageStatus::DecodedLimit);
+  auto bound=image(4*1024*1024,len);assert(locateRawImage(bound.data(),bound.size(),out)==ImageStatus::Ok&&out==len);
+  // The CRC's last byte can itself be erased-flash 0xff. Blind trimming
+  // would remove part of the pack; zlib stream framing must retain it.
+  std::vector<uint8_t> ffCrc={0x4d,0x4d,0x4e,0x31,0x01,0x00,0x02,0x00,0x00,0x00,
+      0x7b,0x7d,0x78,0xda,0x53,0x54,0xa4,0x37,0x00,0x00,0x4d,0x9a,0x0e,0xb3,
+      0xa8,0xa3,0xa0,0xff};
+  ffCrc.resize(kRawTilePartitionBytes,0xff);
+  assert(locateRawImage(ffCrc.data(),ffCrc.size(),out)==ImageStatus::Ok&&out==28);
   auto bad=image(200,len);bad[6]=0xff;bad[7]=0xff;bad[8]=0xff;bad[9]=0xff;
   assert(locateRawImage(bad.data(),bad.size(),out)==ImageStatus::BadHeader);
   bad=image(200,len);bad[0]=0;assert(locateRawImage(bad.data(),bad.size(),out)==ImageStatus::NotNanoMap);
@@ -55,6 +66,8 @@ int main(int argc,char** argv){
     real.resize(kRawTilePartitionBytes,0xff);
     assert(locateRawImage(real.data(),real.size(),out)==ImageStatus::Ok&&out==realSize);
     NanoMapPack reader;assert(reader.open(real.data(),out)==PackStatus::Ok);
+    NanoMapPack interrupted;cancelled=0;
+    assert(interrupted.open(real.data(),out,{cancel,&cancelled})==PackStatus::Cancelled&&cancelled==1&&interrupted.featureCount()==0);
     assert(reader.featureCount()==12);
     size_t segments=0;
     assert(reader.forEachFeature(3,50,8,54,19,[&](const FeatureRecord&){++segments;return true;}));

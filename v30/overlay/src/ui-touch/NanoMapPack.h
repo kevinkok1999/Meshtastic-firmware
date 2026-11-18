@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include "NanoMapProgress.h"
 
 namespace meshtastic::nanomap {
 
@@ -17,6 +18,7 @@ enum class PackStatus : uint8_t {
   BadMetadata,
   GeometryCorrupt,
   GeometryTooLarge,
+  Cancelled,
 };
 
 struct FeatureRecord {
@@ -35,7 +37,7 @@ struct PlaceResult {
 class NanoMapPack {
  public:
   // Borrows immutable caller bytes. Keep them alive until all queries finish.
-  PackStatus open(const uint8_t *data, size_t size);
+  PackStatus open(const uint8_t *data, size_t size, MapProgress progress = {});
   PackStatus status() const { return status_; }
   size_t featureCount() const { return featureCount_; }
   size_t nameCount() const { return names_.size(); }
@@ -45,7 +47,8 @@ class NanoMapPack {
   // Segments may be emitted before final integrity validation. Discard all
   // candidate output if false is returned; never commit partial results to a renderer.
   bool forEachFeature(double minLon, double minLat, double maxLon, double maxLat,
-                      uint8_t maxZoom, const std::function<bool(const FeatureRecord &)> &callback) const;
+                      uint8_t maxZoom, const std::function<bool(const FeatureRecord &)> &callback,
+                      MapProgress progress = {}) const;
 
  private:
   PackStatus status_ = PackStatus::TooSmall;
@@ -57,3 +60,4 @@ class NanoMapPack {
 };
 
 }  // namespace meshtastic::nanomap
+

@@ -20,7 +20,7 @@ TileStorage classifyInternalTiles() {
   if(!p || esp_partition_read(p,0,prefix,sizeof(prefix))!=ESP_OK) return TileStorage::Unavailable;
   return classifyTileHeader(prefix,sizeof(prefix));
 }
-bool inspectInternalTiles(RawPackVisitor visitor, void* context) {
+bool inspectInternalTiles(RawPackVisitor visitor, void* context, MapProgress progress) {
   const auto* p=internalTiles();
   if(!p || !visitor || classifyInternalTiles()!=TileStorage::NanoMap) return false;
   const void* ptr=nullptr;
@@ -33,7 +33,7 @@ bool inspectInternalTiles(RawPackVisitor visitor, void* context) {
 #endif
   size_t length=0;
   const auto* bytes=static_cast<const uint8_t*>(ptr);
-  const bool ok=locateRawImage(bytes,p->size,length)==ImageStatus::Ok && visitor(bytes,length,context);
+  const bool ok=locateRawImage(bytes,p->size,length,progress)==ImageStatus::Ok && visitor(bytes,length,context);
 #if ESP_IDF_VERSION_MAJOR >= 5
   esp_partition_munmap(handle);
 #else

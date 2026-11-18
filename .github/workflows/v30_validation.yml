@@ -29,6 +29,8 @@ jobs:
         run: python v30/tests/test_transport.py
       - name: Verify opt-in Dispatcher completion hook candidate
         run: python v30/tests/test_dispatch_patch.py
+      - name: Test actual pinned pool default and opt-in observer
+        run: python v30/tests/test_pool_patch.py
       - name: Assert immutable dependency pins
         run: |
           grep -F 'WADAMESH_SHA = "6fe6b9f06332708b6ed0cc78958017d0dcc9e35d"' v30/apply_v30.py

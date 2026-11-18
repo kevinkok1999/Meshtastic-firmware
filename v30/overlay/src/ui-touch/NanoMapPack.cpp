@@ -17,14 +17,15 @@ constexpr size_t kMaxNames = 65535;
 constexpr size_t kMaxNameBytes = 256;
 constexpr size_t kMaxFeatures = 1000000;
 
-uint32_t crc32(const uint8_t *data, size_t size) {
+bool crc32(const uint8_t *data, size_t size, MapProgress progress, uint32_t& result) {
   uint32_t crc = 0xffffffffu;
   for (size_t i = 0; i < size; ++i) {
+    if ((i & 0x3fffu)==0 && !progress.proceed()) return false;
     crc ^= data[i];
     for (uint8_t bit = 0; bit < 8; ++bit)
       crc = (crc >> 1) ^ (0xedb88320u & static_cast<uint32_t>(-(crc & 1u)));
   }
-  return crc ^ 0xffffffffu;
+  result = crc ^ 0xffffffffu;return true;
 }
 
 bool validUtf8(const std::string &s) {
@@ -90,7 +91,7 @@ bool parseNames(const std::string &meta, std::vector<std::string> &names) {
 }
 }  // namespace
 
-PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
+PackStatus NanoMapPack::open(const uint8_t *data, size_t size, MapProgress progress) {
   names_.clear();
   featureCount_ = 0;
   data_ = nullptr;
@@ -114,7 +115,9 @@ PackStatus NanoMapPack::open(const uint8_t *data, size_t size) {
       (static_cast<uint32_t>(data[footer + 1]) << 8) |
       (static_cast<uint32_t>(data[footer + 2]) << 16) |
       (static_cast<uint32_t>(data[footer + 3]) << 24);
-  if (crc32(data, footer) != expected) return status_ = PackStatus::BadChecksum;
+  uint32_t actual=0;
+  if (!crc32(data,footer,progress,actual)) return status_=PackStatus::Cancelled;
+  if (actual != expected) return status_ = PackStatus::BadChecksum;
   std::string meta(reinterpret_cast<const char *>(data + 10), metadataSize);
   if (meta.empty() || meta.front() != '{' || meta.back() != '}')
     return status_ = PackStatus::BadMetadata;
@@ -234,7 +237,7 @@ bool clip(double &x0, double &y0, double &x1, double &y1,
 
 bool NanoMapPack::forEachFeature(
     double minLon, double minLat, double maxLon, double maxLat, uint8_t maxZoom,
-    const std::function<bool(const FeatureRecord &)> &callback) const {
+    const std::function<bool(const FeatureRecord &)> &callback, MapProgress progress) const {
   if (status_ != PackStatus::Ok || !callback || maxZoom < 3 || maxZoom > 19 ||
       !std::isfinite(minLon) || !std::isfinite(minLat) ||
       !std::isfinite(maxLon) || !std::isfinite(maxLat) ||
@@ -247,6 +250,7 @@ bool NanoMapPack::forEachFeature(
   if (!cursor) return false;
   bool deliver = true;
   for (size_t feature = 0; feature < featureCount_; ++feature) {
+    if ((feature & 63u) == 0 && !progress.proceed()) return false;
     uint32_t name = 0, province = 0, zoom = 0, geometryBytes = 0, count = 0, kindSize = 0;
     if (!varuint(*cursor, name) || !varuint(*cursor, province) ||
         !varuint(*cursor, zoom) || !varuint(*cursor, geometryBytes) ||
@@ -262,6 +266,7 @@ bool NanoMapPack::forEachFeature(
     record.geometry.reserve(count);
     int64_t lon = 0, lat = 0;
     for (uint32_t point = 0; point < count; ++point) {
+      if (point && (point & 255u) == 0 && !progress.proceed()) return false;
       uint32_t dx = 0, dy = 0;
       if (!varuint(*cursor, dx, geometryEnd) || !varuint(*cursor, dy, geometryEnd)) return false;
       lon += unzigzag(dx); lat += unzigzag(dy);
@@ -291,6 +296,7 @@ bool NanoMapPack::forEachFeature(
       }
     } else {
       for (size_t i = 1; i < record.geometry.size() && deliver; ++i) {
+        if ((i & 255u) == 0 && !progress.proceed()) return false;
         double x0 = record.geometry[i-1].first / 100000.0;
         double y0 = record.geometry[i-1].second / 100000.0;
         double x1 = record.geometry[i].first / 100000.0;
@@ -320,3 +326,4 @@ bool NanoMapPack::lookupPlace(const std::string &prefix,
 }
 
 }  // namespace meshtastic::nanomap
+

@@ -11,6 +11,6 @@ TileStorage classifyInternalTiles();
 // it is mapped. No authenticity claim: production needs signed asset policy.
 // Not invoked automatically by the mount guard.
 using RawPackVisitor = bool (*)(const uint8_t*, size_t, void*);
-bool inspectInternalTiles(RawPackVisitor visitor, void* context);
+bool inspectInternalTiles(RawPackVisitor visitor, void* context, MapProgress progress={});
 }
 #endif

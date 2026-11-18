@@ -44,11 +44,23 @@ bool V30PacketLifecycle::markQueued(V30PacketLease lease) {
 bool V30PacketLifecycle::markDispatching(V30PacketLease lease) {
   return transition(lease, State::Queued, State::Dispatching);
 }
+bool V30PacketLifecycle::markInboundQueued(V30PacketLease lease) {
+  return transition(lease, State::Allocated, State::InboundQueued);
+}
+bool V30PacketLifecycle::markInboundDequeued(V30PacketLease lease) {
+  return transition(lease, State::InboundQueued, State::Allocated);
+}
 bool V30PacketLifecycle::detach(V30PacketLease lease) {
   return transition(lease, State::Queued, State::Allocated);
 }
 bool V30PacketLifecycle::isAllocated(V30PacketLease lease) const {
   return hasState(lease, State::Allocated);
+}
+bool V30PacketLifecycle::isQueued(V30PacketLease lease) const {
+  return hasState(lease, State::Queued);
+}
+bool V30PacketLifecycle::isInboundQueued(V30PacketLease lease) const {
+  return hasState(lease, State::InboundQueued);
 }
 bool V30PacketLifecycle::isDispatching(V30PacketLease lease) const {
   return hasState(lease, State::Dispatching);

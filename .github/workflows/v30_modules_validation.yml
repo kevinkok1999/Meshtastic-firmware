@@ -74,3 +74,8 @@ jobs:
           python v30/tests/test_apply_map_guard.py
           c++ -std=c++17 -Wall -Wextra -Werror -I v30/overlay/src/ui-touch v30/overlay/src/ui-touch/NanoMapPack.cpp v30/overlay/src/ui-touch/NanoMapImage.cpp v30/tests/test_nano_image.cpp /tmp/tinfl.o -lz -o /tmp/v30-image
           /tmp/v30-image /tmp/reader-fixture.meshmap
+      - name: Test bounded map viewport geometry, cancellation and generation
+        run: |
+          base=v30/overlay/src/ui-touch
+          c++ -std=c++17 -Wall -Wextra -Werror -I "$base" "$base/NanoMapPack.cpp" "$base/NanoMapViewport.cpp" v30/tests/test_nano_viewport.cpp /tmp/tinfl.o -lz -o /tmp/v30-view
+          /tmp/v30-view /tmp/reader-fixture.meshmap
