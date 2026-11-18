@@ -162,8 +162,8 @@ def validate_manifest(manifest: dict[str, Any], artifact_root: str | Path = ".")
         raise ManifestError("unsupported chip; expected ESP32-S3")
     if _int(manifest.get("flash_size_bytes"), "flash_size_bytes") != FLASH_SIZE:
         raise ManifestError("flash_size_bytes must be 16 MiB")
-    if manifest.get("production") is True:
-        raise ManifestError("production claims are rejected: cryptographic trust anchor is not configured; hashes are not signatures")
+    if manifest.get("production") is not False:
+        raise ManifestError("production must be explicitly false; release authorization is not configured")
     root = Path(artifact_root).resolve()
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:

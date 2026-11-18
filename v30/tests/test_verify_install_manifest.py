@@ -107,6 +107,15 @@ class ManifestVerifierTests(unittest.TestCase):
         with self.assertRaises(MODULE.ManifestError):
             MODULE.validate_manifest(self.manifest, self.root)
 
+    def test_production_gate_requires_literal_false(self):
+        for value in (None, 'false', 'true', 0, 1):
+            self.manifest['production'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(MODULE.ManifestError, 'production'):
+                MODULE.validate_manifest(self.manifest, self.root)
+        del self.manifest['production']
+        with self.assertRaisesRegex(MODULE.ManifestError, 'production'):
+            MODULE.validate_manifest(self.manifest, self.root)
+
     def add_map(self, pack=None):
         if pack is None:
             source = self.root / "source.jsonl"

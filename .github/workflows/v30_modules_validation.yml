@@ -81,3 +81,5 @@ jobs:
           /tmp/v30-view /tmp/reader-fixture.meshmap
       - name: Test reproducible unsigned development package assembly
         run: python -m unittest discover -s v30/tests -p test_build_dev_package.py -v
+      - name: Test authenticated two-client relay over actual verified TLS
+        run: node --test v30/relay/test_v30_tls.mjs
